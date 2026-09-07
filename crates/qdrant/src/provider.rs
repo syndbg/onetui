@@ -1,20 +1,27 @@
-use anyhow::{Result, anyhow, bail, ensure};
-use onetui_core::Page;
+use anyhow::{Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
     RequestContext, ShutdownContext,
 };
-use qdrant_client::qdrant::{ListCollectionsRequest, collections_client::CollectionsClient};
-use tokio::sync::{Mutex, watch};
+use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
+use qdrant_client::qdrant::{
+    GetCollectionInfoRequest, GetPointsBuilder, ListCollectionsRequest, ScrollPointsBuilder,
+    collections_client::CollectionsClient, points_client::PointsClient,
+};
+use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{Mutex, MutexGuard, watch};
+use tokio::time::Instant;
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 pub struct QdrantProvider;
+static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     kind: "qdrant",
-    entry_resource: None,
-    browsing: "not implemented; --check only",
-    resources: &[],
+    entry_resource: Some("qdrant.collections"),
+    browsing: "collections / points / payload / vectors",
+    resources: crate::browse::RESOURCES,
     documentation: crate::capabilities,
 };
 
@@ -47,6 +54,7 @@ impl Provider for QdrantProvider {
             url: config.url,
             api_key,
             client: Mutex::new(None),
+            identity: NEXT_EXECUTOR.fetch_add(1, Ordering::Relaxed),
             status: watch::channel(ConnectionStatus::Configured).0,
             closed: false,
         })
@@ -56,22 +64,51 @@ impl Provider for QdrantProvider {
 pub struct QdrantExecutor {
     url: String,
     api_key: Option<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>,
-    client: Mutex<Option<CollectionsClient<Channel>>>,
+    client: Mutex<Option<Channel>>,
+    identity: u64,
     status: watch::Sender<ConnectionStatus>,
     closed: bool,
 }
 
-impl Executor for QdrantExecutor {
-    fn status(&self) -> watch::Receiver<ConnectionStatus> {
-        self.status.subscribe()
+struct Lease<'a> {
+    channel: MutexGuard<'a, Option<Channel>>,
+    status: &'a watch::Sender<ConnectionStatus>,
+    clean: bool,
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        if !self.clean {
+            self.channel.take();
+            self.status.send_replace(ConnectionStatus::Disconnected);
+        }
+    }
+}
+
+impl QdrantExecutor {
+    fn request<T>(&self, message: T, deadline: Instant) -> tonic::Request<T> {
+        let mut request = tonic::Request::new(message);
+        request.set_timeout(deadline.saturating_duration_since(Instant::now()));
+        if let Some(key) = &self.api_key {
+            request.metadata_mut().insert("api-key", key.clone());
+        }
+        request
     }
 
-    async fn check(&self, mut context: RequestContext) -> Result<CheckResult> {
+    async fn execute<T, F, Fut>(&self, mut context: RequestContext, operation: F) -> Result<T>
+    where
+        F: FnOnce(Channel, Instant) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
         ensure!(!self.closed, "Qdrant session is closed");
-        let mut client = context.run(self.client.lock()).await?;
+        let mut lease = Lease {
+            channel: context.run(self.client.lock()).await?,
+            status: &self.status,
+            clean: false,
+        };
         let deadline = context.deadline;
         let result = context.run(async {
-            if client.is_none() {
+            if lease.channel.is_none() {
                 self.status.send_replace(ConnectionStatus::Connecting);
                 let url = crate::qdrant_url(&self.url)?;
                 let mut endpoint = Endpoint::from_shared(url.to_string()).map_err(|_| anyhow!("invalid Qdrant gRPC endpoint"))?
@@ -81,26 +118,137 @@ impl Executor for QdrantExecutor {
                     endpoint = endpoint.tls_config(ClientTlsConfig::new().with_native_roots()).map_err(|_| anyhow!("cannot configure Qdrant TLS using native trust roots"))?;
                 }
                 let channel = endpoint.connect().await.map_err(|_| anyhow!("Qdrant connection failed; verify gRPC endpoint, reachability and TLS certificate trust"))?;
-                // The high-level SDK helper removes this decoding limit.
-                *client = Some(CollectionsClient::new(channel).max_decoding_message_size(1024 * 1024));
-                self.status.send_replace(ConnectionStatus::Connected);
+                *lease.channel = Some(channel);
             }
-            let mut request = tonic::Request::new(ListCollectionsRequest {});
-            request.set_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()));
-            if let Some(key) = &self.api_key { request.metadata_mut().insert("api-key", key.clone()); }
-            let response = client.as_mut().expect("connected client").list(request).await.map_err(crate::rpc_error)?;
+            operation(lease.channel.as_ref().expect("connected channel").clone(), deadline).await
+        }).await?;
+        // Formatting runs on the worker too; check cancellation/deadline again after it.
+        let result = context.run(std::future::ready(result)).await?;
+        if result.is_ok() {
+            lease.clean = true;
             self.status.send_replace(ConnectionStatus::Connected);
-            Ok(CheckResult { summary: format!("collection metadata readable ({} collections)", response.into_inner().collections.len()) })
-        }).await.and_then(|r| r);
-        if result.is_err() {
-            client.take();
-            self.status.send_replace(ConnectionStatus::Disconnected);
         }
         result
     }
+}
 
-    async fn fetch_page(&self, _request: PageRequest, _context: RequestContext) -> Result<Page> {
-        bail!("Qdrant browsing is not implemented; use --check for now")
+impl Executor for QdrantExecutor {
+    fn status(&self) -> watch::Receiver<ConnectionStatus> {
+        self.status.subscribe()
+    }
+
+    async fn check(&self, context: RequestContext) -> Result<CheckResult> {
+        self.execute(context, |channel, deadline| async move {
+            // High-level SDK helpers remove this decoding limit.
+            let response = CollectionsClient::new(channel)
+                .max_decoding_message_size(PAGE_BYTES)
+                .list(self.request(ListCollectionsRequest {}, deadline))
+                .await
+                .map_err(crate::rpc_error)?
+                .into_inner();
+            Ok(CheckResult {
+                summary: format!(
+                    "collection metadata readable ({} collections)",
+                    response.collections.len()
+                ),
+            })
+        })
+        .await
+    }
+
+    async fn fetch_page(&self, request: PageRequest, mut context: RequestContext) -> Result<Page> {
+        ensure!(!self.closed, "Qdrant session is closed");
+        let offset = crate::browse::validate(&request, self.identity)?;
+        if let Some(page) = crate::browse::menu(&request.resource) {
+            return context
+                .run(std::future::ready(crate::browse::bounded(page)))
+                .await?;
+        }
+        self.execute(context, |channel, deadline| async move {
+            let resource = &request.resource;
+            match resource.id {
+                "qdrant.collections" => {
+                    let mut client =
+                        CollectionsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+                    let result = client
+                        .list(self.request(ListCollectionsRequest {}, deadline))
+                        .await
+                        .map_err(crate::rpc_error)?
+                        .into_inner();
+                    let offset = match offset {
+                        Some(crate::browse::Offset::Collections(n)) => n,
+                        _ => 0,
+                    };
+                    crate::browse::collections(
+                        resource,
+                        result.collections.into_iter().map(|c| c.name).collect(),
+                        offset,
+                        self.identity,
+                    )
+                }
+                "qdrant.metadata" => {
+                    let mut client =
+                        CollectionsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+                    let result = client
+                        .get(self.request(
+                            GetCollectionInfoRequest {
+                                collection_name: resource.path[0].clone(),
+                            },
+                            deadline,
+                        ))
+                        .await
+                        .map_err(crate::rpc_error)?
+                        .into_inner();
+                    crate::browse::metadata(
+                        resource,
+                        result.result.ok_or_else(|| {
+                            anyhow!("Qdrant collection metadata missing; refresh its parent")
+                        })?,
+                    )
+                }
+                "qdrant.points" => {
+                    let mut client =
+                        PointsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+                    let mut scroll = ScrollPointsBuilder::new(&resource.path[0])
+                        .limit(PAGE_SIZE as u32)
+                        .with_payload(false)
+                        .with_vectors(false);
+                    if let Some(crate::browse::Offset::Point(id)) = offset {
+                        scroll = scroll.offset(id.native());
+                    }
+                    let result = client
+                        .scroll(self.request(scroll.build(), deadline))
+                        .await
+                        .map_err(crate::rpc_error)?
+                        .into_inner();
+                    crate::browse::points(
+                        resource,
+                        result.result,
+                        result.next_page_offset,
+                        self.identity,
+                    )
+                }
+                "qdrant.payload" | "qdrant.vectors" => {
+                    let mut client =
+                        PointsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+                    let get = GetPointsBuilder::new(
+                        &resource.path[0],
+                        vec![crate::browse::point_id(resource)?],
+                    )
+                    .with_payload(resource.id == "qdrant.payload")
+                    .with_vectors(resource.id == "qdrant.vectors")
+                    .build();
+                    let result = client
+                        .get(self.request(get, deadline))
+                        .await
+                        .map_err(crate::rpc_error)?
+                        .into_inner();
+                    crate::browse::detail(resource, result.result)
+                }
+                _ => unreachable!("validated resource"),
+            }
+        })
+        .await
     }
 
     async fn shutdown(&mut self, _context: ShutdownContext) -> Result<()> {

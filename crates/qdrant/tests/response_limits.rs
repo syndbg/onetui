@@ -140,7 +140,7 @@ async fn provider_reuses_channel_without_idle_queries_and_shutdown_closes_it() {
             context,
         )
         .await;
-    assert!(result.unwrap_err().to_string().contains("not implemented"));
+    assert!(result.unwrap_err().to_string().contains("resource or path"));
     assert_eq!(requests.load(Ordering::SeqCst), 2);
     executor
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))

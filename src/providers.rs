@@ -137,7 +137,10 @@ mod tests {
         let provider = find_provider(BUILTINS, "qdrant").unwrap();
         let options = toml::from_str("url='http://localhost:6334'").unwrap();
         provider.validate_config(&options).unwrap();
-        assert!(provider.descriptor().entry_resource.is_none());
+        assert_eq!(
+            provider.descriptor().entry_resource,
+            Some("qdrant.collections")
+        );
         let mut executor = provider
             .configure(&options, &|_| panic!("no configured secret"))
             .unwrap();

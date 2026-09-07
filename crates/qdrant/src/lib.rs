@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow, ensure};
+mod browse;
 mod config;
 mod provider;
 pub use provider::{QdrantExecutor, QdrantProvider};
@@ -46,26 +47,30 @@ fn rpc_error(status: tonic::Status) -> anyhow::Error {
     match status.code() {
         tonic::Code::Unauthenticated => anyhow!("Qdrant authentication failed; check api_key_env"),
         tonic::Code::PermissionDenied => {
-            anyhow!("Qdrant collection listing denied; the key may be collection-scoped")
+            anyhow!("Qdrant read denied; the key may lack collection or listing permission")
         }
         tonic::Code::OutOfRange => anyhow!(
-            "Qdrant metadata response exceeded the 1 MiB limit, or the server rejected an out-of-range request"
+            "Qdrant response exceeded the 1 MiB limit, or the server rejected an out-of-range request"
         ),
-        tonic::Code::ResourceExhausted => anyhow!(
-            "Qdrant response exceeded the 1 MiB metadata limit or server resources were exhausted"
-        ),
-        tonic::Code::DeadlineExceeded => anyhow!("Qdrant metadata check timed out"),
-        _ => anyhow!(
-            "Qdrant metadata check failed (gRPC code {})",
-            status.code() as i32
-        ),
+        tonic::Code::ResourceExhausted => {
+            anyhow!("Qdrant response exceeded the 1 MiB limit or server resources were exhausted")
+        }
+        tonic::Code::DeadlineExceeded => anyhow!("Qdrant request timed out"),
+        tonic::Code::NotFound => {
+            anyhow!("Qdrant collection or point not found; refresh its parent")
+        }
+        _ => anyhow!("Qdrant request failed (gRPC code {})", status.code() as i32),
     }
 }
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "id": "qdrant", "operations": ["check"], "resources": [],
-        "session": "Lazy reusable size-capped gRPC channel; failed/cancelled checks discard it. Shutdown drops the channel. HTTP/2 keepalive interval unset, idle pings disabled; no periodic metadata check or heartbeat TOML setting.",
+        "id": "qdrant", "operations": ["check", "fetch_page"],
+        "session": "Lazy reusable size-capped gRPC channel; failed/cancelled operations discard it. Shutdown drops the channel. HTTP/2 keepalive interval unset, idle pings disabled; no periodic metadata check or heartbeat TOML setting.",
+        "limits": {"page_rows": 100, "rpc_bytes": 1048576, "display_page_bytes": 1048576, "retained_pages_per_view": 3},
+        "navigation": "Enter: collections -> collection -> points or metadata; points -> point -> payload or vectors. Payload and vectors are separate reads. Enter on a data row inspects cached fields; h/l selects fields.",
+        "paths": {"qdrant.collections": [], "qdrant.collection": ["collection"], "qdrant.metadata": ["collection"], "qdrant.points": ["collection"], "qdrant.point": ["collection", "numeric ID or hyphenated UUID"], "qdrant.payload": ["collection", "ID"], "qdrant.vectors": ["collection", "ID"]},
+        "paging": "ID-only Scroll uses the exact server continuation, scoped to executor and resource; refresh restarts. Collections re-read the size-capped List response and display 100 sorted names per page. Neither provides a cross-request snapshot. Filter/sort only inspect displayed text; no payload path expressions or server-side filters.",
         "configuration": {
             "kind": {"required": true, "values": ["qdrant"], "purpose": "Select the Qdrant connector"},
             "url": {"required": true, "type": "HTTP(S) gRPC URL", "purpose": "Explicit endpoint; plaintext only on loopback; no URL credentials, path prefix, query or fragment", "example": "http://127.0.0.1:6334"},

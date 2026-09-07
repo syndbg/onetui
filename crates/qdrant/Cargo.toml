@@ -1,5 +1,6 @@
 [package]
 name = "onetui-qdrant"
+license.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +9,7 @@ publish = false
 [dependencies]
 onetui-core = { path = "../core" }
 anyhow.workspace = true
-qdrant-client.workspace = true
+qdrant-client = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 tonic.workspace = true
 url.workspace = true
@@ -20,3 +21,6 @@ tokio.workspace = true
 tempfile.workspace = true
 tokio-stream.workspace = true
 tonic-prost.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+nix.workspace = true

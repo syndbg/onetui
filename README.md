@@ -4,7 +4,7 @@ Explore databases and streams from your terminal.
 
 OneTUI uses k9s-style navigation: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-Implemented: PostgreSQL row/metadata browsing, page-local filter/sort, and an offline capability dump. Tests cover the CLI and terminal against live PostgreSQL fixtures. Both backends support headless checks. Qdrant point browsing and configurable keybindings remain planned.
+PostgreSQL row/metadata browsing and Qdrant collection/point browsing use the same shell, page-local filter/sort and offline capability dump. Both backends support headless checks. Development targets v0.1.0; configurable keybindings and hosted release validation remain planned.
 
 The first release targets PostgreSQL and Qdrant, using Rust, Ratatui, and Tokio. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
 
@@ -36,13 +36,14 @@ alias ot='onetui'
 
 Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. This is only a shell shortcut; the executable and configuration directory remain `onetui`.
 
-`--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1-300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the PostgreSQL TUI; displayed data does not expire while idle. See [PostgreSQL usage and limits](docs/postgres.md).
+`--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1-300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the TUI; displayed data does not expire while idle. See [PostgreSQL usage](docs/postgres.md) and [Qdrant usage](docs/qdrant.md).
 
-## PostgreSQL browsing and offline catalog
+## Browsing and offline catalog
 
 ```sh
 onetui --config "$HOME/onetui.toml"
 onetui --config "$HOME/onetui.toml" --connection local_pg
+onetui --config "$HOME/onetui.toml" --connection local_qdrant
 onetui schema
 onetui schema --datasource postgres
 onetui schema --datasource qdrant
@@ -50,7 +51,9 @@ onetui schema --datasource qdrant
 
 Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `/` filters this page's cached text; `s` cycles lexical sort on the selected field; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
 
-See [PostgreSQL usage](docs/postgres.md) for keys, limits, cancellation behavior and remaining work. Browsing uses the connection configuration described below.
+Qdrant navigation opens collections, then a choice of points or metadata. Point pages fetch IDs only. Open a point, then select payload or vectors for a separate read. Dense, sparse and multivectors retain their values and names; limits reject oversized detail explicitly. `make run` starts on PostgreSQL; press `c` to select `local_qdrant` with the supplied fixture credentials. Fresh Qdrant fixtures are empty.
+
+See [PostgreSQL usage](docs/postgres.md) and [Qdrant usage](docs/qdrant.md) for keys, limits and cancellation behavior. Browsing uses the connection configuration described below.
 
 ## Workspace packages
 
@@ -63,7 +66,7 @@ Selected sessions connect lazily and retain healthy transports. PostgreSQL finis
 | `onetui` (root) | CLI dispatch, catalog assembly and release/developer workflow tests |
 | [`onetui-core`](crates/core/README.md) | Configuration, shared display/resource contracts and actions; no database SDKs |
 | [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, row/metadata queries, descriptors and PostgreSQL-only tests |
-| [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, descriptors and Qdrant-only tests |
+| [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, collection/point/detail reads, descriptors and Qdrant-only tests |
 | [`onetui-tui`](crates/tui/README.md) | Navigation, request lifecycle, rendering and terminal tests |
 
 Tests belong to their owning package; there is no shared PostgreSQL/Qdrant test loop. `make verify` builds and tests the whole workspace. For focused checks, build the CLI first, then use `cargo test -p onetui-postgres --locked` (or another package name). Connector CLI tests use `target/debug/onetui` by default; test-only `ONETUI_TEST_BIN` selects a prebuilt binary path when using a custom target directory (an absolute path is recommended). This variable is not application configuration.
@@ -94,7 +97,7 @@ alias ot='onetui --config "$HOME/onetui.toml"'
 
 ### Supported settings and defaults
 
-Currently, the only top-level setting is `[connections]`, containing named `[connections.<alias>]` entries. **PostgreSQL supports row/metadata browsing and headless checks; Qdrant supports headless checks only.** There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
+Currently, the only top-level setting is `[connections]`, containing named `[connections.<alias>]` entries. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
 
 | Field | Applies to | Required / default |
 | --- | --- | --- |
@@ -133,7 +136,7 @@ PostgreSQL certificate loading, including native-root lookup when `ca_file` is o
 
 Remote Qdrant URLs must use `https://` with native trust roots; `http://` is limited to loopback hosts. Specify the gRPC port (normally 6334), not the REST port; ports are never rewritten. URL credentials, path prefixes, queries and fragments are unsupported. Qdrant custom-CA config and client certificates are not implemented. Collection-scoped keys may not permit listing; that is reported as denied, not an empty result.
 
-The Qdrant check caps its protobuf metadata response at 1 MiB and reports an explicit limit error if exceeded; this is not a process-memory ceiling. PostgreSQL returns one boolean catalog result. Neither check proves permission to read every table/collection.
+Qdrant checks and browsing cap each protobuf response at 1 MiB and report an explicit limit error if exceeded; this is not a process-memory ceiling. PostgreSQL's check returns one boolean catalog result. Neither check proves permission to read every table/collection.
 
 ## Disposable local fixtures and tests
 
@@ -150,10 +153,14 @@ No manual secret exports or startup retries are needed. Readiness requires a suc
 
 The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. Historical fixed-query experiments remain separate from the production PostgreSQL row/metadata tests. Connector-specific tests live under their own packages; the TUI package owns its keyboard/request-state PostgreSQL journey. Production coverage includes typed composite keysets, server-side size guards, cancellation and connection cleanup. `dev-down` removes the fixture containers/network and their temporary data; it does not touch external databases.
 
-## CI and releases
+## Contributing
 
 Separate PR and main workflows run the same Make targets on Linux x86_64 and macOS arm64; Docker integration tests run on Linux. Main also builds the release profile. Dependencies are locked and workflow actions are pinned to commit SHAs. Workflow definitions are present; hosted results are not yet verified.
 
-Versions follow Semantic Versioning; the current development target is **v0.1.0**, represented as `0.1.0` in Cargo. Releases are published manually through the **GitHub Releases UI**, not by pushes or automatic version-bump bots. Publishing a release triggers validated binary packaging and attaches native archives plus SHA-256 files. See the [release checklist](docs/releases.md), including tag/version checks and current unsigned-platform limitations.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, pull requests, required checks and release instructions.
 
-License and package/publication availability remain to be decided before distribution; Cargo registry publishing is disabled.
+Package/publication availability remains to be decided before distribution; Cargo registry publishing is disabled.
+
+## License
+
+OneTUI is licensed under [Apache-2.0](LICENSE). Release archives include the license text.

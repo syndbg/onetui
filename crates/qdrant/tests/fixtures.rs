@@ -1,4 +1,6 @@
 //! Connector experiments against the fixed disposable local Qdrant fixture.
+use onetui_core::provider::{Executor, PageRequest, Provider, RequestContext, ShutdownContext};
+use onetui_core::{Page, Resource};
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
     CreateCollectionBuilder, DeletePointsBuilder, Distance, GetPointsBuilder,
@@ -12,6 +14,171 @@ use std::process::Command;
 use std::time::Duration;
 
 const QDRANT: &str = "http://127.0.0.1:16334";
+
+#[cfg(unix)]
+#[path = "support/terminal.rs"]
+mod terminal;
+
+fn browser() -> onetui_qdrant::QdrantExecutor {
+    onetui_qdrant::QdrantProvider
+        .configure(
+            &toml::from_str(&format!("url='{QDRANT}'\napi_key_env='FIXTURE_KEY'")).unwrap(),
+            &|_| Some("fixture-reader-only".into()),
+        )
+        .unwrap()
+}
+
+async fn fetch(
+    executor: &onetui_qdrant::QdrantExecutor,
+    resource: Resource,
+    continuation: Option<String>,
+) -> anyhow::Result<Page> {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor
+        .fetch_page(
+            PageRequest {
+                resource,
+                continuation,
+            },
+            context,
+        )
+        .await
+}
+
+#[tokio::test]
+#[ignore = "creates only its own collection in the disposable Qdrant fixture"]
+async fn production_browser_pages_metadata_payload_and_removed_points() {
+    let client = Qdrant::from_url(QDRANT)
+        .api_key("fixture-admin-only")
+        .skip_compatibility_check()
+        .build()
+        .unwrap();
+    let name = format!("onetui_browser_{}", std::process::id());
+    client
+        .create_collection(
+            CreateCollectionBuilder::new(&name)
+                .vectors_config(VectorParamsBuilder::new(3, Distance::Dot)),
+        )
+        .await
+        .unwrap();
+    let mut executor = browser();
+    let result = async {
+        let list = fetch(&executor, Resource::new("qdrant.collections", vec![]), None).await?;
+        let collection = list
+            .rows
+            .iter()
+            .find(|r| r.cells[0].as_deref() == Some(&name))
+            .unwrap()
+            .target
+            .clone()
+            .unwrap();
+        let menu = fetch(&executor, collection, None).await?;
+        let points = menu.rows[0].target.clone().unwrap();
+        assert!(
+            fetch(&executor, points.clone(), None)
+                .await?
+                .rows
+                .is_empty()
+        );
+        let metadata = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
+        assert!(metadata.rows.iter().any(|r| r.cells[0].as_deref()
+            == Some("points_count (approximate)")
+            && r.cells[1].as_deref() == Some("0")));
+        let mut records: Vec<_> = (1_u64..=105)
+            .map(|id| {
+                PointStruct::new(
+                    id,
+                    vec![1.0, 2.0, 3.0],
+                    [("title", format!("point-{id}").into())],
+                )
+            })
+            .collect();
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        records.push(PointStruct::new(
+            uuid,
+            vec![1.0, 2.0, 3.0],
+            [(
+                "nested",
+                serde_json::json!({"null": null, "array": [1, "София\u{001b}[31m"]}).into(),
+            )],
+        ));
+        records.push(PointStruct::new(
+            u64::MAX,
+            vec![1.0, 2.0, 3.0],
+            qdrant_client::Payload::default(),
+        ));
+        client
+            .upsert_points(UpsertPointsBuilder::new(&name, records).wait(true))
+            .await?;
+        let first = fetch(&executor, points.clone(), None).await?;
+        assert_eq!(first.rows.len(), 100);
+        assert_eq!(first.rows[0].cells[0].as_deref(), Some("1"));
+        assert!(first.rows.iter().all(|r| r.cells.len() == 2));
+        let token = first.continuation.clone();
+        let last = fetch(&executor, points.clone(), token.clone()).await?;
+        assert_eq!(last.rows.len(), 7);
+        assert_eq!(last.rows[0].cells[0].as_deref(), Some("101"));
+        assert!(!last.next);
+        assert!(last.continuation.is_none());
+        let uuid_row = last
+            .rows
+            .iter()
+            .find(|r| r.cells[0].as_deref() == Some(uuid))
+            .unwrap();
+        let menu = fetch(&executor, uuid_row.target.clone().unwrap(), None).await?;
+        let payload = fetch(&executor, menu.rows[0].target.clone().unwrap(), None).await?;
+        assert!(payload.rows[0].cells[0].as_ref().unwrap().contains("София"));
+        assert!(!payload.rows[0].cells[0].as_ref().unwrap().contains('\x1b'));
+        let vectors = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
+        assert_eq!(vectors.rows[0].cells[1].as_deref(), Some("dense"));
+        assert_eq!(vectors.rows[0].cells[3].as_deref(), Some("[1.0,2.0,3.0]"));
+        let empty_payload = fetch(
+            &executor,
+            Resource::new("qdrant.payload", vec![name.clone(), u64::MAX.to_string()]),
+            None,
+        )
+        .await?;
+        assert_eq!(empty_payload.rows[0].cells[0].as_deref(), Some("{}"));
+        assert!(
+            fetch(&browser(), points.clone(), token.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            fetch(
+                &executor,
+                Resource::new("qdrant.points", vec!["other".into()]),
+                token
+            )
+            .await
+            .is_err()
+        );
+        let refreshed = fetch(&executor, points.clone(), None).await?;
+        assert_eq!(refreshed.rows[0].cells[0], first.rows[0].cells[0]);
+        #[cfg(unix)]
+        terminal::journey(&name);
+        client
+            .delete_points(
+                DeletePointsBuilder::new(&name)
+                    .points(vec![qdrant_client::qdrant::PointId::from(uuid)])
+                    .wait(true),
+            )
+            .await?;
+        let error = fetch(&executor, menu.rows[0].target.clone().unwrap(), None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("disappeared"));
+        assert!(fetch(&executor, points, None).await.is_ok());
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+    client.delete_collection(&name).await.unwrap();
+    result.unwrap();
+}
 
 #[tokio::test]
 #[ignore = "creates a uniquely named collection ONLY in the disposable Qdrant fixture"]
@@ -190,7 +357,20 @@ async fn qdrant_large_payload_and_vector_variants() {
         // A rejected detail request must not make an ID-only retry fail.
         let retry = client.scroll(ScrollPointsBuilder::new(&name).limit(2).with_payload(false).with_vectors(false)).await?;
         assert_eq!(retry.result[0].id, page.result[0].id);
-        Ok::<_, qdrant_client::QdrantError>(())
+        let mut executor = browser();
+        let points = Resource::new("qdrant.points", vec![name.clone()]);
+        let first = fetch(&executor, points.clone(), None).await?;
+        let menu = fetch(&executor, first.rows[0].target.clone().unwrap(), None).await?;
+        let error = fetch(&executor, menu.rows[0].target.clone().unwrap(), None).await.unwrap_err();
+        assert!(error.to_string().contains("1 MiB"));
+        let vectors = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
+        assert_eq!(vectors.rows.iter().map(|r| r.cells[0].as_deref().unwrap()).collect::<Vec<_>>(), ["dense", "multi", "sparse"]);
+        assert_eq!(vectors.rows[0].cells[3].as_deref(), Some("[1.0,2.0,3.0]"));
+        assert_eq!(vectors.rows[1].cells[2].as_deref(), Some("2 x 3"));
+        assert_eq!(vectors.rows[2].cells[3].as_deref(), Some("{\"indices\":[3,1000],\"values\":[0.5,1.5]}"));
+        assert_eq!(fetch(&executor, points, None).await?.rows[0].cells[0], first.rows[0].cells[0]);
+        executor.shutdown(ShutdownContext::new(Duration::from_secs(1))).await?;
+        Ok::<_, anyhow::Error>(())
     }.await;
     client.delete_collection(&name).await.unwrap();
     result.unwrap();

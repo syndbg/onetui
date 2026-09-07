@@ -34,9 +34,12 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
         schema["datasources"][0]["resources"][0]["id"],
         "postgres.schemas"
     );
-    assert_eq!(schema["datasources"][1]["resources"], serde_json::json!([]));
+    assert_eq!(
+        schema["datasources"][1]["resources"][0]["id"],
+        "qdrant.collections"
+    );
     assert_eq!(schema["shell"]["keybindings_configurable"], false);
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("qdrant.points"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("qdrant.points"));
     let example = schema["configuration"]["example_toml"].as_str().unwrap();
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), example).unwrap();
@@ -97,6 +100,17 @@ fn qdrant_catalog_filter() {
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
     assert_eq!(schema["datasources"][0]["id"], "qdrant");
-    assert!(schema["datasources"][0]["entry_resource"].is_null());
+    assert_eq!(
+        schema["datasources"][0]["entry_resource"],
+        "qdrant.collections"
+    );
+    assert_eq!(
+        schema["datasources"][0]["resources"]
+            .as_array()
+            .unwrap()
+            .len(),
+        7
+    );
+    assert_eq!(schema["datasources"][0]["limits"]["rpc_bytes"], 1048576);
     assert!(schema["datasources"][0]["session"].is_string());
 }

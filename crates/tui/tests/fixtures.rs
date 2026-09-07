@@ -544,12 +544,12 @@ mod terminal {
     }
 
     #[tokio::test]
-    #[ignore = "requires the disposable PostgreSQL fixture and built CLI"]
+    #[ignore = "requires disposable PostgreSQL/Qdrant fixtures and built CLI for connection switching"]
     async fn actual_cli_terminal_worker_and_postgres_journey() {
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(
             config,
-            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.pg_other]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'"
+            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.pg_other]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.qd]\nkind='qdrant'\nurl='http://127.0.0.1:16334'\napi_key_env='ONETUI_LIVE_PTY_KEY'"
         )
         .unwrap();
         let binary = std::env::var_os("ONETUI_TEST_BIN")
@@ -562,7 +562,8 @@ mod terminal {
             .arg("--config")
             .arg(config.path())
             .args(["--connection", "pg"])
-            .env("ONETUI_LIVE_PTY_DSN", PG_READER);
+            .env("ONETUI_LIVE_PTY_DSN", PG_READER)
+            .env("ONETUI_LIVE_PTY_KEY", "fixture-reader-only");
         let observer = Observer::connect().await;
         observer.wait_count(0).await;
         let (mut pty, slave) = Pty::spawn(command);
@@ -645,6 +646,23 @@ mod terminal {
                 "9007199254740993",
             ]);
         }
+        pty.send(b":back\r");
+        pty.wait(&["postgres.relations", "keyed_rows"]);
+        pty.open_filtered("browse_slow");
+        pty.wait(&["postgres.rows", "Loading"]);
+        let old_pid = observer.sleeping_pid().await;
+        pty.send(b"c");
+        pty.wait(&["connections", "qd"]);
+        pty.open_filtered("qd");
+        pty.wait(&["OneTUI|qd|read-only", "qdrant.collections", "Connected"]);
+        observer.wait_gone(old_pid).await;
+        observer.wait_count(0).await;
+        // Allow cancelled PostgreSQL completion to reach the worker before another draw.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        pty.send(b"r");
+        pty.wait(&["OneTUI|qd|read-only", "qdrant.collections", "Connected"]);
+        assert!(!String::from_utf8_lossy(&pty.output).contains("9007199254740993"));
+        assert!(!String::from_utf8_lossy(&pty.output).contains("Request cancelled"));
         pty.output.clear();
         pty.master.as_mut().unwrap().write_all(b"q").unwrap();
         let until = Instant::now() + Duration::from_secs(3);

@@ -1379,6 +1379,7 @@ name = "onetui-qdrant"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nix",
  "onetui-core",
  "qdrant-client",
  "serde",
@@ -1627,6 +1628,8 @@ dependencies = [
  "prost",
  "prost-types",
  "semver",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tonic",

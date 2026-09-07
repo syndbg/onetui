@@ -10,7 +10,7 @@ make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
 
-`make run` builds and supplies fake PostgreSQL credentials; it does not start/recreate containers. Enter opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. The integration target includes the actual CLI/PTY/PostgreSQL journey as a TUI-package test. Fixtures include multi-page bigint/composite keys and explicit size/error cases. See [PostgreSQL usage](../docs/postgres.md).
+`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens PostgreSQL initially. Enter opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Press `c` and select `local_qdrant` to browse Qdrant with the same keys. Its fresh fixture is empty; Qdrant-owned tests create and remove their own collections. See [PostgreSQL usage](../docs/postgres.md) and [Qdrant usage](../docs/qdrant.md).
 
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 
@@ -40,7 +40,7 @@ Keep these package-owned suites separate; do not parameterize a harness over bot
 
 Those tests change only disposable fixture tables/collections and their own reader sessions. Finish with `make dev-down`.
 
-Provider lifecycle checks need no extra configuration: PostgreSQL fixtures observe TLS session reuse, idle transaction state, cancellation and reconnection. Qdrant's default local protocol tests count connections/RPCs and verify channel cleanup. The TUI journey exercises the same provider worker used by `make run`, including resize/input interleaving.
+Provider lifecycle checks need no extra configuration: PostgreSQL fixtures observe TLS session reuse, idle transaction state, cancellation and reconnection. Qdrant's default local protocol tests count connections/RPCs and verify channel cleanup. Its fixture suite tests production collection/point/detail reads and a Qdrant-only CLI/PTY journey. The TUI journey exercises the same provider worker used by `make run`, including resize/input interleaving and switching from a delayed PostgreSQL read to Qdrant. The harness supplies its child-only `ONETUI_LIVE_PTY_KEY` reference with the fake reader key; it is not a production setting.
 
 The TUI suite switches PostgreSQL aliases during active reads and tests worker panic, forced abort and stalled shutdown with real connections. Its test child receives `ONETUI_LIFECYCLE_TEST_MODE` (`panic`, `read`, `shutdown`, `quit_read`) and `ONETUI_LIFECYCLE_TEST_DSN` from the harness only; these are not CLI settings. The child waits for the parent to inspect terminal flags and server PIDs before exiting. Default PostgreSQL tests use temporary FIFOs and child-only `SSL_CERT_FILE`/`SSL_CERT_DIR` values to verify certificate-load deadlines and SIGINT; the host trust store is unchanged.
 

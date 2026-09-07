@@ -1,8 +1,10 @@
 # onetui-qdrant
 
-Qdrant headless checks, verified gRPC/TLS, bounded response decoding, descriptors and Qdrant-only tests. Interactive collection/point browsing is not implemented.
+Qdrant headless checks, collection/point browsing, separate payload/vector reads, verified gRPC/TLS, bounded response decoding, descriptors and Qdrant-only tests.
 
-`QdrantProvider` validates its own options and creates a lazy executor. Checks reuse a generated, size-capped `CollectionsClient`; cancellation/failure discards its channel. Shutdown releases it. HTTP/2 keepalive has no configured interval, and idle pings are disabled; no periodic metadata checks or heartbeat setting. Local protocol tests cover reuse, cancellation, no idle queries and channel release separately from PostgreSQL.
+`QdrantProvider` validates its own options and creates a lazy executor. Generated, size-capped `CollectionsClient` and `PointsClient` instances share its channel; cancellation/failure discards it. Shutdown releases it. HTTP/2 keepalive has no configured interval, and idle pings are disabled; no periodic metadata checks or heartbeat setting. Local protocol tests cover reuse, cancellation, no idle queries and channel release separately from PostgreSQL.
+
+`browse.rs` owns all seven resources, scoped continuations and bounded display formatting. The official client's `serde` feature converts payloads to JSON; other default features remain disabled. Collection and point menus use ordinary row targets, so the shared shell needs no backend branches or new keys.
 
 ## Validation
 
@@ -21,4 +23,6 @@ cargo test -p onetui-qdrant --locked --test fixtures -- --ignored --test-threads
 
 Finish with `make dev-down` only when ready to discard the disposable data. CLI tests use the built workspace binary; test-only `ONETUI_TEST_BIN` optionally selects another prebuilt binary path. Use an absolute path for custom target directories. Qdrant TLS tests also need OpenSSL to generate an unrelated test CA.
 
-See [configuration](../../README.md#configuration) for settings, defaults, accepted values and examples, and [PostgreSQL usage](../../docs/postgres.md) for navigation and fixed limits.
+The production fixture test also drives the built CLI through a Qdrant-only PTY helper, including paging, cached detail and quit. Its child receives the existing `ONETUI_QDRANT_API_KEY` reference with a fake fixture value. PostgreSQL tests are not imported or parameterized here.
+
+See [configuration](../../README.md#configuration) for settings, defaults, accepted values and examples, and [Qdrant usage](../../docs/qdrant.md) for navigation and fixed limits. No new application settings are required.
