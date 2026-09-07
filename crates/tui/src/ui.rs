@@ -8,11 +8,12 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{DefaultTerminal, Frame};
-use tokio::sync::oneshot;
 
-use crate::app::{App, Request};
+use crate::app::App;
+#[cfg(test)]
+use onetui_core::Page;
 use onetui_core::catalog::Action;
-use onetui_core::{PAGE_SIZE, Page, display};
+use onetui_core::{PAGE_SIZE, display};
 
 struct TerminalGuard;
 
@@ -33,94 +34,100 @@ fn terminal() -> Result<(TerminalGuard, DefaultTerminal)> {
     Ok((guard, terminal))
 }
 
-struct Worker {
-    request: Request,
-    task: tokio::task::JoinHandle<Result<Page>>,
-    cancel: Option<oneshot::Sender<()>>,
-}
-
-impl Worker {
-    fn cancel(&mut self) {
-        if let Some(cancel) = self.cancel.take() {
-            let _ = cancel.send(());
-        }
-    }
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        self.cancel();
-        self.task.abort();
-    }
-}
-
-pub async fn run(mut app: App, deadline: Duration) -> Result<()> {
+pub async fn run<P: onetui_core::provider::Provider>(
+    mut app: App,
+    deadline: Duration,
+    catalog: &[P],
+) -> Result<()>
+where
+    P::Executor: 'static,
+{
+    use crate::worker::{Worker, WorkerEvent};
     let (_guard, mut terminal) = terminal()?;
     let mut events = EventStream::new();
     let mut worker: Option<Worker> = None;
-    while !app.quit {
-        if worker.is_none()
-            && let Some(request) = app.request.take()
-        {
-            match app
-                .config
-                .resolve(&request.alias, |name| std::env::var(name).ok())
-            {
-                Ok(onetui_core::config::ResolvedConnection::Postgres { url, ca_file }) => {
-                    let (cancel, receiver) = oneshot::channel();
-                    let task = tokio::spawn(onetui_postgres::fetch(
-                        url,
-                        ca_file,
-                        request.resource.clone(),
-                        request.offset,
-                        request.continuation.clone(),
-                        deadline,
-                        receiver,
-                    ));
-                    worker = Some(Worker {
-                        request,
-                        task,
-                        cancel: Some(cancel),
-                    });
+    let outcome = async {
+        while !app.quit {
+            if let Some(active) = &mut worker {
+                if app.view.alias.as_deref() != Some(active.alias.as_str()) || app.session != active.session {
+                    active.stop();
+                } else if active.request.as_ref().is_some_and(|request| request.id != app.generation) {
+                    active.cancel();
                 }
-                Err(error) => app.complete(&request, Err(error)),
-                Ok(_) => app.complete(
-                    &request,
-                    Err(anyhow!("This datasource does not support browsing yet")),
-                ),
+            }
+            if worker.is_none() && app.request.is_some() {
+                let alias = app.request.as_ref().expect("pending request").alias.clone();
+                match app.config.configure(&alias, catalog, &|name| std::env::var(name).ok()) {
+                    Ok(executor) => worker = Some(Worker::new(alias, app.session, executor)),
+                    Err(error) => {
+                        let request = app.request.take().expect("pending request");
+                        app.complete(&request, Err(error));
+                    }
+                }
+            }
+            if let Some(active) = &mut worker
+                && !active.closing && active.request.is_none()
+                && let Some(request) = app.request.take()
+            {
+                active.submit(request, deadline)?;
+            }
+            terminal.draw(|frame| draw(frame, &app)).map_err(|_| anyhow!("cannot draw terminal"))?;
+            tokio::select! {
+                event = events.next() => match event {
+                    Some(Ok(Event::Key(key))) => app.key(key),
+                    Some(Ok(_)) => {},
+                    Some(Err(_)) | None => return Err(anyhow!("terminal input closed or failed")),
+                },
+                signal = tokio::signal::ctrl_c() => {
+                    signal.map_err(|_| anyhow!("cannot listen for interruption"))?;
+                    app.act(Action::Cancel);
+                },
+                event = async { worker.as_mut().expect("guarded worker").event().await }, if worker.is_some() => {
+                    match event {
+                        WorkerEvent::Page(result) => {
+                            let request = worker.as_mut().expect("active worker").request.take().expect("completed request");
+                            if worker.as_ref().is_some_and(|w| w.session == app.session) {
+                                app.complete(&request, result);
+                            }
+                        }
+                        WorkerEvent::Status(status) => {
+                            if let Some(worker) = &worker {
+                                app.update_connection_status(worker.session, &worker.alias, status);
+                            }
+                        }
+                        WorkerEvent::Finished(result) => {
+                            let finished = worker.take().expect("finished worker");
+                            result?;
+                            ensure!(finished.closing, "browsing worker stopped unexpectedly");
+                        }
+                    }
+                },
             }
         }
-        terminal
-            .draw(|frame| draw(frame, &app))
-            .map_err(|_| anyhow!("cannot draw terminal"))?;
-        tokio::select! {
-            event = events.next() => match event {
-                Some(Ok(Event::Key(key))) => app.key(key),
-                Some(Ok(_)) => {},
-                Some(Err(_)) | None => return Err(anyhow!("terminal input closed or failed")),
-            },
-            signal = tokio::signal::ctrl_c() => {
-                signal.map_err(|_| anyhow!("cannot listen for interruption"))?;
-                app.act(Action::Cancel);
-            },
-            result = async { (&mut worker.as_mut().expect("guarded worker").task).await }, if worker.is_some() => {
-                let finished = worker.take().expect("completed worker");
-                // The global panic hook restores terminal modes; do not resume drawing after a worker panic.
-                let result = result.map_err(|_| anyhow!("browsing worker failed; terminal restored"))?;
-                app.complete(&finished.request, result);
-            },
+        Ok(())
+    }.await;
+    let cleanup = if let Some(active) = &mut worker {
+        active.stop();
+        match tokio::time::timeout(Duration::from_secs(2), &mut active.task).await {
+            Ok(result) => result
+                .map_err(|_| anyhow!("browsing worker failed; terminal restored"))
+                .and_then(|r| r),
+            Err(_) => {
+                active.task.abort();
+                let _ = (&mut active.task).await;
+                Err(anyhow!(
+                    "browsing worker shutdown timed out; connections discarded"
+                ))
+            }
         }
-        if let Some(worker) = &mut worker
-            && worker.request.id != app.generation
-        {
-            worker.cancel();
-        }
+    } else {
+        Ok(())
+    };
+    match (outcome, cleanup) {
+        (Err(primary), Err(cleanup)) => Err(anyhow!("{primary}; cleanup: {cleanup}")),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+        _ => Ok(()),
     }
-    if let Some(worker) = &mut worker {
-        worker.cancel();
-        let _ = tokio::time::timeout(Duration::from_secs(2), &mut worker.task).await;
-    }
-    Ok(())
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -139,7 +146,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .unwrap_or_else(|| "choose connection".into());
     frame.render_widget(
         Paragraph::new(format!(
-            "OneTUI | {alias} | read-only\n{}",
+            "OneTUI | {alias} | read-only | transport: {:?}\n{}",
+            app.connection_status,
             app.view.resource.breadcrumb()
         )),
         header,
@@ -270,7 +278,8 @@ mod tests {
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(config, "[connections]").unwrap();
         let mut app = App::new(
-            onetui_core::config::Config::load(config.path()).unwrap(),
+            onetui_core::config::Config::load(config.path(), crate::test_provider::CATALOG)
+                .unwrap(),
             None,
         );
         for (width, height) in [(1, 1), (20, 6), (100, 30)] {
@@ -284,14 +293,14 @@ mod tests {
     #[test]
     fn dynamic_row_columns_and_bounded_detail_render_on_narrow_frames() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write!(file, "[connections.pg]\nkind='postgres'\nurl_env='UNUSED'").unwrap();
+        write!(file, "[connections.pg]\nkind='fake'\nurl_env='UNUSED'").unwrap();
         let mut app = App::new(
-            onetui_core::config::Config::load(file.path()).unwrap(),
+            onetui_core::config::Config::load(file.path(), crate::test_provider::CATALOG).unwrap(),
             Some("pg"),
         );
         let request = app.request.take().unwrap();
         app.view.resource =
-            onetui_core::Resource::new("postgres.rows", vec!["public".into(), "test".into()]);
+            onetui_core::Resource::new("fake.rows", vec!["public".into(), "test".into()]);
         app.complete(
             &request,
             Ok(Page {
@@ -343,7 +352,7 @@ mod tests {
             let alias = if mode == "connection_error" {
                 write!(
                     file,
-                    "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_PTY_DSN'"
+                    "[connections.pg]\nkind='fake'\nurl_env='ONETUI_PTY_DSN'"
                 )
                 .unwrap();
                 Some("pg")
@@ -352,12 +361,17 @@ mod tests {
                 None
             };
             let app = App::new(
-                onetui_core::config::Config::load(file.path()).unwrap(),
+                onetui_core::config::Config::load(file.path(), crate::test_provider::CATALOG)
+                    .unwrap(),
                 alias,
             );
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(run(app, Duration::from_secs(1)))
+                .block_on(run(
+                    app,
+                    Duration::from_secs(1),
+                    crate::test_provider::CATALOG,
+                ))
                 .unwrap();
         });
         // macOS revokes the slave when its session leader exits; inspect modes before that happens.
@@ -439,9 +453,7 @@ mod tests {
                 }
                 let text = String::from_utf8_lossy(&output);
                 let ready = if mode == "connection_error" {
-                    text.contains("invalid")
-                        && text.contains("PostgreSQL")
-                        && text.contains("string")
+                    text.contains("fake connection")
                 } else {
                     text.contains("Empty") && text.contains("result")
                 };

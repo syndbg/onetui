@@ -4,6 +4,8 @@ PostgreSQL row/metadata/check queries, verified TLS, cancellation, descriptors a
 
 ## Validation
 
+`PostgresProvider` owns strict configuration and descriptors. Its executor connects lazily, reuses successful sessions and keeps the native driver alive while idle. Cancellation or failed reads retire the connection; explicit reads may reconnect. Transactions end before display, and shutdown owns driver cleanup. PostgreSQL-only fixtures verify physical session reuse over TLS, transaction-free idle time, cancellation retirement and server-disconnect recovery. See [lifecycle and keepalive defaults](../../docs/postgres.md#request-and-terminal-lifecycle).
+
 ```sh
 make build
 cargo test -p onetui-postgres --locked

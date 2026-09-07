@@ -4,6 +4,8 @@ Navigation state, request identity/cancellation, terminal lifecycle and renderin
 
 ## Validation
 
+The worker owns a generic executor for one selected alias, with one active request and one replaceable pending request. Descriptors supply entry resources and navigation targets. Production code imports no connector or database SDK; PostgreSQL is a dev dependency for this package's live journey. Session/request identities reject stale pages, errors and transport status. Unix input uses Crossterm's polling backend; the PTY journey also checks repeated resize/input interleaving.
+
 ```sh
 make build
 cargo test -p onetui-tui --locked

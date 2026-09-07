@@ -2,6 +2,8 @@
 
 Qdrant headless checks, verified gRPC/TLS, bounded response decoding, descriptors and Qdrant-only tests. Interactive collection/point browsing is not implemented.
 
+`QdrantProvider` validates its own options and creates a lazy executor. Checks reuse a generated, size-capped `CollectionsClient`; cancellation/failure discards its channel. Shutdown releases it. HTTP/2 keepalive has no configured interval, and idle pings are disabled; no periodic metadata checks or heartbeat setting. Local protocol tests cover reuse, cancellation, no idle queries and channel release separately from PostgreSQL.
+
 ## Validation
 
 ```sh

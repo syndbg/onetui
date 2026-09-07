@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Up,
@@ -116,10 +116,42 @@ pub struct ResourceDescriptor {
     pub id: &'static str,
     pub description: &'static str,
     pub columns: &'static [&'static str],
+    pub paging: bool,
+    pub actions: &'static [ResourceAction],
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionSource {
+    Current,
+    SelectedTarget,
+}
+
+#[derive(Serialize)]
+pub struct ResourceAction {
+    pub id: Action,
+    pub target: &'static str,
+    pub source: ActionSource,
+}
+
+impl ResourceAction {
+    pub fn target(
+        &self,
+        current: &crate::Resource,
+        row: Option<&crate::Row>,
+    ) -> Option<crate::Resource> {
+        let source = match self.source {
+            ActionSource::Current => current,
+            ActionSource::SelectedTarget => row?.target.as_ref()?,
+        };
+        Some(crate::Resource::new(self.target, source.path.clone()))
+    }
 }
 
 pub const CONNECTIONS: ResourceDescriptor = ResourceDescriptor {
     id: "connections",
     description: "Configured aliases; secrets resolved only when selected",
     columns: &["alias", "datasource", "browsing"],
+    paging: false,
+    actions: &[],
 };

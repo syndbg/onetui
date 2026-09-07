@@ -11,7 +11,7 @@ The first release targets PostgreSQL and Qdrant, using Rust, Ratatui, and Tokio.
 Start with:
 
 - [ADR convention](docs/adr/0000-record-architecture-decisions.md): how decisions are recorded, numbered and superseded..
-- [Static provider dispatch ADR](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md): accepted enum-based interfaces and built-in catalog; no dynamic plugins or dispatch-related future boxing. Implementation pending.
+- [Static provider dispatch ADR](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md): implemented native async interfaces, built-in enums and catalog; no dynamic plugins or dispatch-related future boxing.
 - [Provider lifecycle ADR](docs/adr/0001-register-providers-and-own-session-lifecycles.md): connection lifetime, native heartbeats and rejected alternatives; its boxed-dispatch choice is superseded by ADR-0002.
 
 The initial product is a read-only browser. Backend-specific querying follows the browsing foundation; data editing and broker administration are outside the initial scope.
@@ -53,6 +53,10 @@ Interactive mode navigates schemas → tables/views → row pages → field/type
 See [PostgreSQL usage](docs/postgres.md) for keys, limits, cancellation behavior and remaining work. Browsing uses the connection configuration described below.
 
 ## Workspace packages
+
+The root's `src/providers.rs` registers the compiled provider/executor enums and immutable catalog. Core defines the interfaces; each connector owns strict options, resource/action descriptors, native clients and continuation. Config loading, headless `check`, offline `schema` and the generic TUI worker use those interfaces. Adding a datasource requires its package, enum delegation and catalog entry, then a rebuild. No runtime plugins or backend selection branches in the shell.
+
+Selected sessions connect lazily and retain healthy transports. PostgreSQL finishes each transaction before display; cancellation or failed reads discard the connection, and a later explicit read reconnects. Alias changes and quit close the executor. See [session lifetime and native keepalive defaults](docs/postgres.md#request-and-terminal-lifecycle).
 
 | Package | Owns |
 | --- | --- |
@@ -102,7 +106,9 @@ Currently, the only top-level setting is `[connections]`, containing named `[con
 
 Connection aliases and environment-reference names must contain only ASCII letters, digits, underscores or hyphens, and cannot be empty. Only the selected connection's environment references are resolved. The names `ONETUI_POSTGRES_URL` and `ONETUI_QDRANT_API_KEY` below are examples, not automatically read variables; you may explicitly reference other names. Store credentials in those environment variables, not inline password/API-key fields.
 
-Unknown settings are rejected, including unsupported connection fields. Keybindings, themes, views, plugins and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1-300 seconds**. Errors do not echo config contents or driver error chains.
+Every connection entry is validated, including unselected aliases: unknown fields/kinds, invalid environment-reference names, relative PostgreSQL CA paths and invalid Qdrant URLs fail when loading the file. Only the selected connection resolves secrets or opens files/transports. Existing valid configuration needs no migration; fix invalid unused entries rather than relying on them being ignored.
+
+Keybindings, themes, views, plugins, heartbeats and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1-300 seconds**. Errors do not echo config contents or driver error chains.
 
 Example config (save it at the default location or at the explicit path passed to `--config`):
 

@@ -13,7 +13,7 @@ Selecting a connection chooses a compiled enum variant. OneTUI does not load exe
 
 This replaces [ADR-0001](0001-register-providers-and-own-session-lifecycles.md)'s boxed dispatch and one-registration extension model. Its resource capabilities, strict configuration, paging, client ownership, cancellation, shutdown and heartbeat contracts still apply.
 
-Implementation is pending.
+Implemented.
 
 ## Context and rationale
 

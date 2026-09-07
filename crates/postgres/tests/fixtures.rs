@@ -1,4 +1,5 @@
 //! Connector experiments against the fixed disposable local PostgreSQL fixture.
+use onetui_core::provider::{Executor, PageRequest, Provider, RequestContext, ShutdownContext};
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use std::io::Write;
 use std::process::Command;
@@ -9,25 +10,37 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 const PG: &str = "host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable";
 const PG_ADMIN: &str = "host=127.0.0.1 port=15432 user=onetui_fixture_admin password=fixture-admin-only dbname=onetui_fixture sslmode=disable";
 
-async fn browse(resource: onetui_core::Resource, offset: i64) -> anyhow::Result<onetui_core::Page> {
-    let (_cancel, receiver) = tokio::sync::oneshot::channel();
-    onetui_postgres::fetch(
-        PG.into(),
-        None,
-        resource,
-        offset,
-        None,
-        Duration::from_secs(5),
-        receiver,
-    )
-    .await
+fn provider() -> onetui_postgres::PostgresExecutor {
+    onetui_postgres::PostgresProvider
+        .configure(&toml::from_str("url_env='DSN'").unwrap(), &|_| {
+            Some(PG.into())
+        })
+        .unwrap()
+}
+
+async fn browse(
+    reader: &onetui_postgres::PostgresExecutor,
+    resource: onetui_core::Resource,
+    continuation: Option<String>,
+) -> anyhow::Result<onetui_core::Page> {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    reader
+        .fetch_page(
+            PageRequest {
+                resource,
+                continuation,
+            },
+            context,
+        )
+        .await
 }
 
 #[tokio::test]
 #[ignore = "requires the disposable PostgreSQL fixture"]
 async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     use onetui_core::Resource;
-    let schemas = browse(Resource::new("postgres.schemas", vec![]), 0)
+    let mut reader = provider();
+    let schemas = browse(&reader, Resource::new("postgres.schemas", vec![]), None)
         .await
         .unwrap();
     assert!(
@@ -37,8 +50,9 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
             .any(|row| row.cells[0].as_deref() == Some("public"))
     );
     let tables = browse(
+        &reader,
         Resource::new("postgres.relations", vec!["public".into()]),
-        0,
+        None,
     )
     .await
     .unwrap();
@@ -49,11 +63,12 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
         .unwrap();
     assert_eq!(sample.target.as_ref().unwrap().id, "postgres.rows");
     let columns = browse(
+        &reader,
         Resource::new(
             "postgres.columns",
             sample.target.as_ref().unwrap().path.clone(),
         ),
-        0,
+        None,
     )
     .await
     .unwrap();
@@ -73,48 +88,57 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
         .find(|row| row.cells[0].as_deref() == Some("quoted'; -- relation"))
         .unwrap();
     let columns = browse(
+        &reader,
         Resource::new(
             "postgres.columns",
             quoted.target.as_ref().unwrap().path.clone(),
         ),
-        0,
+        None,
     )
     .await
     .unwrap();
     assert_eq!(columns.rows[0].cells[0].as_deref(), Some("odd\"column"));
     let empty = browse(
+        &reader,
         Resource::new("postgres.relations", vec!["empty_schema".into()]),
-        0,
+        None,
     )
     .await
     .unwrap();
     assert!(empty.rows.is_empty());
     let denied = browse(
+        &reader,
         Resource::new(
             "postgres.columns",
             vec!["public".into(), "restricted_rows".into()],
         ),
-        0,
+        None,
     )
     .await
     .unwrap_err();
     assert!(denied.to_string().contains("denied"));
     let first = browse(
+        &reader,
         Resource::new("postgres.relations", vec!["pg_catalog".into()]),
-        0,
+        None,
     )
     .await
     .unwrap();
     assert_eq!(first.rows.len(), 100);
     assert!(first.next);
     let second = browse(
+        &reader,
         Resource::new("postgres.relations", vec!["pg_catalog".into()]),
-        100,
+        first.continuation.clone(),
     )
     .await
     .unwrap();
     assert!(!second.rows.is_empty());
     assert_ne!(first.rows[0].cells[0], second.rows[0].cells[0]);
+    reader
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
     let observer = FixturePg::plain(PG_ADMIN).await;
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
@@ -129,19 +153,14 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     );
 }
 async fn row_page(
+    reader: &onetui_postgres::PostgresExecutor,
     relation: &str,
-    offset: i64,
     token: Option<String>,
 ) -> anyhow::Result<onetui_core::Page> {
-    let (_cancel, receiver) = tokio::sync::oneshot::channel();
-    onetui_postgres::fetch(
-        PG.into(),
-        None,
+    browse(
+        reader,
         onetui_core::Resource::new("postgres.rows", vec!["public".into(), relation.into()]),
-        offset,
         token,
-        Duration::from_secs(5),
-        receiver,
     )
     .await
 }
@@ -149,7 +168,8 @@ async fn row_page(
 #[tokio::test]
 #[ignore = "requires the disposable PostgreSQL fixture"]
 async fn row_values_types_nulls_identifiers_and_fallback_selection() {
-    let page = row_page("sample_rows", 0, None).await.unwrap();
+    let reader = provider();
+    let page = row_page(&reader, "sample_rows", None).await.unwrap();
     assert!(page.notice.starts_with("OFFSET"));
     assert_eq!(page.rows.len(), 4);
     let first = page
@@ -185,7 +205,9 @@ async fn row_values_types_nulls_identifiers_and_fallback_selection() {
     assert!(hostile.contains("София 🌊"));
     assert!(hostile.contains("\\n"));
     assert!(!hostile.chars().any(char::is_control));
-    let quoted = row_page("quoted'; -- relation", 0, None).await.unwrap();
+    let quoted = row_page(&reader, "quoted'; -- relation", None)
+        .await
+        .unwrap();
     assert_eq!(quoted.columns[0].name, "odd\"column");
     assert_eq!(quoted.rows[0].cells[0].as_deref(), Some("quoted value"));
     for relation in [
@@ -197,7 +219,7 @@ async fn row_values_types_nulls_identifiers_and_fallback_selection() {
         "browse_parent",
     ] {
         assert!(
-            row_page(relation, 0, None)
+            row_page(&reader, relation, None)
                 .await
                 .unwrap()
                 .notice
@@ -206,43 +228,42 @@ async fn row_values_types_nulls_identifiers_and_fallback_selection() {
         );
     }
     assert!(
-        row_page("browse_uuid", 0, None)
+        row_page(&reader, "browse_uuid", None)
             .await
             .unwrap()
             .rows
             .is_empty()
     );
     assert!(
-        row_page("restricted_rows", 0, None)
+        row_page(&reader, "restricted_rows", None)
             .await
             .unwrap_err()
             .to_string()
             .contains("denied")
     );
-    assert!(row_page("missing'; --", 0, None).await.is_err());
+    assert!(row_page(&reader, "missing'; --", None).await.is_err());
 }
 
 #[tokio::test]
 #[ignore = "requires the disposable PostgreSQL fixture"]
 async fn production_keysets_preserve_bigints_all_composite_components_and_raw_text() {
-    let mut offset_page = row_page("browse_offset", 0, None).await.unwrap();
+    let reader = provider();
+    let mut offset_page = row_page(&reader, "browse_offset", None).await.unwrap();
     assert!(offset_page.notice.starts_with("OFFSET"));
     let mut offsets_seen = std::collections::BTreeSet::new();
-    let mut next_offset = 0;
     loop {
         offsets_seen.extend(offset_page.rows.iter().map(|r| r.cells[0].clone().unwrap()));
         if !offset_page.next {
             break;
         }
         assert_eq!(offset_page.rows.len(), 100);
-        next_offset += 100;
-        offset_page = row_page("browse_offset", next_offset, offset_page.continuation)
+        offset_page = row_page(&reader, "browse_offset", offset_page.continuation)
             .await
             .unwrap();
     }
     assert_eq!(offset_page.rows.len(), 5);
     assert_eq!(offsets_seen.len(), 205);
-    let mut page = row_page("browse_composite", 0, None).await.unwrap();
+    let mut page = row_page(&reader, "browse_composite", None).await.unwrap();
     assert!(page.notice.starts_with("Keyset"));
     let mut expected = Vec::new();
     for tenant in [onetui_core::display("a'; --\nСофия"), "b".into()] {
@@ -255,46 +276,50 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
         }
     }
     let mut seen = Vec::new();
-    let mut offset = 0;
     loop {
         seen.extend(page.rows.iter().map(|r| r.cells.clone()));
         assert!(page.bytes() <= onetui_core::PAGE_BYTES);
         if !page.next {
             break;
         }
-        offset += 100;
-        page = row_page("browse_composite", offset, page.continuation)
+        page = row_page(&reader, "browse_composite", page.continuation)
             .await
             .unwrap();
     }
     assert_eq!(seen, expected);
-    let first = row_page("browse_bigint", 0, None).await.unwrap();
+    let first = row_page(&reader, "browse_bigint", None).await.unwrap();
     assert_eq!(first.rows[0].cells[0].as_deref(), Some("9007199254740993"));
     assert_eq!(first.rows[99].cells[0].as_deref(), Some("9007199254741092"));
-    let second = row_page("browse_bigint", 100, first.continuation.clone())
+    let second = row_page(&reader, "browse_bigint", first.continuation.clone())
         .await
         .unwrap();
     assert_eq!(second.rows[0].cells[0].as_deref(), Some("9007199254741093"));
+    assert_eq!(
+        row_page(&reader, "browse_bigint", None).await.unwrap().rows[0].cells[0],
+        first.rows[0].cells[0]
+    );
     assert!(
-        row_page("browse_composite", 100, first.continuation.clone())
+        row_page(&reader, "browse_composite", first.continuation.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("continuation")
+    );
+    let mut mismatched: serde_json::Value =
+        serde_json::from_str(first.continuation.as_ref().unwrap()).unwrap();
+    mismatched["offset"] = serde_json::json!(200);
+    assert!(
+        row_page(&reader, "browse_bigint", Some(mismatched.to_string()))
             .await
             .unwrap_err()
             .to_string()
             .contains("changed")
     );
     assert!(
-        row_page("browse_bigint", 200, first.continuation)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("changed")
-    );
-    assert!(
-        row_page("browse_bigint", 100, Some("not json".into()))
+        row_page(&reader, "browse_bigint", Some("not json".into()))
             .await
             .is_err()
     );
-    assert!(row_page("browse_bigint", 100, None).await.is_err());
     let observer = FixturePg::plain(PG_ADMIN).await;
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
@@ -307,7 +332,7 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
         100,
         "cached data survives disconnected reading time"
     );
-    let last = row_page("browse_bigint", 200, second.continuation)
+    let last = row_page(&reader, "browse_bigint", second.continuation)
         .await
         .unwrap();
     assert_eq!(last.rows.len(), 5);
@@ -317,8 +342,9 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
 #[tokio::test]
 #[ignore = "requires the disposable PostgreSQL fixture"]
 async fn production_row_limits_preserve_lookahead_position() {
+    let reader = provider();
     assert!(
-        row_page("browse_zero", 0, None)
+        row_page(&reader, "browse_zero", None)
             .await
             .unwrap_err()
             .to_string()
@@ -337,7 +363,7 @@ async fn production_row_limits_preserve_lookahead_position() {
         .await
         .unwrap();
     assert!(
-        row_page("browse_wide", 0, None)
+        row_page(&reader, "browse_wide", None)
             .await
             .unwrap_err()
             .to_string()
@@ -349,25 +375,25 @@ async fn production_row_limits_preserve_lookahead_position() {
         .await
         .unwrap();
     assert!(
-        row_page("browse_oversized", 0, None)
+        row_page(&reader, "browse_oversized", None)
             .await
             .unwrap_err()
             .to_string()
             .contains("server text limit")
     );
     assert!(
-        row_page("browse_page_limit", 0, None)
+        row_page(&reader, "browse_page_limit", None)
             .await
             .unwrap_err()
             .to_string()
             .contains("display limit")
     );
-    let first = row_page("browse_lookahead", 0, None).await.unwrap();
+    let first = row_page(&reader, "browse_lookahead", None).await.unwrap();
     assert_eq!(first.rows.len(), 100);
     assert!(first.next);
     let token = first.continuation.clone();
     assert!(
-        row_page("browse_lookahead", 100, token.clone())
+        row_page(&reader, "browse_lookahead", token.clone())
             .await
             .unwrap_err()
             .to_string()
@@ -382,15 +408,24 @@ async fn production_row_limits_preserve_lookahead_position() {
 async fn production_row_cancel_discards_active_connection_and_allows_new_read() {
     let observer = FixturePg::plain(PG_ADMIN).await;
     let (cancel, receiver) = tokio::sync::oneshot::channel();
-    let task = tokio::spawn(onetui_postgres::fetch(
-        PG.into(),
-        None,
-        onetui_core::Resource::new("postgres.rows", vec!["public".into(), "browse_slow".into()]),
-        0,
-        None,
-        Duration::from_secs(60),
-        receiver,
-    ));
+    let reader = provider();
+    let task = tokio::spawn(async move {
+        reader
+            .fetch_page(
+                PageRequest {
+                    resource: onetui_core::Resource::new(
+                        "postgres.rows",
+                        vec!["public".into(), "browse_slow".into()],
+                    ),
+                    continuation: None,
+                },
+                RequestContext {
+                    deadline: tokio::time::Instant::now() + Duration::from_secs(60),
+                    cancel: receiver,
+                },
+            )
+            .await
+    });
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if observer.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'onetui-browse' AND wait_event = 'PgSleep'", &[]).await.unwrap().get::<_, i64>(0) == 1 { break; }
@@ -410,7 +445,15 @@ async fn production_row_cancel_discards_active_connection_and_allows_new_read() 
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("cancelled row connection remained open");
-    assert_eq!(row_page("keyed_rows", 0, None).await.unwrap().rows.len(), 3);
+    let reader = provider();
+    assert_eq!(
+        row_page(&reader, "keyed_rows", None)
+            .await
+            .unwrap()
+            .rows
+            .len(),
+        3
+    );
 }
 
 struct FixturePg {
@@ -474,6 +517,224 @@ async fn wait_for_backend(observer: &Client, pid: i32, expected: &str) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.unwrap_or_else(|_| panic!("backend {pid} never reached {expected}"));
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL TLS fixture"]
+async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicitly() {
+    use onetui_core::Resource;
+    use onetui_core::provider::{
+        ConnectionStatus, Executor, PageRequest, Provider, RequestContext, ShutdownContext,
+    };
+    let ca = fixture_ca("postgres", "/var/lib/postgresql/data/onetui-ca.crt");
+    let options =
+        toml::from_str(&format!("url_env='DSN'\nca_file='{}'", ca.path().display())).unwrap();
+    let dsn = PG
+        .replace("127.0.0.1", "localhost")
+        .replace("sslmode=disable", "sslmode=require");
+    let mut executor = onetui_postgres::PostgresProvider
+        .configure(&options, &|_| Some(dsn.clone()))
+        .unwrap();
+    let mut status = executor.status();
+    assert_eq!(*status.borrow(), ConnectionStatus::Configured);
+    let observer = FixturePg::plain(PG_ADMIN).await;
+    let resource = Resource::new(
+        "postgres.rows",
+        vec!["public".into(), "browse_composite".into()],
+    );
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let first = executor
+        .fetch_page(
+            PageRequest {
+                resource: resource.clone(),
+                continuation: None,
+            },
+            context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.rows.len(), 100);
+    let pid: i32 = observer
+        .client
+        .query_one(
+            "SELECT pid FROM pg_stat_activity WHERE application_name = 'onetui-browse'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        observer
+            .client
+            .query_one("SELECT ssl FROM pg_stat_ssl WHERE pid=$1", &[&pid])
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    wait_for_backend(&observer.client, pid, "idle").await;
+    let last_query: String = observer
+        .client
+        .query_one(
+            "SELECT query_start::text FROM pg_stat_activity WHERE pid=$1",
+            &[&pid],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(
+        observer
+            .client
+            .query_one(
+                "SELECT query_start::text FROM pg_stat_activity WHERE pid=$1",
+                &[&pid]
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        last_query,
+        "idle browsing issued a background query"
+    );
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let second = executor
+        .fetch_page(
+            PageRequest {
+                resource: resource.clone(),
+                continuation: first.continuation.clone(),
+            },
+            context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.rows[0].cells[1].as_deref(), Some("101"));
+    assert_eq!(
+        observer
+            .client
+            .query_one(
+                "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-browse'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i32>(0),
+        pid
+    );
+    wait_for_backend(&observer.client, pid, "idle").await;
+
+    let (cancel, context) = RequestContext::new(Duration::from_secs(60));
+    let (result, ()) = tokio::join!(
+        executor.fetch_page(
+            PageRequest {
+                resource: Resource::new(
+                    "postgres.rows",
+                    vec!["public".into(), "browse_slow".into()]
+                ),
+                continuation: None
+            },
+            context
+        ),
+        async {
+            wait_for_backend(&observer.client, pid, "sleep").await;
+            cancel.send(()).unwrap();
+        }
+    );
+    assert!(result.unwrap_err().to_string().contains("cancelled"));
+    wait_for_backend(&observer.client, pid, "gone").await;
+    assert_eq!(*status.borrow_and_update(), ConnectionStatus::Disconnected);
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor
+        .fetch_page(
+            PageRequest {
+                resource: resource.clone(),
+                continuation: first.continuation.clone(),
+            },
+            context,
+        )
+        .await
+        .unwrap();
+    let replacement: i32 = observer
+        .client
+        .query_one(
+            "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-browse'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_ne!(pid, replacement);
+    wait_for_backend(&observer.client, replacement, "idle").await;
+
+    observer
+        .client
+        .query_one("SELECT pg_terminate_backend($1)", &[&replacement])
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while *status.borrow_and_update() != ConnectionStatus::Disconnected {
+            status.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(first.rows.len(), 100);
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor
+        .fetch_page(
+            PageRequest {
+                resource,
+                continuation: None,
+            },
+            context,
+        )
+        .await
+        .unwrap();
+    let final_pid: i32 = observer
+        .client
+        .query_one(
+            "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-browse'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_ne!(replacement, final_pid);
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(1));
+    let (result, ()) = tokio::join!(
+        executor.fetch_page(
+            PageRequest {
+                resource: Resource::new(
+                    "postgres.rows",
+                    vec!["public".into(), "browse_slow".into()]
+                ),
+                continuation: None,
+            },
+            context,
+        ),
+        wait_for_backend(&observer.client, final_pid, "sleep")
+    );
+    assert!(result.is_err());
+    wait_for_backend(&observer.client, final_pid, "gone").await;
+    assert_eq!(*status.borrow(), ConnectionStatus::Disconnected);
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor.check(context).await.unwrap();
+    let check_pid: i32 = observer
+        .client
+        .query_one(
+            "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-check'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_ne!(final_pid, check_pid);
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+    assert_eq!(*status.borrow(), ConnectionStatus::Closed);
+    wait_for_backend(&observer.client, check_pid, "gone").await;
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(1));
+    assert!(executor.check(context).await.is_err());
 }
 
 #[tokio::test]

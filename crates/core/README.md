@@ -1,6 +1,6 @@
 # onetui-core
 
-Configuration parsing, shared resource/page/display contracts and action descriptors. No database SDK or terminal dependency.
+Configuration parsing, native async `Provider`/`Executor` contracts, request/shutdown deadlines, transport status and shared resource/page/action descriptors. No database SDK or terminal dependency. Catalog validation checks kinds, resource IDs and navigation targets; each provider validates its own options. Shared tests use a synthetic provider, not production connectors.
 
 ## Validation
 

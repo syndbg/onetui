@@ -14,6 +14,7 @@ pub struct Request {
     pub resource: Resource,
     pub offset: i64,
     pub continuation: Option<String>,
+    pub queued_at: tokio::time::Instant,
     reset: bool,
 }
 
@@ -81,6 +82,8 @@ pub struct App {
     pub view: View,
     parents: Vec<View>,
     pub generation: u64,
+    pub session: u64,
+    pub connection_status: Option<onetui_core::provider::ConnectionStatus>,
     pub request: Option<Request>,
     pub loading: bool,
     pub error: Option<String>,
@@ -102,6 +105,8 @@ impl App {
             view: View::new(None, Resource::new("connections", vec![])),
             parents: Vec::new(),
             generation: 0,
+            session: 0,
+            connection_status: None,
             request: None,
             loading: false,
             error: None,
@@ -141,6 +146,8 @@ impl App {
 
     fn connections(&mut self) {
         self.invalidate();
+        self.session += 1;
+        self.connection_status = None;
         self.parents.clear();
         self.view = View::new(None, Resource::new("connections", vec![]));
         self.view.page.rows = self
@@ -152,12 +159,11 @@ impl App {
                     Some(display(alias)),
                     Some(kind.into()),
                     Some(
-                        if kind == "postgres" {
-                            "rows + metadata"
-                        } else {
-                            "not implemented; --check only"
-                        }
-                        .into(),
+                        self.config
+                            .descriptor(alias)
+                            .expect("validated alias")
+                            .browsing
+                            .into(),
                     ),
                 ],
                 target: None,
@@ -183,6 +189,7 @@ impl App {
                 self.view.page.continuation.clone()
             },
             reset,
+            queued_at: tokio::time::Instant::now(),
         });
     }
 
@@ -234,16 +241,23 @@ impl App {
         }
     }
 
+    pub(crate) fn update_connection_status(
+        &mut self,
+        session: u64,
+        alias: &str,
+        status: onetui_core::provider::ConnectionStatus,
+    ) {
+        if session == self.session && self.view.alias.as_deref() == Some(alias) {
+            self.connection_status = Some(status);
+        }
+    }
+
     pub fn available(&self, action: Action) -> bool {
         match action {
             Action::Filter => !self.detail,
             Action::Sort => !self.detail && self.column_count() > 0,
             Action::Columns => {
-                !self.loading
-                    && !self.detail
-                    && (self.view.resource.id == "postgres.rows"
-                        || (self.view.resource.id == "postgres.relations"
-                            && !self.view.visible.is_empty()))
+                !self.loading && !self.detail && self.action_target(action).is_some()
             }
             Action::Left | Action::Right => self.column_count() > 0,
             Action::Back => self.help || self.detail || !self.parents.is_empty(),
@@ -271,9 +285,24 @@ impl App {
         if self.view.resource.id == "connections" {
             &onetui_core::catalog::CONNECTIONS
         } else {
-            onetui_postgres::descriptor(self.view.resource.id)
+            self.config
+                .descriptor(self.view.alias.as_deref().expect("datasource alias"))
+                .and_then(|provider| provider.resource(self.view.resource.id))
                 .expect("connector emitted a registered resource")
         }
+    }
+
+    fn action_target(&self, action: Action) -> Option<Resource> {
+        self.descriptor()
+            .actions
+            .iter()
+            .find(|entry| entry.id == action)?
+            .target(
+                &self.view.resource,
+                self.view
+                    .selected_index()
+                    .and_then(|i| self.view.page.rows.get(i)),
+            )
     }
 
     pub fn column_count(&self) -> usize {
@@ -382,21 +411,11 @@ impl App {
             }
             Action::Columns => {
                 self.help = false;
-                let path = if self.view.resource.id == "postgres.rows" {
-                    self.view.resource.path.clone()
-                } else {
-                    self.view.page.rows[self.view.selected_index().expect("selected relation")]
-                        .target
-                        .as_ref()
-                        .expect("relation target")
-                        .path
-                        .clone()
-                };
+                let target = self
+                    .action_target(action)
+                    .expect("available resource action");
                 let alias = self.view.alias.clone();
-                let parent = std::mem::replace(
-                    &mut self.view,
-                    View::new(alias, Resource::new("postgres.columns", path)),
-                );
+                let parent = std::mem::replace(&mut self.view, View::new(alias, target));
                 self.parents.push(parent);
                 self.load(0, true);
             }
@@ -411,17 +430,20 @@ impl App {
                 }
                 let (alias, target) = if self.view.resource == Resource::new("connections", vec![])
                 {
-                    let (alias, kind) = self.config.aliases()
+                    let (alias, _) = self.config.aliases()
                         [self.view.selected_index().expect("selected connection")];
-                    if kind != "postgres" {
-                        self.error =
-                            Some("Qdrant browsing is not implemented; use --check for now".into());
+                    let provider = self.config.descriptor(alias).expect("validated alias");
+                    let Some(entry) = provider.entry_resource else {
+                        self.error = Some(format!(
+                            "{} browsing is unavailable; use --check for now",
+                            provider.kind
+                        ));
                         return;
-                    }
-                    (
-                        Some(alias.to_owned()),
-                        Resource::new("postgres.schemas", vec![]),
-                    )
+                    };
+                    self.session += 1;
+                    self.connection_status =
+                        Some(onetui_core::provider::ConnectionStatus::Configured);
+                    (Some(alias.to_owned()), Resource::new(entry, vec![]))
                 } else if let Some(target) = &self.view.page.rows
                     [self.view.selected_index().expect("selected resource")]
                 .target
@@ -446,6 +468,10 @@ impl App {
                 } else if let Some(parent) = self.parents.pop() {
                     self.invalidate();
                     self.view = parent;
+                    if self.view.alias.is_none() {
+                        self.session += 1;
+                        self.connection_status = None;
+                    }
                 }
             }
             Action::Connections => self.connections(),
@@ -595,8 +621,11 @@ mod tests {
 
     fn app() -> App {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write!(file, "[connections.pg]\nkind='postgres'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='qdrant'\nurl='http://localhost:6334'").unwrap();
-        App::new(Config::load(file.path()).unwrap(), Some("pg"))
+        write!(file, "[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'").unwrap();
+        App::new(
+            Config::load(file.path(), crate::test_provider::CATALOG).unwrap(),
+            Some("pg"),
+        )
     }
 
     fn filter(app: &mut App, text: &str) {
@@ -614,7 +643,7 @@ mod tests {
     fn local_sort_filter_and_detail_never_rewrite_rows_or_continuation() {
         let mut app = app();
         let request = app.request.take().unwrap();
-        app.view.resource = Resource::new("postgres.rows", vec!["public".into(), "sample".into()]);
+        app.view.resource = Resource::new("fake.rows", vec!["public".into(), "sample".into()]);
         let values = vec![
             Some("2".into()),
             None,
@@ -686,18 +715,18 @@ mod tests {
     fn filtered_sorted_connections_and_parents_use_source_indices() {
         let mut app = app();
         app.act(Action::Connections);
-        filter(&mut app, "qdrant");
+        filter(&mut app, "checkonly");
         assert_eq!(app.view.selected_index(), Some(1));
         app.act(Action::Open);
-        assert!(app.error.as_ref().unwrap().contains("not implemented"));
-        filter(&mut app, "postgres");
+        assert!(app.error.as_ref().unwrap().contains("unavailable"));
+        filter(&mut app, "fake");
         app.act(Action::Sort);
         app.act(Action::Refresh);
-        assert_eq!(app.view.filter, "postgres");
+        assert_eq!(app.view.filter, "fake");
         app.act(Action::Open);
         assert_eq!(app.request.as_ref().unwrap().alias, "pg");
         app.act(Action::Back);
-        assert_eq!(app.view.filter, "postgres");
+        assert_eq!(app.view.filter, "fake");
         assert_eq!(app.view.sort, Some((0, false)));
         assert_eq!(app.view.selected_index(), Some(0));
     }
@@ -770,7 +799,7 @@ mod tests {
             rows: vec![Row {
                 cells: vec![Some(display("public\x1b[31m"))],
                 target: Some(Resource::new(
-                    "postgres.relations",
+                    "fake.relations",
                     vec!["public\x1b[31m".into()],
                 )),
             }],
@@ -861,7 +890,7 @@ mod tests {
     #[test]
     fn detail_preserves_null_empty_literal_and_every_unicode_chunk() {
         let mut app = app();
-        app.view.resource = Resource::new("postgres.rows", vec!["public".into(), "sample".into()]);
+        app.view.resource = Resource::new("fake.rows", vec!["public".into(), "sample".into()]);
         let request = app.request.take().unwrap();
         let text = "🌊".repeat(9000);
         app.complete(
@@ -908,14 +937,14 @@ mod tests {
         assert!(app.request.is_none(), "detail chunks must never fetch");
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         app.key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
-        assert_eq!(app.view.resource.id, "postgres.columns");
+        assert_eq!(app.view.resource.id, "fake.columns");
         app.act(Action::Back);
-        assert_eq!(app.view.resource.id, "postgres.rows");
+        assert_eq!(app.view.resource.id, "fake.rows");
         assert_eq!(app.view.column, 3);
     }
 
     #[test]
-    fn palette_consumes_navigation_keys_and_qdrant_stays_check_only() {
+    fn palette_consumes_navigation_keys_and_checkonly_stays_check_only() {
         let mut app = app();
         app.act(Action::Connections);
         for c in ":quit".chars() {
@@ -925,7 +954,7 @@ mod tests {
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         app.act(Action::Down);
         app.act(Action::Open);
-        assert!(app.error.unwrap().contains("not implemented"));
+        assert!(app.error.unwrap().contains("unavailable"));
         assert!(app.request.is_none());
     }
 }

@@ -11,8 +11,6 @@ The boxed-dispatch choice was later superseded. The provider, resource, configur
 
 Use one explicit built-in provider registry for CLI checks, resource discovery, configuration dispatch and TUI execution. Each provider exposes descriptors and creates a configured executor. The executor owns native clients, operations, connection-status reporting and bounded shutdown. Use `#[async_trait]` for asynchronous methods invoked through trait objects.
 
-Implementation is pending. The initial refactor excludes Kafka, NATS, DynamoDB, live following and executable plugins.
-
 ## Current evidence
 
 Source snapshot: `main` at `6607e3f`.

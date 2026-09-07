@@ -1,11 +1,5 @@
-use std::path::PathBuf;
-use std::time::Duration;
-
 use anyhow::{Result, anyhow, bail, ensure};
-use tokio::sync::oneshot;
 use tokio_postgres::{Client, types::ToSql};
-
-use crate::check;
 
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
 
@@ -22,57 +16,7 @@ pub(crate) fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
     }
 }
 
-pub async fn fetch(
-    url: String,
-    ca_file: Option<PathBuf>,
-    resource: Resource,
-    offset: i64,
-    continuation: Option<String>,
-    deadline: Duration,
-    mut cancel: oneshot::Receiver<()>,
-) -> Result<Page> {
-    let until = tokio::time::Instant::now() + deadline;
-    let mut config = check::postgres_config(&url, deadline)?;
-    config.application_name("onetui-browse");
-    let tls = check::postgres_tls(&config, ca_file.as_deref())?;
-    let (client, driver) = tokio::select! {
-        result = tokio::time::timeout_at(until, config.connect(tls.clone())) => {
-            result.map_err(|_| anyhow!("PostgreSQL connection timed out"))?.map_err(pg_error)?
-        }
-        _ = &mut cancel => bail!("Request cancelled; connection discarded"),
-    };
-    // Keep client and driver scoped to this request; neither may survive it.
-    tokio::pin!(driver);
-    let query = async {
-        if resource.id == "postgres.rows" {
-            crate::rows::fetch(&client, &resource, offset, continuation.as_deref()).await
-        } else {
-            metadata(&client, &resource, offset).await
-        }
-    };
-    tokio::pin!(query);
-    tokio::select! {
-        result = &mut query => return result,
-        _ = &mut driver => bail!("PostgreSQL connection closed during read"),
-        _ = tokio::time::sleep_until(until) => {},
-        _ = &mut cancel => {},
-    }
-    // Cleanup has its own short deadline. Never reuse a connection with uncertain cleanup.
-    let _ = tokio::time::timeout(Duration::from_secs(1), async {
-        tokio::select! {
-            _ = async {
-                client.cancel_token().cancel_query(tls).await.map_err(pg_error)?;
-                let _ = query.await;
-                Ok::<_, anyhow::Error>(())
-            } => {},
-            _ = &mut driver => {},
-        }
-    })
-    .await;
-    bail!("Request cancelled or timed out; connection discarded")
-}
-
-async fn metadata(client: &Client, resource: &Resource, offset: i64) -> Result<Page> {
+pub(crate) async fn metadata(client: &Client, resource: &Resource, offset: i64) -> Result<Page> {
     ensure!(offset >= 0, "invalid metadata page offset");
     let limit = PAGE_SIZE + 1;
     let rows = match (resource.id, resource.path.as_slice()) {

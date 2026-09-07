@@ -1,122 +1,100 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::provider::{Provider, ProviderDescriptor, find_provider, validate_catalog};
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::Deserialize;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Config {
     connections: BTreeMap<String, Connection>,
 }
 
+struct Connection {
+    descriptor: &'static ProviderDescriptor,
+    options: toml::Table,
+}
+
 #[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
-enum Connection {
-    Postgres {
-        url_env: String,
-        ca_file: Option<PathBuf>,
-    },
-    Qdrant {
-        url: String,
-        api_key_env: Option<String>,
-    },
-}
-
-// Debug output would expose resolved credentials.
-pub enum ResolvedConnection {
-    Postgres {
-        url: String,
-        ca_file: Option<PathBuf>,
-    },
-    Qdrant {
-        url: String,
-        api_key: Option<String>,
-    },
-}
-
-impl ResolvedConnection {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::Postgres { .. } => "postgres",
-            Self::Qdrant { .. } => "qdrant",
-        }
-    }
+#[serde(deny_unknown_fields)]
+struct RawConfig {
+    connections: BTreeMap<String, toml::Table>,
 }
 
 impl Config {
     pub fn aliases(&self) -> Vec<(&str, &'static str)> {
         self.connections
             .iter()
-            .map(|(alias, connection)| {
-                (
-                    alias.as_str(),
-                    match connection {
-                        Connection::Postgres { .. } => "postgres",
-                        Connection::Qdrant { .. } => "qdrant",
-                    },
-                )
-            })
+            .map(|(alias, connection)| (alias.as_str(), connection.descriptor.kind))
             .collect()
     }
 
-    pub fn load(path: &Path) -> Result<Self> {
+    pub fn descriptor(&self, alias: &str) -> Option<&'static ProviderDescriptor> {
+        self.connections.get(alias).map(|c| c.descriptor)
+    }
+
+    pub fn load<P: Provider>(path: &Path, catalog: &[P]) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .map_err(|_| anyhow!("cannot read config file; check --config and file permissions"))?;
-        Self::parse(&text)
+        Self::parse(&text, catalog)
     }
 
-    fn parse(text: &str) -> Result<Self> {
-        toml::from_str(text).map_err(|_| {
-            anyhow!("invalid config: check TOML syntax, datasource kinds and supported fields; see --help and README")
-        })
+    pub fn parse<P: Provider>(text: &str, catalog: &[P]) -> Result<Self> {
+        validate_catalog(catalog)?;
+        let raw: RawConfig = toml::from_str(text).map_err(|_| {
+            anyhow!("invalid config: check TOML syntax and supported fields; see --help and README")
+        })?;
+        let mut connections = BTreeMap::new();
+        for (alias, mut options) in raw.connections {
+            ensure!(
+                safe_name(&alias),
+                "connection alias must contain only ASCII letters, digits, underscores or hyphens"
+            );
+            let kind = options
+                .remove("kind")
+                .ok_or_else(|| anyhow!("connection kind is required"))?;
+            let provider = find_provider(
+                catalog,
+                kind.as_str()
+                    .ok_or_else(|| anyhow!("connection kind must be a string"))?,
+            )?;
+            provider.validate_config(&options)?;
+            connections.insert(
+                alias,
+                Connection {
+                    descriptor: provider.descriptor(),
+                    options,
+                },
+            );
+        }
+        Ok(Self { connections })
     }
 
-    pub fn resolve(
+    pub fn configure<P: Provider>(
         &self,
         alias: &str,
-        env: impl Fn(&str) -> Option<String>,
-    ) -> Result<ResolvedConnection> {
-        ensure!(
-            safe_name(alias),
-            "connection alias must contain only ASCII letters, digits, underscores or hyphens"
-        );
+        catalog: &[P],
+        env: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<P::Executor> {
         let connection = self.connections.get(alias).ok_or_else(|| {
             anyhow!("unknown connection alias; check the config connections table")
         })?;
-        let secret = |name: &str| -> Result<String> {
-            ensure!(
-                safe_name(name),
-                "environment reference contains unsupported characters"
-            );
-            env(name)
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "referenced environment variable {name} is missing, empty or not Unicode"
-                    )
-                })
-        };
-        match connection {
-            Connection::Postgres { url_env, ca_file } => {
-                ensure!(
-                    ca_file.as_ref().is_none_or(|p| p.is_absolute()),
-                    "ca_file must be an absolute path"
-                );
-                Ok(ResolvedConnection::Postgres {
-                    url: secret(url_env)?,
-                    ca_file: ca_file.clone(),
-                })
-            }
-            Connection::Qdrant { url, api_key_env } => Ok(ResolvedConnection::Qdrant {
-                url: url.clone(),
-                api_key: api_key_env.as_deref().map(secret).transpose()?,
-            }),
-        }
+        find_provider(catalog, connection.descriptor.kind)?.configure(&connection.options, env)
     }
 }
 
-fn safe_name(value: &str) -> bool {
+pub fn secret(name: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<String> {
+    ensure!(
+        safe_name(name),
+        "environment reference contains unsupported characters"
+    );
+    env(name)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow!("referenced environment variable {name} is missing, empty or not Unicode")
+        })
+}
+
+pub fn safe_name(value: &str) -> bool {
     !value.is_empty()
         && value
             .bytes()
@@ -151,29 +129,49 @@ fn default_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_provider::CATALOG;
 
     #[test]
     fn resolves_only_selected_connection_and_rejects_empty_secrets() {
-        let config = Config::parse("[connections.pg]\nkind='postgres'\nurl_env='PG_DSN'\n[connections.q]\nkind='qdrant'\nurl='http://127.0.0.1:6334'\n").unwrap();
+        let config = Config::parse(
+            "[connections.a]\nkind='fake'\nsecret_env='SECRET'\n[connections.b]\nkind='fake'",
+            CATALOG,
+        )
+        .unwrap();
         assert!(
             config
-                .resolve("q", |_| panic!("unused secret resolved"))
+                .configure("b", CATALOG, &|_| panic!("unused secret resolved"))
                 .is_ok()
         );
-        assert!(config.resolve("pg", |_| Some("  ".into())).is_err());
-        assert!(config.resolve("missing", |_| None).is_err());
-        assert!(config.resolve("bad\x1b", |_| None).is_err());
+        assert!(
+            config
+                .configure("a", CATALOG, &|_| Some("  ".into()))
+                .is_err()
+        );
+        assert!(config.configure("missing", CATALOG, &|_| None).is_err());
+        assert!(config.configure("bad\x1b", CATALOG, &|_| None).is_err());
     }
 
     #[test]
     fn parser_errors_never_echo_config() {
         for input in [
             "password='fake-super-secret'",
-            "[connections.q]\nkind='qdrant'\nurl='http://localhost'\napi_key='fake-super-secret'",
+            "[connections.b]\nkind='fake'\nunknown='fake-super-secret'",
             "[connections.q]\nkind='fake-super-secret'",
         ] {
-            let error = Config::parse(input).err().unwrap().to_string();
+            let error = Config::parse(input, CATALOG).err().unwrap().to_string();
             assert!(!error.contains("fake-super-secret"));
+        }
+    }
+
+    #[test]
+    fn validates_unselected_entries_and_all_aliases() {
+        for input in [
+            "[connections.a]\nkind='fake'\n[connections.b]\nkind='fake'\nunknown=true",
+            "[connections.a]\nkind='fake'\n[connections.b]\nkind='unknown'",
+            "[connections.'bad alias']\nkind='fake'",
+        ] {
+            assert!(Config::parse(input, CATALOG).is_err());
         }
     }
 

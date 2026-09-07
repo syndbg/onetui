@@ -40,12 +40,19 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
     let example = schema["configuration"]["example_toml"].as_str().unwrap();
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), example).unwrap();
-    let config = onetui_core::config::Config::load(file.path()).unwrap();
-    assert!(
-        config
-            .resolve("local_pg", |_| Some("host=localhost".into()))
-            .is_ok()
-    );
+    let output = Command::new(env!("CARGO_BIN_EXE_onetui"))
+        .args([
+            "--config",
+            file.path().to_str().unwrap(),
+            "--check",
+            "--connection",
+            "local_pg",
+        ])
+        .env_remove("ONETUI_POSTGRES_URL")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("ONETUI_POSTGRES_URL is missing"));
 }
 
 #[test]
@@ -68,6 +75,15 @@ fn postgres_catalog_filter() {
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
     assert_eq!(schema["datasources"][0]["id"], "postgres");
+    assert_eq!(
+        schema["datasources"][0]["entry_resource"],
+        "postgres.schemas"
+    );
+    assert_eq!(
+        schema["datasources"][0]["resources"][1]["actions"][0]["target"],
+        "postgres.columns"
+    );
+    assert!(schema["datasources"][0]["session"].is_string());
 }
 
 #[test]
@@ -77,4 +93,6 @@ fn qdrant_catalog_filter() {
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
     assert_eq!(schema["datasources"][0]["id"], "qdrant");
+    assert!(schema["datasources"][0]["entry_resource"].is_null());
+    assert!(schema["datasources"][0]["session"].is_string());
 }

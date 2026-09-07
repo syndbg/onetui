@@ -1,8 +1,8 @@
 use anyhow::{Result, anyhow, ensure};
-use qdrant_client::qdrant::{ListCollectionsRequest, collections_client::CollectionsClient};
+mod config;
+mod provider;
+pub use provider::{QdrantExecutor, QdrantProvider};
 use std::net::IpAddr;
-use std::time::Duration;
-use tonic::transport::{ClientTlsConfig, Endpoint};
 
 fn is_loopback(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
@@ -42,50 +42,30 @@ fn qdrant_url(value: &str) -> Result<url::Url> {
     Ok(url)
 }
 
-pub async fn check(value: &str, api_key: Option<&str>, deadline: Duration) -> Result<String> {
-    let url = qdrant_url(value)?;
-    let mut request = tonic::Request::new(ListCollectionsRequest {});
-    request.set_timeout(deadline);
-    if let Some(key) = api_key {
-        request.metadata_mut().insert(
-            "api-key",
-            key.parse()
-                .map_err(|_| anyhow!("Qdrant API key is not valid ASCII metadata"))?,
-        );
+fn rpc_error(status: tonic::Status) -> anyhow::Error {
+    match status.code() {
+        tonic::Code::Unauthenticated => anyhow!("Qdrant authentication failed; check api_key_env"),
+        tonic::Code::PermissionDenied => {
+            anyhow!("Qdrant collection listing denied; the key may be collection-scoped")
+        }
+        tonic::Code::OutOfRange => anyhow!(
+            "Qdrant metadata response exceeded the 1 MiB limit, or the server rejected an out-of-range request"
+        ),
+        tonic::Code::ResourceExhausted => anyhow!(
+            "Qdrant response exceeded the 1 MiB metadata limit or server resources were exhausted"
+        ),
+        tonic::Code::DeadlineExceeded => anyhow!("Qdrant metadata check timed out"),
+        _ => anyhow!(
+            "Qdrant metadata check failed (gRPC code {})",
+            status.code() as i32
+        ),
     }
-    let mut endpoint = Endpoint::from_shared(url.to_string())
-        .map_err(|_| anyhow!("invalid Qdrant gRPC endpoint"))?
-        .connect_timeout(deadline)
-        .timeout(deadline);
-    if url.scheme() == "https" {
-        endpoint = endpoint
-            .tls_config(ClientTlsConfig::new().with_native_roots())
-            .map_err(|_| anyhow!("cannot configure Qdrant TLS using native trust roots"))?;
-    }
-    let channel = endpoint.connect().await.map_err(|_| {
-        anyhow!(
-            "Qdrant connection failed; verify gRPC endpoint, reachability and TLS certificate trust"
-        )
-    })?;
-    // The SDK's high-level collections call uses usize::MAX; keep this metadata check bounded.
-    let response = CollectionsClient::new(channel).max_decoding_message_size(1024 * 1024)
-        .list(request).await.map_err(|status| match status.code() {
-            tonic::Code::Unauthenticated => anyhow!("Qdrant authentication failed; check api_key_env"),
-            tonic::Code::PermissionDenied => anyhow!("Qdrant collection listing denied; the key may be collection-scoped"),
-            tonic::Code::OutOfRange => anyhow!("Qdrant metadata response exceeded the 1 MiB limit, or the server rejected an out-of-range request"),
-            tonic::Code::ResourceExhausted => anyhow!("Qdrant response exceeded the 1 MiB metadata limit or server resources were exhausted"),
-            tonic::Code::DeadlineExceeded => anyhow!("Qdrant metadata check timed out"),
-            _ => anyhow!("Qdrant metadata check failed (gRPC code {})", status.code() as i32),
-        })?;
-    Ok(format!(
-        "collection metadata readable ({} collections)",
-        response.into_inner().collections.len()
-    ))
 }
 
-pub fn capabilities() -> serde_json::Value {
+pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "id": "qdrant", "operations": ["check"], "resources": [],
+        "session": "Lazy reusable size-capped gRPC channel; failed/cancelled checks discard it. Shutdown drops the channel. HTTP/2 keepalive interval unset, idle pings disabled; no periodic metadata check or heartbeat TOML setting.",
         "configuration": {
             "kind": {"required": true, "values": ["qdrant"], "purpose": "Select the Qdrant connector"},
             "url": {"required": true, "type": "HTTP(S) gRPC URL", "purpose": "Explicit endpoint; plaintext only on loopback; no URL credentials, path prefix, query or fragment", "example": "http://127.0.0.1:6334"},

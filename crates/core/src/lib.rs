@@ -1,5 +1,8 @@
 pub mod catalog;
 pub mod config;
+pub mod provider;
+#[cfg(test)]
+mod test_provider;
 
 pub const PAGE_SIZE: i64 = 100;
 pub const PAGE_BYTES: usize = 1024 * 1024;

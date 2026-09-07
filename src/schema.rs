@@ -1,16 +1,16 @@
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use onetui_core::catalog::{ACTIONS, CONNECTIONS};
+use onetui_core::provider::{Provider, find_provider, validate_catalog};
 
-pub fn dump(datasource: Option<&str>) -> Result<String> {
-    ensure!(
-        datasource.is_none_or(|kind| matches!(kind, "postgres" | "qdrant")),
-        "unknown datasource; expected postgres or qdrant"
-    );
-    let postgres = onetui_postgres::capabilities();
-    let qdrant = onetui_qdrant::capabilities();
-    let datasources: Vec<_> = [postgres, qdrant]
-        .into_iter()
-        .filter(|entry| datasource.is_none_or(|kind| entry["id"] == kind))
+pub fn dump<P: Provider>(catalog: &[P], datasource: Option<&str>) -> Result<String> {
+    validate_catalog(catalog)?;
+    if let Some(kind) = datasource {
+        find_provider(catalog, kind)?;
+    }
+    let datasources: Vec<_> = catalog
+        .iter()
+        .filter(|provider| datasource.is_none_or(|kind| provider.descriptor().kind == kind))
+        .map(|provider| provider.descriptor().capabilities())
         .collect();
     Ok(serde_json::to_string_pretty(&serde_json::json!({
         "schema_format_version": 1,
@@ -19,7 +19,7 @@ pub fn dump(datasource: Option<&str>) -> Result<String> {
         "shell": {"resources": [&CONNECTIONS], "actions": ACTIONS, "keybindings_configurable": false,
             "action_context": "Help shows currently available actions. Navigation keys do not apply inside the ':' command prompt. Qdrant browsing is not implemented."},
         "configuration": {
-            "format": "TOML; only connections is a supported top-level table; unknown fields are rejected",
+            "format": "TOML; only connections is a supported top-level table. Every entry is validated, including unselected aliases; unknown kinds/fields, invalid reference names, relative PostgreSQL CA paths and invalid Qdrant URLs are rejected.",
             "location_order": ["--config <path> (relative paths use the working directory)", "$XDG_CONFIG_HOME/onetui/config.toml (absolute XDG_CONFIG_HOME only)", "$HOME/.config/onetui/config.toml (absolute HOME only)"],
             "behavior": "Read exactly one file; no merge, creation, project search or fallback on missing file. ~/onetui.toml requires --config.",
             "aliases": "Nonempty ASCII letters, digits, underscores or hyphens; no built-in aliases/endpoints",

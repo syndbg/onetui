@@ -80,44 +80,6 @@ pub(crate) fn postgres_tls(
     })
 }
 
-pub async fn check(dsn: &str, ca_file: Option<&Path>, deadline: Duration) -> Result<String> {
-    let config = postgres_config(dsn, deadline)?;
-    let tls = postgres_tls(&config, ca_file)?;
-    let (client, connection) = config.connect(tls).await.map_err(pg_error)?;
-    // Poll the connection here instead of detaching a task: cancellation drops the socket too.
-    tokio::pin!(connection);
-    let row = tokio::select! {
-        result = client.query_one("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE pg_catalog.has_schema_privilege(oid, 'USAGE'))", &[]) => result.map_err(pg_error)?,
-        result = &mut connection => {
-            return Err(result.err().map(pg_error).unwrap_or_else(|| anyhow!("PostgreSQL connection closed before metadata check completed")));
-        }
-    };
-    let accessible: bool = row.try_get(0).map_err(pg_error)?;
-    Ok(if accessible {
-        "schema metadata readable"
-    } else {
-        "connected; no accessible schemas"
-    }
-    .into())
-}
-
-fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
-    match error.code().map(|code| code.code()) {
-        Some(code) if code.starts_with("28") => {
-            anyhow!("PostgreSQL authentication failed; check the referenced credentials")
-        }
-        Some("42501") => anyhow!("PostgreSQL metadata access denied"),
-        Some("57014") => anyhow!("PostgreSQL metadata check timed out or was cancelled"),
-        Some(code) if code.len() == 5 && code.bytes().all(|c| c.is_ascii_alphanumeric()) => {
-            anyhow!("PostgreSQL server rejected the check (SQLSTATE {code})")
-        }
-        Some(_) => anyhow!("PostgreSQL server returned an invalid SQLSTATE"),
-        None => anyhow!(
-            "PostgreSQL connection/check failed; verify endpoint, reachability and TLS certificate trust"
-        ),
-    }
-}
-
 fn is_loopback(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
         || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
@@ -130,6 +92,9 @@ mod tests {
     #[test]
     fn postgres_never_downgrades_tls() {
         let deadline = Duration::from_secs(5);
+        let defaults = postgres_config("host=localhost", deadline).unwrap();
+        assert!(defaults.get_keepalives());
+        assert_eq!(defaults.get_keepalives_idle(), Duration::from_secs(7200));
         for dsn in ["host=example.com", "host=localhost sslmode=prefer"] {
             assert_eq!(
                 postgres_config(dsn, deadline).unwrap().get_ssl_mode(),

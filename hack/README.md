@@ -40,6 +40,8 @@ Keep these package-owned suites separate; do not parameterize a harness over bot
 
 Those tests change only disposable fixture tables/collections and their own reader sessions. Finish with `make dev-down`.
 
+Provider lifecycle checks need no extra configuration: PostgreSQL fixtures observe TLS session reuse, idle transaction state, cancellation and reconnection. Qdrant's default local protocol tests count connections/RPCs and verify channel cleanup. The TUI journey exercises the same provider worker used by `make run`, including resize/input interleaving.
+
 ## Troubleshooting
 
 - Docker unavailable: start Docker Desktop/Engine and check `docker info`; setup failures return nonzero. Remote/TCP contexts are refused: these clients require a local Unix-socket Docker daemon and loopback port forwarding.

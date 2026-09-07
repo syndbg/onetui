@@ -3,30 +3,26 @@ use std::io::Write;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use onetui_core::config::{Config, ResolvedConnection};
+use onetui_core::config::Config;
+use onetui_core::provider::{Executor, PageRequest, RequestContext, ShutdownContext};
 use onetui_tui::App;
 
 fn key(app: &mut App, code: KeyCode) {
     app.key(KeyEvent::new(code, KeyModifiers::NONE));
 }
 
-async fn complete(app: &mut App) {
+async fn complete(app: &mut App, executor: &onetui_postgres::PostgresExecutor) {
     let request = app.request.take().expect("keyboard action queued a read");
-    let ResolvedConnection::Postgres { url, ca_file } = app.config.resolve(
-        &request.alias,
-        |_| Some("host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable".into()),
-    ).unwrap() else { panic!("PostgreSQL fixture only") };
-    let (_cancel, receiver) = tokio::sync::oneshot::channel();
-    let result = onetui_postgres::fetch(
-        url,
-        ca_file,
-        request.resource.clone(),
-        request.offset,
-        request.continuation.clone(),
-        Duration::from_secs(5),
-        receiver,
-    )
-    .await;
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let result = executor
+        .fetch_page(
+            PageRequest {
+                resource: request.resource.clone(),
+                continuation: request.continuation.clone(),
+            },
+            context,
+        )
+        .await;
     app.complete(&request, result);
 }
 
@@ -53,15 +49,18 @@ async fn keyboard_to_postgres_rows_detail_paging_metadata_and_failure() {
         "[connections.pg]\nkind='postgres'\nurl_env='FIXTURE_DSN'"
     )
     .unwrap();
-    let mut app = App::new(Config::load(file.path()).unwrap(), None);
+    let catalog = &[onetui_postgres::PostgresProvider];
+    let config = Config::load(file.path(), catalog).unwrap();
+    let mut executor = config.configure("pg", catalog, &|_| Some("host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable".into())).unwrap();
+    let mut app = App::new(config, None);
     key(&mut app, KeyCode::Enter);
-    complete(&mut app).await;
+    complete(&mut app, &executor).await;
     select(&mut app, "public");
     key(&mut app, KeyCode::Enter);
-    complete(&mut app).await;
+    complete(&mut app, &executor).await;
     select(&mut app, "browse_composite");
     key(&mut app, KeyCode::Enter);
-    complete(&mut app).await;
+    complete(&mut app, &executor).await;
     assert!(app.error.is_none(), "{:?}", app.error);
     assert_eq!(app.view.resource.id, "postgres.rows");
     assert_eq!(app.view.page.rows.len(), 100);
@@ -72,30 +71,34 @@ async fn keyboard_to_postgres_rows_detail_paging_metadata_and_failure() {
     assert!(!app.detail_text.contains('\x1b'));
     key(&mut app, KeyCode::Esc);
     key(&mut app, KeyCode::Char('n'));
-    complete(&mut app).await;
+    complete(&mut app, &executor).await;
     assert_eq!(app.view.offset, 100);
     assert_eq!(app.view.page.rows[0].cells[1].as_deref(), Some("101"));
     key(&mut app, KeyCode::Char('p'));
     assert!(app.request.is_none());
     assert_eq!(app.view.page.continuation, token);
     key(&mut app, KeyCode::Char('m'));
-    complete(&mut app).await;
+    complete(&mut app, &executor).await;
     assert_eq!(app.view.resource.id, "postgres.columns");
     key(&mut app, KeyCode::Esc);
     assert_eq!(app.view.resource.id, "postgres.rows");
     key(&mut app, KeyCode::Esc);
     select(&mut app, "restricted_rows");
     key(&mut app, KeyCode::Enter);
-    complete(&mut app).await;
+    complete(&mut app, &executor).await;
     assert!(app.error.as_ref().unwrap().contains("denied"));
     key(&mut app, KeyCode::Esc);
     select(&mut app, "browse_uuid");
     key(&mut app, KeyCode::Enter);
-    complete(&mut app).await;
+    complete(&mut app, &executor).await;
     assert!(app.view.page.rows.is_empty());
     assert!(app.error.is_none());
     key(&mut app, KeyCode::Char('q'));
     assert!(app.quit);
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
 }
 
 #[cfg(unix)]
@@ -282,6 +285,15 @@ mod terminal {
                 .contains(LocalFlags::ICANON)
         );
         drop(slave);
+        // A resize and input can become ready together; neither may strand the other.
+        for _ in 0..10 {
+            pty.resize();
+            pty.send(b"?");
+            pty.wait(&["Navigationactions"]);
+            pty.resize();
+            pty.send(b":back\r");
+            pty.wait(&["postgres.schemas", "public"]);
+        }
         pty.open_filtered("public");
         pty.wait(&["postgres.relations", "browse_composite"]);
         pty.open_filtered("browse_composite");

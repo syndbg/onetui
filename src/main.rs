@@ -1,12 +1,15 @@
+mod providers;
 mod schema;
 
-use onetui_core::config::{self, ResolvedConnection};
+use onetui_core::config;
+use onetui_core::provider::{Executor, RequestContext, ShutdownContext, validate_catalog};
+use providers::BUILTINS;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -37,7 +40,7 @@ enum Command {
     /// Dump implemented capabilities/configuration as JSON without config, secrets, network or TUI
     Schema {
         /// Include only this datasource's capabilities
-        #[arg(long, value_parser = ["postgres", "qdrant"])]
+        #[arg(long)]
         datasource: Option<String>,
     },
 }
@@ -55,12 +58,13 @@ async fn main() -> ExitCode {
 }
 
 async fn run(args: Args) -> Result<()> {
+    validate_catalog(BUILTINS)?;
     if let Some(Command::Schema { datasource }) = args.command {
         anyhow::ensure!(
             !args.check && args.connection.is_none(),
             "schema cannot be combined with --check or --connection"
         );
-        println!("{}", schema::dump(datasource.as_deref())?);
+        println!("{}", schema::dump(BUILTINS, datasource.as_deref())?);
         return Ok(());
     }
     if !args.check {
@@ -71,12 +75,13 @@ async fn run(args: Args) -> Result<()> {
         );
     }
     let path = config::config_path(args.config)?;
-    let config = config::Config::load(&path)?;
+    let config = config::Config::load(&path, BUILTINS)?;
     let deadline = Duration::from_secs(args.timeout);
     if !args.check {
         return onetui_tui::run(
             onetui_tui::App::new(config, args.connection.as_deref()),
             deadline,
+            BUILTINS,
         )
         .await;
     }
@@ -84,26 +89,34 @@ async fn run(args: Args) -> Result<()> {
         .connection
         .as_deref()
         .expect("clap requires connection");
-    let connection = config.resolve(alias, |key| std::env::var(key).ok())?;
-    let check = async {
-        match &connection {
-            ResolvedConnection::Postgres { url, ca_file } => {
-                onetui_postgres::check(url, ca_file.as_deref(), deadline).await
-            }
-            ResolvedConnection::Qdrant { url, api_key } => {
-                onetui_qdrant::check(url, api_key.as_deref(), deadline).await
+    let kind = config
+        .descriptor(alias)
+        .ok_or_else(|| anyhow::anyhow!("unknown connection alias"))?
+        .kind;
+    let mut executor = config.configure(alias, BUILTINS, &|key| std::env::var(key).ok())?;
+    let (cancel, context) = RequestContext::new(deadline);
+    let checked = {
+        let check = executor.check(context);
+        tokio::pin!(check);
+        tokio::select! {
+            result = &mut check => result,
+            signal = tokio::signal::ctrl_c() => {
+                let _ = cancel.send(());
+                let result = check.await;
+                match signal { Ok(()) => result, Err(_) => Err(anyhow::anyhow!("cannot listen for interruption")) }
             }
         }
     };
-    let result = tokio::select! {
-        result = tokio::time::timeout(deadline, check) => {
-            result.map_err(|_| anyhow::anyhow!("connection check timed out; no connection will be reused"))?
+    let closed = executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await;
+    let result = match (checked, closed) {
+        (Err(primary), Err(cleanup)) => {
+            return Err(anyhow::anyhow!("{primary}; cleanup: {cleanup}"));
         }
-        signal = tokio::signal::ctrl_c() => {
-            signal.map_err(|_| anyhow::anyhow!("cannot listen for interruption"))?;
-            bail!("connection check cancelled; no connection will be reused");
-        }
-    }?;
-    println!("OK {alias} ({}): {result}", connection.kind());
+        (Err(error), _) | (_, Err(error)) => return Err(error),
+        (Ok(result), Ok(())) => result,
+    };
+    println!("OK {alias} ({kind}): {}", result.summary);
     Ok(())
 }
