@@ -84,6 +84,10 @@ fn postgres_catalog_filter() {
         "postgres.columns"
     );
     assert!(schema["datasources"][0]["session"].is_string());
+    assert_eq!(
+        schema["datasources"][0]["configuration"]["ca_file"]["max_bytes"],
+        1048576
+    );
 }
 
 #[test]

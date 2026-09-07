@@ -113,11 +113,266 @@ mod terminal {
     use std::process::{Child, Command, Stdio};
     use std::time::Instant;
 
+    const PG_READER: &str = "host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable";
+    const PG_OBSERVER: &str = "host=127.0.0.1 port=15432 user=onetui_fixture_admin password=fixture-admin-only dbname=onetui_fixture sslmode=disable";
+
+    struct Observer {
+        client: tokio_postgres::Client,
+        driver: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
+    }
+    impl Drop for Observer {
+        fn drop(&mut self) {
+            self.driver.abort();
+        }
+    }
+    impl Observer {
+        async fn connect() -> Self {
+            let (client, connection) = tokio_postgres::connect(PG_OBSERVER, tokio_postgres::NoTls)
+                .await
+                .unwrap();
+            Self {
+                client,
+                driver: tokio::spawn(connection),
+            }
+        }
+        async fn sessions(&self) -> Vec<tokio_postgres::Row> {
+            self.client.query("SELECT pid, wait_event FROM pg_stat_activity WHERE application_name='onetui-browse' AND usename='onetui_reader'", &[]).await.unwrap()
+        }
+        async fn wait_count(&self, count: usize) {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while self.sessions().await.len() != count {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("unexpected number of live browsing sessions");
+        }
+        async fn sleeping_pid(&self) -> i32 {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    let sessions = self.sessions().await;
+                    if let [row] = sessions.as_slice()
+                        && row.get::<_, Option<String>>(1).as_deref() == Some("PgSleep")
+                    {
+                        return row.get(0);
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("browser did not start its slow query")
+        }
+        async fn wait_gone(&self, pid: i32) {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while self
+                    .sessions()
+                    .await
+                    .iter()
+                    .any(|row| row.get::<_, i32>(0) == pid)
+                {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("old browsing session survived shutdown");
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Fault {
+        Panic,
+        Read,
+        Shutdown,
+    }
+    struct FaultProvider(Fault);
+    struct FaultExecutor {
+        inner: onetui_postgres::PostgresExecutor,
+        fault: Fault,
+    }
+    impl onetui_core::provider::Provider for FaultProvider {
+        type Executor = FaultExecutor;
+        fn descriptor(&self) -> &'static onetui_core::provider::ProviderDescriptor {
+            onetui_core::provider::Provider::descriptor(&onetui_postgres::PostgresProvider)
+        }
+        fn validate_config(&self, options: &toml::Table) -> anyhow::Result<()> {
+            onetui_core::provider::Provider::validate_config(
+                &onetui_postgres::PostgresProvider,
+                options,
+            )
+        }
+        fn configure(
+            &self,
+            options: &toml::Table,
+            env: &dyn Fn(&str) -> Option<String>,
+        ) -> anyhow::Result<FaultExecutor> {
+            Ok(FaultExecutor {
+                inner: onetui_postgres::PostgresProvider.configure(options, env)?,
+                fault: self.0,
+            })
+        }
+    }
+    impl Executor for FaultExecutor {
+        fn status(&self) -> tokio::sync::watch::Receiver<onetui_core::provider::ConnectionStatus> {
+            self.inner.status()
+        }
+        async fn check(
+            &self,
+            context: RequestContext,
+        ) -> anyhow::Result<onetui_core::provider::CheckResult> {
+            self.inner.check(context).await
+        }
+        async fn fetch_page(
+            &self,
+            request: PageRequest,
+            context: RequestContext,
+        ) -> anyhow::Result<onetui_core::Page> {
+            let page = self.inner.fetch_page(request, context).await?;
+            match self.fault {
+                Fault::Panic => {
+                    let mut trigger = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::user_defined1(),
+                    )
+                    .unwrap();
+                    eprintln!("ONETUI_LIVE_CLIENT_READY");
+                    trigger.recv().await;
+                    panic!("intentional worker panic with a live PostgreSQL session");
+                }
+                Fault::Read => {
+                    eprintln!("ONETUI_LIVE_CLIENT_READY");
+                    std::future::pending().await
+                }
+                Fault::Shutdown => {
+                    eprintln!("ONETUI_LIVE_CLIENT_READY");
+                    Ok(page)
+                }
+            }
+        }
+        async fn shutdown(&mut self, context: ShutdownContext) -> anyhow::Result<()> {
+            if matches!(self.fault, Fault::Shutdown) {
+                std::future::pending::<()>().await;
+            }
+            self.inner.shutdown(context).await
+        }
+    }
+
+    #[test]
+    fn lifecycle_child() {
+        let Ok(mode) = std::env::var("ONETUI_LIFECYCLE_TEST_MODE") else {
+            return;
+        };
+        let fault = match mode.as_str() {
+            "panic" => Fault::Panic,
+            "read" | "quit_read" => Fault::Read,
+            "shutdown" => Fault::Shutdown,
+            _ => panic!("unknown test mode"),
+        };
+        let catalog = [FaultProvider(fault)];
+        let config = Config::parse(
+            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIFECYCLE_TEST_DSN'",
+            &catalog,
+        )
+        .unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let error = runtime
+            .block_on(onetui_tui::run(
+                App::new(config, Some("pg")),
+                Duration::from_secs(30),
+                &catalog,
+            ))
+            .unwrap_err();
+        let expected = match fault {
+            Fault::Panic => "browsing worker failed",
+            Fault::Read => "browsing worker shutdown timed out",
+            Fault::Shutdown => "session shutdown timed out",
+        };
+        assert!(error.to_string().contains(expected), "{error}");
+        println!("ONETUI_LIFECYCLE_RESTORED");
+        // Keep the process/runtime alive while the parent checks terminal modes and server PIDs.
+        let mut acknowledgement = String::new();
+        std::io::stdin().read_line(&mut acknowledgement).unwrap();
+        drop(runtime);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the disposable PostgreSQL fixture and child-owned PTYs"]
+    async fn worker_faults_close_live_sessions_before_process_exit() {
+        let observer = Observer::connect().await;
+        observer.wait_count(0).await;
+        for mode in ["panic", "read", "shutdown", "quit_read"] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "terminal::lifecycle_child", "--nocapture"])
+                .env("ONETUI_LIFECYCLE_TEST_MODE", mode)
+                .env("ONETUI_LIFECYCLE_TEST_DSN", PG_READER);
+            let (mut pty, slave) = Pty::spawn(command);
+            pty.wait_token("ONETUI_LIVE_CLIENT_READY", Duration::from_secs(5));
+            assert!(
+                !tcgetattr(&slave)
+                    .unwrap()
+                    .local_flags
+                    .contains(LocalFlags::ICANON)
+            );
+            observer.wait_count(1).await;
+            let pid: i32 = observer.sessions().await[0].get(0);
+            if mode == "panic" {
+                assert!(
+                    Command::new("kill")
+                        .args(["-USR1", &pty.child.id().to_string()])
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+            } else if mode == "quit_read" {
+                pty.send(b"q");
+            } else {
+                pty.send(b"c");
+            }
+            pty.wait_token("ONETUI_LIFECYCLE_RESTORED", Duration::from_secs(3));
+            assert!(
+                pty.child.try_wait().unwrap().is_none(),
+                "child must remain alive for cleanup proof"
+            );
+            let after = tcgetattr(&slave).unwrap();
+            assert_eq!(after.input_flags, pty.before.input_flags, "{mode}");
+            assert_eq!(after.output_flags, pty.before.output_flags, "{mode}");
+            assert_eq!(after.control_flags, pty.before.control_flags, "{mode}");
+            assert_eq!(
+                after.local_flags & !LocalFlags::PENDIN,
+                pty.before.local_flags & !LocalFlags::PENDIN,
+                "{mode}"
+            );
+            assert_eq!(after.control_chars, pty.before.control_chars, "{mode}");
+            let output = String::from_utf8_lossy(&pty.output);
+            assert!(
+                output.contains("\x1b[?1049l"),
+                "{mode}: alternate screen not restored"
+            );
+            assert!(output.contains("\x1b[?25h"), "{mode}: cursor not restored");
+            observer.wait_gone(pid).await;
+            observer.wait_count(0).await;
+            pty.send(b"\n");
+            let until = Instant::now() + Duration::from_secs(3);
+            loop {
+                pty.read();
+                if let Some(status) = pty.child.try_wait().unwrap() {
+                    assert!(status.success(), "{mode}");
+                    break;
+                }
+                assert!(
+                    Instant::now() < until,
+                    "child did not exit after acknowledgement"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
     struct Pty {
         child: Child,
         master: Option<std::fs::File>,
         output: Vec<u8>,
         width: u16,
+        before: nix::sys::termios::Termios,
     }
 
     impl Drop for Pty {
@@ -135,6 +390,69 @@ mod terminal {
     }
 
     impl Pty {
+        fn spawn(mut command: Command) -> (Self, std::fs::File) {
+            let pair = openpty(
+                &Winsize {
+                    ws_row: 40,
+                    ws_col: 180,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                },
+                None,
+            )
+            .unwrap();
+            let slave = std::fs::File::from(pair.slave);
+            let before = tcgetattr(&slave).unwrap();
+            let master = std::fs::File::from(pair.master);
+            let flags = OFlag::from_bits_truncate(fcntl(&master, FcntlArg::F_GETFL).unwrap());
+            fcntl(&master, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)).unwrap();
+            command
+                .stdin(Stdio::from(slave.try_clone().unwrap()))
+                .stdout(Stdio::from(slave.try_clone().unwrap()))
+                .stderr(Stdio::from(slave.try_clone().unwrap()));
+            // The child must own its controlling PTY, never the developer's terminal.
+            unsafe {
+                command.pre_exec(|| {
+                    if nix::libc::setsid() == -1
+                        || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            (
+                Self {
+                    child: command.spawn().unwrap(),
+                    master: Some(master),
+                    output: Vec::new(),
+                    width: 180,
+                    before,
+                },
+                slave,
+            )
+        }
+
+        fn wait_token(&mut self, token: &str, timeout: Duration) {
+            let until = Instant::now() + timeout;
+            loop {
+                self.read();
+                if String::from_utf8_lossy(&self.output).contains(token) {
+                    return;
+                }
+                assert!(
+                    self.child.try_wait().unwrap().is_none(),
+                    "child exited before {token}"
+                );
+                assert!(
+                    Instant::now() < until,
+                    "child timed out before {token}: {}",
+                    String::from_utf8_lossy(&self.output)
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
         fn send(&mut self, bytes: &[u8]) {
             self.output.clear();
             self.master.as_mut().unwrap().write_all(bytes).unwrap();
@@ -225,13 +543,13 @@ mod terminal {
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore = "requires the disposable PostgreSQL fixture and built CLI"]
-    fn actual_cli_terminal_worker_and_postgres_journey() {
+    async fn actual_cli_terminal_worker_and_postgres_journey() {
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(
             config,
-            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'"
+            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.pg_other]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'"
         )
         .unwrap();
         let binary = std::env::var_os("ONETUI_TEST_BIN")
@@ -239,44 +557,15 @@ mod terminal {
             .unwrap_or_else(|| {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
             });
-        let pair = openpty(
-            &Winsize {
-                ws_row: 40,
-                ws_col: 180,
-                ws_xpixel: 0,
-                ws_ypixel: 0,
-            },
-            None,
-        )
-        .unwrap();
-        let slave = std::fs::File::from(pair.slave);
-        let master = std::fs::File::from(pair.master);
-        let flags = OFlag::from_bits_truncate(fcntl(&master, FcntlArg::F_GETFL).unwrap());
-        fcntl(&master, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)).unwrap();
         let mut command = Command::new(binary);
-        command.arg("--config").arg(config.path()).args(["--connection", "pg"])
-            .env("ONETUI_LIVE_PTY_DSN", "host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable")
-            .stdin(Stdio::from(slave.try_clone().unwrap()))
-            .stdout(Stdio::from(slave.try_clone().unwrap()))
-            .stderr(Stdio::from(slave.try_clone().unwrap()));
-        // Crossterm may open /dev/tty; it must resolve to this PTY, never the user's terminal.
-        unsafe {
-            command.pre_exec(|| {
-                if nix::libc::setsid() == -1
-                    || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let mut pty = Pty {
-            child: command.spawn().unwrap(),
-            master: Some(master),
-            output: Vec::new(),
-            width: 180,
-        };
-        drop(command);
+        command
+            .arg("--config")
+            .arg(config.path())
+            .args(["--connection", "pg"])
+            .env("ONETUI_LIVE_PTY_DSN", PG_READER);
+        let observer = Observer::connect().await;
+        observer.wait_count(0).await;
+        let (mut pty, slave) = Pty::spawn(command);
         pty.wait(&["postgres.schemas", "public"]);
         assert!(
             !tcgetattr(&slave)
@@ -334,6 +623,28 @@ mod terminal {
         pty.wait(&["postgres.relations", "browse_slow"]);
         pty.open_filtered("keyed_rows");
         pty.wait(&["postgres.rows", "Keyset", "9007199254740993"]);
+        for alias in ["pg_other", "pg", "pg_other"] {
+            pty.send(b":back\r");
+            pty.wait(&["postgres.relations", "keyed_rows"]);
+            pty.open_filtered("browse_slow");
+            pty.wait(&["postgres.rows", "Loading"]);
+            let old_pid = observer.sleeping_pid().await;
+            pty.send(b"c");
+            pty.wait(&["connections", "pg_other"]);
+            pty.open_filtered(alias);
+            pty.wait(&[&format!("OneTUI|{alias}|"), "postgres.schemas", "public"]);
+            observer.wait_gone(old_pid).await;
+            observer.wait_count(1).await;
+            pty.open_filtered("public");
+            pty.wait(&["postgres.relations", "keyed_rows"]);
+            pty.open_filtered("keyed_rows");
+            pty.wait(&[
+                &format!("OneTUI|{alias}|"),
+                "postgres.rows",
+                "Keyset",
+                "9007199254740993",
+            ]);
+        }
         pty.output.clear();
         pty.master.as_mut().unwrap().write_all(b"q").unwrap();
         let until = Instant::now() + Duration::from_secs(3);
@@ -353,5 +664,6 @@ mod terminal {
             "alternate screen not restored"
         );
         assert!(output.contains("\x1b[?25h"), "cursor not restored");
+        observer.wait_count(0).await;
     }
 }

@@ -100,7 +100,7 @@ Currently, the only top-level setting is `[connections]`, containing named `[con
 | --- | --- | --- |
 | `kind` | Every connection | Required: exactly `"postgres"` or `"qdrant"` |
 | `url_env` | PostgreSQL | Required: name of the environment variable containing the connection string; no inline `url` field |
-| `ca_file` | PostgreSQL | Optional absolute PEM trust-store path; omitted uses the native-root loader. An explicit file replaces those roots and cannot be combined with `sslmode=disable` |
+| `ca_file` | PostgreSQL | Optional absolute path to a regular PEM file, at most 1 MiB (1,048,576 bytes); omitted uses the native-root loader. An explicit file replaces those roots and cannot be combined with `sslmode=disable` |
 | `url` | Qdrant | Required: explicit HTTP(S) gRPC endpoint; no default server is supplied |
 | `api_key_env` | Qdrant | Optional environment-variable name; omitted sends no API key. If configured, its value must be present and nonempty |
 
@@ -116,7 +116,7 @@ Example config (save it at the default location or at the explicit path passed t
 [connections.local_pg]
 kind = "postgres"
 url_env = "ONETUI_POSTGRES_URL"
-# Optional: absolute PEM trust-store path, replacing native roots for PostgreSQL.
+# Optional: absolute regular PEM file, at most 1 MiB; replaces PostgreSQL native roots.
 # ca_file = "/absolute/path/to/ca.pem"
 
 [connections.local_qdrant]
@@ -126,6 +126,10 @@ api_key_env = "ONETUI_QDRANT_API_KEY"
 ```
 
 PostgreSQL requires certificate/hostname-verified TLS by default; `sslmode=prefer` is promoted to `require`, never downgraded to plaintext. The driver accepts `disable`, `prefer`, and `require` (not libpq's `verify-full` spelling). An explicit `sslmode=disable` is allowed only for loopback hosts/local Unix sockets. The check sets its own read-only/statement-timeout startup options; DSN `options` are replaced. Restricted database credentials remain the authorization boundary.
+
+PostgreSQL opens the selected `ca_file` without waiting on a FIFO, then checks the opened file type and limits the bytes read. Directories, FIFOs, devices, oversized files, malformed PEM and files with no usable certificates fail explicitly. Symlinks to regular files are allowed. Existing special-file paths or bundles above 1 MiB must be replaced with a regular, smaller PEM bundle; other configuration keys and discovery rules are unchanged.
+
+PostgreSQL certificate loading, including native-root lookup when `ca_file` is omitted, runs outside Tokio's async workers and remains inside the request deadline. Cancellation stops waiting; the OS read itself cannot always be interrupted. At most one PostgreSQL trust-loading job can remain in progress per process, so retries cannot accumulate blocked jobs. Later TLS requests wait for that slot within their own deadlines. CLI shutdown does not wait indefinitely for an abandoned OS trust read. This does not change Qdrant's trust-loading implementation.
 
 Remote Qdrant URLs must use `https://` with native trust roots; `http://` is limited to loopback hosts. Specify the gRPC port (normally 6334), not the REST port; ports are never rewritten. URL credentials, path prefixes, queries and fragments are unsupported. Qdrant custom-CA config and client certificates are not implemented. Collection-scoped keys may not permit listing; that is reported as denied, not an empty result.
 

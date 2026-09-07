@@ -144,7 +144,7 @@ impl PostgresExecutor {
                 self.status.send_replace(ConnectionStatus::Connecting);
                 let mut config = crate::check::postgres_config(&self.url, deadline.saturating_duration_since(tokio::time::Instant::now()))?;
                 config.application_name(if request.is_some() { "onetui-browse" } else { "onetui-check" });
-                let tls = crate::check::postgres_tls(&config, self.ca_file.as_deref())?;
+                let tls = crate::check::postgres_tls(&config, self.ca_file.as_deref()).await?;
                 let (client, connection) = config.connect(tls.clone()).await.map_err(crate::browse::pg_error)?;
                 let status = self.status.clone();
                 let driver = Driver(tokio::spawn(async move {

@@ -53,7 +53,7 @@ pub(crate) fn capabilities() -> serde_json::Value {
         "configuration": {
             "kind": {"required": true, "values": ["postgres"], "purpose": "Select the PostgreSQL connector"},
             "url_env": {"required": true, "type": "string", "purpose": "Environment variable containing the DSN; explicit host required", "values": "Nonempty ASCII letters, digits, underscores or hyphens", "example": "ONETUI_POSTGRES_URL"},
-            "ca_file": {"required": false, "type": "absolute path to a PEM certificate file", "default": "native trust roots", "purpose": "Replace the PostgreSQL trust store; incompatible with sslmode=disable"}
+            "ca_file": {"required": false, "type": "absolute path to a regular PEM certificate file", "max_bytes": crate::check::CA_BYTES, "default": "native trust roots", "purpose": "Replace the PostgreSQL trust store; incompatible with sslmode=disable. Reject empty/invalid files, directories, FIFOs, devices and oversized files; symlinks must resolve to regular files."}
         },
         "tls": "sslmode=prefer (default) is promoted to require with certificate/hostname verification; disable is local-only"
     })
