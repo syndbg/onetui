@@ -127,7 +127,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let [header, body, status, command] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(0),
-        Constraint::Length(2),
+        Constraint::Length(3),
         Constraint::Length(2),
     ])
     .areas(frame.area());
@@ -181,7 +181,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let descriptor = app.descriptor();
         let start = app.view.column / 4 * 4;
         let end = (start + 4).min(app.column_count());
-        let rows = app.view.page.rows.iter().map(|row| {
+        let rows = app.view.visible.iter().map(|&index| {
+            let row = &app.view.page.rows[index];
             Row::new(row.cells.iter().skip(start).take(end - start).map(|cell| {
                 let value = cell.as_deref().unwrap_or("NULL");
                 let mut preview: String = value.chars().take(128).collect();
@@ -206,7 +207,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ")
             .block(Block::bordered().title(descriptor.id));
-        let mut state = TableState::default().with_selected(if app.view.page.rows.is_empty() {
+        let mut state = TableState::default().with_selected(if app.view.visible.is_empty() {
             None
         } else {
             Some(app.view.selected)
@@ -217,6 +218,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         "Loading… Ctrl-c cancels"
     } else if app.view.page.rows.is_empty() {
         "Empty result"
+    } else if app.view.visible.is_empty() {
+        "No matches on this page"
     } else {
         "Ready"
     };
@@ -230,17 +233,29 @@ pub fn draw(frame: &mut Frame, app: &App) {
             &app.view.page.notice
         }
     };
+    let local_sort = app.view.sort.map_or_else(
+        || "source order".into(),
+        |(column, descending)| {
+            format!(
+                "{} {}",
+                app.column_name(column),
+                if descending { "desc" } else { "asc" }
+            )
+        },
+    );
     frame.render_widget(
         Paragraph::new(format!(
-            "{error}\nPage {} | {} items | next: {} | {scope}",
+            "{error}\nPage {} | {} items | next: {} | {scope}\nPage-local: {}/{} shown | filter: {:?} | lexical sort: {local_sort}",
             app.view.offset / PAGE_SIZE + 1,
             app.view.page.rows.len(),
-            app.view.page.next
+            app.view.page.next,
+            app.view.visible.len(), app.view.page.rows.len(), display(&app.view.filter)
         )),
         status,
     );
-    let prompt = app.command.as_ref().map(|value| format!(":{value}\nEnter execute | Esc cancel"))
-        .unwrap_or_else(|| "Enter open/detail | m columns | h/l fields | Esc back | n/p pages/chunks | r refresh | c connections | : commands | ? help | q quit".into());
+    let prompt = app.filter_input.as_ref().map(|value| format!("Filter displayed page: /{}\nEnter apply (empty clears) | Esc discard | max 256 UTF-8 bytes", display(value)))
+        .or_else(|| app.command.as_ref().map(|value| format!(":{value}\nEnter execute | Esc cancel")))
+        .unwrap_or_else(|| "Enter open/detail | / filter page | s sort field | m columns | h/l fields | Esc back | n/p pages/chunks | r refresh | c connections | : commands | ? help | q quit".into());
     frame.render_widget(Paragraph::new(prompt).wrap(Wrap { trim: false }), command);
 }
 

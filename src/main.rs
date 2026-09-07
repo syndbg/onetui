@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 #[command(
     version,
     about,
-    long_about = "OneTUI database browser. Browse PostgreSQL rows and schema/relation/column metadata in the terminal, check PostgreSQL/Qdrant connectivity, or dump the offline capability catalog. Qdrant point browsing and page-local filter/sort are not implemented yet."
+    long_about = "OneTUI database browser. Browse PostgreSQL rows and schema/relation/column metadata in the terminal, check PostgreSQL/Qdrant connectivity, or dump the offline capability catalog. Filter and sort the displayed page locally. Qdrant point browsing is not implemented yet."
 )]
 struct Args {
     #[command(subcommand)]

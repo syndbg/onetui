@@ -24,7 +24,10 @@ pub struct View {
     pub selected: usize,
     pub offset: i64,
     pub column: usize,
-    previous: VecDeque<(i64, Page, usize)>,
+    pub visible: Vec<usize>,
+    pub filter: String,
+    pub sort: Option<(usize, bool)>,
+    previous: VecDeque<(i64, Page, Option<usize>)>,
 }
 
 impl View {
@@ -36,8 +39,40 @@ impl View {
             selected: 0,
             offset: 0,
             column: 0,
+            visible: Vec::new(),
+            filter: String::new(),
+            sort: None,
             previous: VecDeque::new(),
         }
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.visible.get(self.selected).copied()
+    }
+
+    fn rebuild(&mut self, keep: Option<usize>) {
+        // Presentation indices only: native row order and continuation must never be rewritten.
+        self.visible = self
+            .page
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| {
+                row.cells
+                    .iter()
+                    .any(|cell| cell.as_deref().unwrap_or("NULL").contains(&self.filter))
+                    .then_some(i)
+            })
+            .collect();
+        if let Some((column, descending)) = self.sort {
+            self.visible.sort_by(|&a, &b| {
+                let order = self.page.rows[a].cells[column].cmp(&self.page.rows[b].cells[column]);
+                if descending { order.reverse() } else { order }
+            });
+        }
+        self.selected = keep
+            .and_then(|index| self.visible.iter().position(|&i| i == index))
+            .unwrap_or(0);
     }
 }
 
@@ -56,6 +91,7 @@ pub struct App {
     pub detail_chunks: usize,
     pub detail_scroll: u16,
     pub command: Option<String>,
+    pub filter_input: Option<String>,
     pub quit: bool,
 }
 
@@ -76,6 +112,7 @@ impl App {
             detail_chunks: 0,
             detail_scroll: 0,
             command: None,
+            filter_input: None,
             quit: false,
         };
         app.connections();
@@ -126,6 +163,7 @@ impl App {
                 target: None,
             })
             .collect();
+        self.view.rebuild(None);
         self.help = false;
         self.detail = false;
         self.detail_text.clear();
@@ -155,13 +193,20 @@ impl App {
         self.loading = false;
         match result {
             Ok(page) if page.bytes() <= PAGE_BYTES => {
+                if self.view.sort.is_some_and(|(column, _)| {
+                    self.view.page.columns.get(column).map(|c| &c.name)
+                        != page.columns.get(column).map(|c| &c.name)
+                }) {
+                    self.view.sort = None;
+                }
                 if request.reset {
                     self.view.previous.clear();
                 } else {
+                    let selected = self.view.selected_index();
                     self.view.previous.push_back((
                         self.view.offset,
                         std::mem::take(&mut self.view.page),
-                        self.view.selected,
+                        selected,
                     ));
                     while self.view.previous.len() > 2 {
                         self.view.previous.pop_front();
@@ -171,6 +216,14 @@ impl App {
                 self.view.offset = request.offset;
                 self.view.selected = 0;
                 self.view.column = self.view.column.min(self.column_count().saturating_sub(1));
+                if self
+                    .view
+                    .sort
+                    .is_some_and(|(column, _)| column >= self.column_count())
+                {
+                    self.view.sort = None;
+                }
+                self.view.rebuild(None);
                 self.error = None;
             }
             Ok(_) => {
@@ -183,17 +236,18 @@ impl App {
 
     pub fn available(&self, action: Action) -> bool {
         match action {
+            Action::Filter => !self.detail,
+            Action::Sort => !self.detail && self.column_count() > 0,
             Action::Columns => {
                 !self.loading
                     && !self.detail
-                    && !self.help
                     && (self.view.resource.id == "postgres.rows"
                         || (self.view.resource.id == "postgres.relations"
-                            && !self.view.page.rows.is_empty()))
+                            && !self.view.visible.is_empty()))
             }
             Action::Left | Action::Right => self.column_count() > 0,
             Action::Back => self.help || self.detail || !self.parents.is_empty(),
-            Action::Open => !self.loading && !self.view.page.rows.is_empty(),
+            Action::Open => !self.loading && !self.view.visible.is_empty(),
             Action::Next => {
                 if self.detail {
                     self.detail_chunk + 1 < self.detail_chunks
@@ -208,7 +262,7 @@ impl App {
                     !self.loading && !self.view.previous.is_empty()
                 }
             }
-            Action::Up | Action::Down => !self.view.page.rows.is_empty(),
+            Action::Up | Action::Down => !self.view.visible.is_empty(),
             _ => true,
         }
     }
@@ -239,7 +293,8 @@ impl App {
     }
 
     fn detail_text(&mut self) {
-        let cell = &self.view.page.rows[self.view.selected].cells[self.view.column];
+        let cell = &self.view.page.rows[self.view.selected_index().expect("selected detail row")]
+            .cells[self.view.column];
         let value = cell.as_deref().unwrap_or("");
         self.detail_chunks = value.chars().count().div_ceil(4096).max(1);
         self.detail_chunk = self.detail_chunk.min(self.detail_chunks - 1);
@@ -300,6 +355,20 @@ impl App {
             }
         }
         match action {
+            Action::Filter => {
+                self.help = false;
+                self.filter_input = Some(self.view.filter.clone());
+            }
+            Action::Sort => {
+                self.help = false;
+                let selected = self.view.selected_index();
+                self.view.sort = match self.view.sort {
+                    Some((column, false)) if column == self.view.column => Some((column, true)),
+                    Some((column, true)) if column == self.view.column => None,
+                    _ => Some((self.view.column, false)),
+                };
+                self.view.rebuild(selected);
+            }
             Action::Left | Action::Right => {
                 self.view.column = if action == Action::Left {
                     self.view.column.saturating_sub(1)
@@ -312,10 +381,11 @@ impl App {
                 }
             }
             Action::Columns => {
+                self.help = false;
                 let path = if self.view.resource.id == "postgres.rows" {
                     self.view.resource.path.clone()
                 } else {
-                    self.view.page.rows[self.view.selected]
+                    self.view.page.rows[self.view.selected_index().expect("selected relation")]
                         .target
                         .as_ref()
                         .expect("relation target")
@@ -333,7 +403,7 @@ impl App {
             Action::Up => self.view.selected = self.view.selected.saturating_sub(1),
             Action::Down => {
                 self.view.selected =
-                    (self.view.selected + 1).min(self.view.page.rows.len().saturating_sub(1))
+                    (self.view.selected + 1).min(self.view.visible.len().saturating_sub(1))
             }
             Action::Open => {
                 if self.help || self.detail {
@@ -341,7 +411,8 @@ impl App {
                 }
                 let (alias, target) = if self.view.resource == Resource::new("connections", vec![])
                 {
-                    let (alias, kind) = self.config.aliases()[self.view.selected];
+                    let (alias, kind) = self.config.aliases()
+                        [self.view.selected_index().expect("selected connection")];
                     if kind != "postgres" {
                         self.error =
                             Some("Qdrant browsing is not implemented; use --check for now".into());
@@ -351,7 +422,10 @@ impl App {
                         Some(alias.to_owned()),
                         Resource::new("postgres.schemas", vec![]),
                     )
-                } else if let Some(target) = &self.view.page.rows[self.view.selected].target {
+                } else if let Some(target) = &self.view.page.rows
+                    [self.view.selected_index().expect("selected resource")]
+                .target
+                {
                     (self.view.alias.clone(), target.clone())
                 } else {
                     self.detail = true;
@@ -387,13 +461,18 @@ impl App {
                     self.invalidate();
                     self.view.offset = offset;
                     self.view.page = page;
-                    self.view.selected = selected;
+                    self.view.rebuild(selected);
                 }
             }
             Action::Refresh => {
                 self.detail = false;
                 if self.view.resource == Resource::new("connections", vec![]) {
+                    let filter = std::mem::take(&mut self.view.filter);
+                    let sort = self.view.sort;
                     self.connections();
+                    self.view.filter = filter;
+                    self.view.sort = sort;
+                    self.view.rebuild(None);
                 } else {
                     self.load(0, true);
                 }
@@ -420,7 +499,32 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.command = None;
+            self.filter_input = None;
             self.act(Action::Cancel);
+            return;
+        }
+        if let Some(input) = &mut self.filter_input {
+            match key.code {
+                KeyCode::Esc => self.filter_input = None,
+                KeyCode::Enter => {
+                    let selected = self.view.selected_index();
+                    self.view.filter = self.filter_input.take().unwrap();
+                    self.view.rebuild(selected);
+                }
+                KeyCode::Backspace => {
+                    input.pop();
+                }
+                KeyCode::Char(c)
+                    if !c.is_control()
+                        && input.len() + c.len_utf8() <= 256
+                        && !key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    input.push(c);
+                }
+                _ => {}
+            }
             return;
         }
         if let Some(command) = &mut self.command {
@@ -493,6 +597,172 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         write!(file, "[connections.pg]\nkind='postgres'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='qdrant'\nurl='http://localhost:6334'").unwrap();
         App::new(Config::load(file.path()).unwrap(), Some("pg"))
+    }
+
+    fn filter(app: &mut App, text: &str) {
+        app.key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        while !app.filter_input.as_ref().unwrap().is_empty() {
+            app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        }
+        for c in text.chars() {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn local_sort_filter_and_detail_never_rewrite_rows_or_continuation() {
+        let mut app = app();
+        let request = app.request.take().unwrap();
+        app.view.resource = Resource::new("postgres.rows", vec!["public".into(), "sample".into()]);
+        let values = vec![
+            Some("2".into()),
+            None,
+            Some("".into()),
+            Some("10".into()),
+            Some("NULL".into()),
+            Some("2".into()),
+        ];
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: vec![onetui_core::Column {
+                    name: "value".into(),
+                    datatype: "text".into(),
+                }],
+                rows: values
+                    .iter()
+                    .map(|value| Row {
+                        cells: vec![value.clone()],
+                        target: None,
+                    })
+                    .collect(),
+                next: true,
+                continuation: Some("native token".into()),
+                ..Page::default()
+            }),
+        );
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert_eq!(app.view.visible, vec![1, 2, 3, 0, 5, 4]);
+        assert_eq!(app.view.selected_index(), Some(0));
+        app.act(Action::Sort);
+        assert_eq!(app.view.visible, vec![4, 0, 5, 3, 2, 1]);
+        app.act(Action::Sort);
+        assert_eq!(app.view.visible, (0..6).collect::<Vec<_>>());
+        filter(&mut app, "10");
+        assert_eq!(app.view.visible, vec![3]);
+        app.act(Action::Open);
+        assert!(app.detail_text.ends_with("\n10"));
+        assert!(!app.available(Action::Filter));
+        assert!(!app.available(Action::Sort));
+        app.act(Action::Back);
+        filter(&mut app, "NULL");
+        assert_eq!(app.view.visible, vec![1, 4]);
+        filter(&mut app, "not present");
+        assert!(app.view.visible.is_empty());
+        assert!(!app.available(Action::Open));
+        assert!(app.available(Action::Next));
+        assert!(app.request.is_none());
+        app.act(Action::Next);
+        let next = app.request.take().unwrap();
+        assert_eq!(next.continuation.as_deref(), Some("native token"));
+        app.complete(&next, Err(anyhow::anyhow!("read failed")));
+        assert_eq!(app.view.filter, "not present");
+        assert_eq!(
+            app.view
+                .page
+                .rows
+                .iter()
+                .map(|r| r.cells[0].clone())
+                .collect::<Vec<_>>(),
+            values
+        );
+        assert_eq!(app.view.page.continuation.as_deref(), Some("native token"));
+        filter(&mut app, "");
+        assert_eq!(app.view.visible.len(), 6);
+    }
+
+    #[test]
+    fn filtered_sorted_connections_and_parents_use_source_indices() {
+        let mut app = app();
+        app.act(Action::Connections);
+        filter(&mut app, "qdrant");
+        assert_eq!(app.view.selected_index(), Some(1));
+        app.act(Action::Open);
+        assert!(app.error.as_ref().unwrap().contains("not implemented"));
+        filter(&mut app, "postgres");
+        app.act(Action::Sort);
+        app.act(Action::Refresh);
+        assert_eq!(app.view.filter, "postgres");
+        app.act(Action::Open);
+        assert_eq!(app.request.as_ref().unwrap().alias, "pg");
+        app.act(Action::Back);
+        assert_eq!(app.view.filter, "postgres");
+        assert_eq!(app.view.sort, Some((0, false)));
+        assert_eq!(app.view.selected_index(), Some(0));
+    }
+
+    #[test]
+    fn filter_input_is_bounded_unicode_text_not_navigation() {
+        let mut app = app();
+        app.act(Action::Connections);
+        app.act(Action::Help);
+        assert!(app.actions().any(|entry| entry.id == Action::Filter));
+        assert!(app.actions().any(|entry| entry.id == Action::Sort));
+        filter(&mut app, "q");
+        assert!(!app.help);
+        app.act(Action::Filter);
+        for c in "uit:/snrc?".chars() {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert!(!app.quit);
+        assert!(!app.help);
+        assert!(app.command.is_none());
+        assert!(app.request.is_none());
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.view.filter, "q");
+        app.act(Action::Filter);
+        app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        for _ in 0..100 {
+            app.key(KeyEvent::new(KeyCode::Char('🌊'), KeyModifiers::NONE));
+        }
+        assert_eq!(app.filter_input.as_ref().unwrap().len(), 256);
+        app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(app.filter_input.as_ref().unwrap().len(), 252);
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.view.visible.is_empty());
+        filter(&mut app, "");
+        assert_eq!(app.view.visible.len(), 2);
+    }
+
+    #[test]
+    fn retained_pages_reapply_current_local_state_and_refresh_resets_native_token() {
+        let mut app = app();
+        let first = app.request.take().unwrap();
+        filter(&mut app, "public");
+        assert_eq!(
+            app.generation, first.id,
+            "local input must not invalidate active fetch"
+        );
+        app.complete(&first, Ok(page(true)));
+        app.act(Action::Sort);
+        filter(&mut app, "public");
+        app.act(Action::Next);
+        let next = app.request.take().unwrap();
+        app.complete(&next, Ok(page(true)));
+        filter(&mut app, "missing");
+        app.act(Action::Previous);
+        assert!(app.view.visible.is_empty());
+        assert_eq!(app.view.filter, "missing");
+        assert_eq!(app.view.sort, Some((0, false)));
+        assert!(app.request.is_none());
+        filter(&mut app, "public");
+        app.act(Action::Refresh);
+        let refresh = app.request.take().unwrap();
+        assert!(refresh.continuation.is_none());
+        app.complete(&refresh, Ok(Page::default()));
+        assert!(!app.available(Action::Previous));
+        assert_eq!(app.view.filter, "public");
     }
 
     fn page(next: bool) -> Page {

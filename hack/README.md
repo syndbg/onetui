@@ -10,7 +10,7 @@ make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
 
-`make run` builds and supplies fake PostgreSQL credentials; it does not start/recreate containers. Enter opens schemas, relations, then rows and field detail; `m` opens column metadata. Fixtures include multi-page bigint/composite keys and explicit size/error cases. See [PostgreSQL usage](../docs/postgres.md).
+`make run` builds and supplies fake PostgreSQL credentials; it does not start/recreate containers. Enter opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. The integration target includes the actual CLI/PTY/PostgreSQL journey as a TUI-package test. Fixtures include multi-page bigint/composite keys and explicit size/error cases. See [PostgreSQL usage](../docs/postgres.md).
 
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 

@@ -4,7 +4,7 @@ Explore databases and streams from your terminal.
 
 OneTUI is an independent project for navigating data with a familiar k9s-style terminal interface: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-PostgreSQL row/metadata TUI and offline capability dump are implemented. Row paging/detail have live fixture coverage; page filter/sort, Qdrant point browsing and configurable keybindings remain planned. PostgreSQL/Qdrant headless checks remain available.
+PostgreSQL row/metadata TUI and offline capability dump are implemented. Page-local filter/sort and the actual-CLI/live-PostgreSQL terminal journey are covered. Qdrant point browsing and configurable keybindings remain planned. PostgreSQL/Qdrant headless checks remain available.
 
 The first release targets **PostgreSQL and Qdrant**, using **Rust, Ratatui, and Tokio**. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
 
@@ -46,7 +46,7 @@ onetui schema --datasource postgres
 onetui schema --datasource qdrant
 ```
 
-Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
+Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `/` filters this page's cached text; `s` cycles lexical sort on the selected field; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
 
 See [PostgreSQL usage](docs/postgres.md) for keys, limits, cancellation behavior and remaining work. This adds no TOML settings or config-discovery changes.
 

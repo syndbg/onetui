@@ -28,7 +28,7 @@ pub fn dump(datasource: Option<&str>) -> Result<String> {
         },
         "timeout": {"flag": "--timeout", "purpose": "Active request deadline, not displayed-data expiry", "default_seconds": 5, "min_seconds": 1, "max_seconds": 300},
         "browsing_limits": {"metadata_page_rows": 100, "row_page_rows": 100, "retained_pages_per_view": 3, "page_bytes": 1048576,
-            "postgres_row_text_bytes": 1048576, "postgres_max_columns": 256, "detail_chunk_characters": 4096,
-            "notes": "Fixed limits, not TOML settings or an RSS guarantee. Row text is guarded server-side; page bytes include escaped values, column labels and continuation. No cross-request snapshot. Detail reads cached text; table previews show up to 128 characters. Page-local filter/sort not implemented."}
+            "postgres_row_text_bytes": 1048576, "postgres_max_columns": 256, "detail_chunk_characters": 4096, "page_filter_utf8_bytes": 256,
+            "notes": "Fixed limits, not TOML settings or an RSS guarantee. Row text is guarded server-side; page bytes include escaped values, column labels and continuation. No cross-request snapshot. Detail reads cached text; table previews show up to 128 characters. Page-local filter searches all cached fields with a case-sensitive literal substring (SQL NULL is searched as NULL); empty clears. Sort cycles lexical ascending/descending/source order on the selected field, NULL first ascending, stable ties. Neither changes native continuation."}
     }))?)
 }

@@ -17,6 +17,8 @@ pub enum Action {
     Columns,
     Left,
     Right,
+    Filter,
+    Sort,
 }
 
 #[derive(Serialize)]
@@ -27,6 +29,16 @@ pub struct ActionDescriptor {
 }
 
 pub const ACTIONS: &[ActionDescriptor] = &[
+    ActionDescriptor {
+        id: Action::Filter,
+        keys: &["/"],
+        description: "Filter this page's displayed text; Enter applies, empty clears, Esc discards",
+    },
+    ActionDescriptor {
+        id: Action::Sort,
+        keys: &["s"],
+        description: "Sort selected field locally: lexical ascending, descending, then source order",
+    },
     ActionDescriptor {
         id: Action::Columns,
         keys: &["m"],
