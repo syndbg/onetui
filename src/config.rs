@@ -125,10 +125,10 @@ fn default_path(
         return Ok(path);
     }
     if let Some(xdg) = xdg.filter(|p| Path::new(p).is_absolute()) {
-        return Ok(PathBuf::from(xdg).join("bpearl/config.toml"));
+        return Ok(PathBuf::from(xdg).join("onetui/config.toml"));
     }
     if let Some(home) = home.filter(|p| Path::new(p).is_absolute()) {
-        return Ok(PathBuf::from(home).join(".config/bpearl/config.toml"));
+        return Ok(PathBuf::from(home).join(".config/onetui/config.toml"));
     }
     bail!("cannot determine configuration directory; pass --config <path>")
 }
@@ -171,11 +171,11 @@ mod tests {
         );
         assert_eq!(
             default_path(None, Some("/xdg".into()), home.clone()).unwrap(),
-            PathBuf::from("/xdg/bpearl/config.toml")
+            PathBuf::from("/xdg/onetui/config.toml")
         );
         assert_eq!(
             default_path(None, Some("relative".into()), home).unwrap(),
-            PathBuf::from("/example/.config/bpearl/config.toml")
+            PathBuf::from("/example/.config/onetui/config.toml")
         );
         assert!(default_path(None, None, None).is_err());
     }

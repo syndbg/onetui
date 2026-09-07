@@ -4,9 +4,9 @@ use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
 fn binary() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_bpearl"));
-    cmd.env_remove("BPEARL_TEST_DSN")
-        .env_remove("BPEARL_TEST_KEY");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_onetui"));
+    cmd.env_remove("ONETUI_TEST_DSN")
+        .env_remove("ONETUI_TEST_KEY");
     cmd
 }
 
@@ -25,7 +25,13 @@ fn run_config(config: &str, alias: &str, env: &[(&str, &str)]) -> Output {
 #[test]
 fn help_version_and_unsupported_ui_work_without_configuration() {
     for arg in ["--help", "--version"] {
-        assert!(binary().arg(arg).output().unwrap().status.success());
+        let output = binary().arg(arg).output().unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("onetui"), "{text}");
+        if arg == "--version" {
+            assert_eq!(text.trim(), concat!("onetui ", env!("CARGO_PKG_VERSION")));
+        }
     }
     let output = binary().output().unwrap();
     assert!(!output.status.success());
@@ -37,16 +43,16 @@ fn help_version_and_unsupported_ui_work_without_configuration() {
 fn config_and_dsn_errors_do_not_expose_secrets() {
     for (config, env) in [
         (
-            "[connections.test]\nkind='postgres'\nurl_env='BPEARL_TEST_DSN'",
-            vec![("BPEARL_TEST_DSN", "fake-secret-do-not-print")],
+            "[connections.test]\nkind='postgres'\nurl_env='ONETUI_TEST_DSN'",
+            vec![("ONETUI_TEST_DSN", "fake-secret-do-not-print")],
         ),
         (
             "[connections.test]\nkind='qdrant'\nurl='https://user:fake-secret-do-not-print@localhost'",
             vec![],
         ),
         (
-            "[connections.test]\nkind='qdrant'\nurl='http://127.0.0.1:6334'\napi_key_env='BPEARL_TEST_KEY'",
-            vec![("BPEARL_TEST_KEY", "fake-secret-do-not-print\n")],
+            "[connections.test]\nkind='qdrant'\nurl='http://127.0.0.1:6334'\napi_key_env='ONETUI_TEST_KEY'",
+            vec![("ONETUI_TEST_KEY", "fake-secret-do-not-print\n")],
         ),
         (
             "[connections.test]\nkind='qdrant'\nurl='http://127.0.0.1:6334'\napi_key='fake-secret-do-not-print'",
@@ -73,8 +79,8 @@ fn stalled_servers_are_bounded_by_the_overall_deadline() {
     let q = format!("[connections.test]\nkind='qdrant'\nurl='http://127.0.0.1:{port}'");
     for (config, env) in [
         (
-            "[connections.test]\nkind='postgres'\nurl_env='BPEARL_TEST_DSN'",
-            vec![("BPEARL_TEST_DSN", pg.as_str())],
+            "[connections.test]\nkind='postgres'\nurl_env='ONETUI_TEST_DSN'",
+            vec![("ONETUI_TEST_DSN", pg.as_str())],
         ),
         (q.as_str(), vec![]),
     ] {
@@ -94,7 +100,7 @@ fn ctrl_c_interrupts_a_pending_check() {
     let mut config = tempfile::NamedTempFile::new().unwrap();
     writeln!(
         config,
-        "[connections.test]\nkind='postgres'\nurl_env='BPEARL_TEST_DSN'"
+        "[connections.test]\nkind='postgres'\nurl_env='ONETUI_TEST_DSN'"
     )
     .unwrap();
     let mut child = binary()
@@ -102,7 +108,7 @@ fn ctrl_c_interrupts_a_pending_check() {
         .arg(config.path())
         .args(["--timeout", "30"])
         .env(
-            "BPEARL_TEST_DSN",
+            "ONETUI_TEST_DSN",
             format!("host=127.0.0.1 port={port} user=reader sslmode=disable"),
         )
         .stderr(std::process::Stdio::piped())

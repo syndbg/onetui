@@ -17,7 +17,7 @@ No workflow creates a release, tag, version-bump commit or crates.io publication
 ```sh
 make package TAG=v0.1.0
 cd dist
-shasum -a 256 -c bpearl-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
+shasum -a 256 -c onetui-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
 ```
 
 Use the filename matching your native platform. Packaging derives the target from rustc, builds explicitly for it, smoke-checks `--version`, and bundles the binary plus README. It refuses to overwrite existing archives/checksums. Move an old local artifact aside before rebuilding; `dist/` is ignored by Git.

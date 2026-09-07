@@ -23,15 +23,15 @@ if [[ "$1" == check ]]; then
 fi
 
 target=$(rustc -vV | awk '$1 == "host:" {print $2}')
-archive="bpearl-${tag}-${target}.tar.gz"
+archive="onetui-${tag}-${target}.tar.gz"
 if [[ -e "dist/$archive" || -e "dist/$archive.sha256" ]]; then
     printf 'Release archive already exists; refusing to overwrite dist/%s.\n' "$archive" >&2
     exit 1
 fi
 # An explicit native target prevents ambient CARGO_BUILD_TARGET from mislabelling the archive.
 cargo build --release --locked --target "$target"
-"target/$target/release/bpearl" --version
+"target/$target/release/onetui" --version
 mkdir -p dist
-tar -czf "dist/$archive" -C "$repo_root/target/$target/release" bpearl -C "$repo_root" README.md
+tar -czf "dist/$archive" -C "$repo_root/target/$target/release" onetui -C "$repo_root" README.md
 (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
 printf 'Created dist/%s and its SHA-256 file.\n' "$archive"

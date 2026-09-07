@@ -1,9 +1,9 @@
 [package]
-name = "bpearl"
+name = "onetui"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
-description = "BlackPearl: a terminal browser for databases and streams"
+description = "OneTUI: a terminal browser for databases and streams"
 publish = false
 
 [dependencies]

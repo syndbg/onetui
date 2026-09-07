@@ -152,27 +152,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bpearl"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "qdrant-client",
- "rustls",
- "rustls-native-certs",
- "serde",
- "tempfile",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "tokio-stream",
- "toml",
- "tonic",
- "tonic-prost",
- "url",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1049,6 +1028,27 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "onetui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "qdrant-client",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "tokio-stream",
+ "toml",
+ "tonic",
+ "tonic-prost",
+ "url",
+]
 
 [[package]]
 name = "openssl-probe"

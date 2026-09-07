@@ -11,17 +11,17 @@ fn fixture_setup_preserves_existing_containers_and_cleans_failed_startup() {
         &docker,
         r#"#!/bin/bash
 set -eu
-printf '%s\n' "$*" >> "$BPEARL_TEST_DOCKER_LOG"
+printf '%s\n' "$*" >> "$ONETUI_TEST_DOCKER_LOG"
 case "$*" in
     'context inspect '*)
-        if [[ "$BPEARL_TEST_DOCKER_STATE" == remote ]]; then
+        if [[ "$ONETUI_TEST_DOCKER_STATE" == remote ]]; then
             printf 'ssh://example.invalid\n'
         else
             printf 'unix:///fixture-test.sock\n'
         fi ;;
     info|*' version') ;;
     *' ps --all --quiet')
-        if [[ "$BPEARL_TEST_DOCKER_STATE" == existing ]]; then printf 'existing-fixture\n'; fi ;;
+        if [[ "$ONETUI_TEST_DOCKER_STATE" == existing ]]; then printf 'existing-fixture\n'; fi ;;
     *' up -d --wait --wait-timeout 60') exit 27 ;;
     *' logs --no-color --tail 100'|*' down --timeout 10') ;;
     *) exit 99 ;;
@@ -45,8 +45,8 @@ esac
             )
             .env_remove("DOCKER_HOST")
             .env_remove("DOCKER_CONTEXT")
-            .env("BPEARL_TEST_DOCKER_LOG", &log)
-            .env("BPEARL_TEST_DOCKER_STATE", state)
+            .env("ONETUI_TEST_DOCKER_LOG", &log)
+            .env("ONETUI_TEST_DOCKER_STATE", state)
             .output()
             .unwrap();
         let error = String::from_utf8_lossy(&output.stderr);

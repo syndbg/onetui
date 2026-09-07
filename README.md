@@ -1,8 +1,8 @@
-# BlackPearl (`bpearl`)
+# OneTUI (`onetui`)
 
 Explore databases and streams from your terminal.
 
-BlackPearl is an independent project for navigating data with a familiar k9s-style terminal interface: connection switching, a command palette, tables, filtering, and drill-down inspection.
+OneTUI is an independent project for navigating data with a familiar k9s-style terminal interface: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
 Headless PostgreSQL/Qdrant checks work; the TUI, browsing commands, schema dump and configurable keybindings are not implemented yet.
 
@@ -10,7 +10,7 @@ The first release targets **PostgreSQL and Qdrant**, using **Rust, Ratatui, and 
 
 Start with:
 
-Project name: **BlackPearl**. Repository and intended executable: **`bpearl`**.
+Project name: **OneTUI**. Repository and intended executable: **`onetui`**.
 
 The initial product is a read-only browser. Backend-specific querying follows the browsing foundation; data editing and broker administration are outside the initial scope.
 
@@ -20,26 +20,26 @@ Install Rust through rustup, Make, and Docker with Compose for the local databas
 
 ```sh
 make dev-up
-./target/debug/bpearl --help
+./target/debug/onetui --help
 make check-local
 make dev-down
 ```
 
 `--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default connection-check deadline (1–300 seconds); Ctrl-C cancels a pending check. Running without `--check` currently reports that the TUI is not implemented.
 
-Configuration defaults to `$XDG_CONFIG_HOME/bpearl/config.toml`, or `$HOME/.config/bpearl/config.toml` when XDG_CONFIG_HOME is absent, empty or relative. `--config` selects exactly that file. Only the selected connection's environment references are resolved. Unknown configuration fields are rejected; errors do not echo config contents or driver error chains.
+Configuration defaults to `$XDG_CONFIG_HOME/onetui/config.toml`, or `$HOME/.config/onetui/config.toml` when XDG_CONFIG_HOME is absent, empty or relative. `--config` selects exactly that file. Only the selected connection's environment references are resolved. Unknown configuration fields are rejected; errors do not echo config contents or driver error chains.
 
 ```toml
 [connections.local_pg]
 kind = "postgres"
-url_env = "BPEARL_POSTGRES_URL"
+url_env = "ONETUI_POSTGRES_URL"
 # Optional: absolute PEM trust-store path, replacing native roots for PostgreSQL.
 # ca_file = "/absolute/path/to/ca.pem"
 
 [connections.local_qdrant]
 kind = "qdrant"
 url = "http://127.0.0.1:16334"
-api_key_env = "BPEARL_QDRANT_API_KEY"
+api_key_env = "ONETUI_QDRANT_API_KEY"
 ```
 
 PostgreSQL requires certificate/hostname-verified TLS by default; `sslmode=prefer` is promoted to `require`, never downgraded to plaintext. The driver accepts `disable`, `prefer`, and `require` (not libpq's `verify-full` spelling). An explicit `sslmode=disable` is allowed only for loopback hosts/local Unix sockets. The check sets its own read-only/statement-timeout startup options; DSN `options` are replaced. Restricted database credentials remain the authorization boundary.
@@ -50,7 +50,7 @@ The Qdrant check caps its protobuf metadata response at 1 MiB and reports an exp
 
 ## Disposable local fixtures and tests
 
-The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds only to loopback ports 15432/16334 (plus 16335 for a separate Qdrant TLS fixture), and stores data in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `bpearl-fixtures`; don't reuse it for valuable data.
+The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds only to loopback ports 15432/16334 (plus 16335 for a separate Qdrant TLS fixture), and stores data in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `onetui-fixtures`; don't reuse it for valuable data.
 
 ```sh
 make help

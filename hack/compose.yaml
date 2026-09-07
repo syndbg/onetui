@@ -1,11 +1,11 @@
-name: bpearl-fixtures
+name: onetui-fixtures
 services:
   postgres:
     image: postgres:16.13
     environment:
-      POSTGRES_USER: bpearl_fixture_admin
+      POSTGRES_USER: onetui_fixture_admin
       POSTGRES_PASSWORD: fixture-admin-only
-      POSTGRES_DB: bpearl_fixture
+      POSTGRES_DB: onetui_fixture
     ports:
       - "127.0.0.1:15432:5432"
     tmpfs:
@@ -13,9 +13,9 @@ services:
     volumes:
       - ./fixtures/postgres.sql:/docker-entrypoint-initdb.d/01-fixture.sql:ro
       - ./fixtures/postgres-tls.sh:/docker-entrypoint-initdb.d/02-tls.sh:ro
-      - ./fixtures/server.ext:/bpearl-server.ext:ro
+      - ./fixtures/server.ext:/onetui-server.ext:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bpearl_fixture_admin -d bpearl_fixture"]
+      test: ["CMD-SHELL", "pg_isready -U onetui_fixture_admin -d onetui_fixture"]
       interval: 1s
       timeout: 3s
       retries: 30
@@ -31,7 +31,7 @@ services:
       - /qdrant/storage
   qdrant-tls:
     image: qdrant/qdrant:v1.18.2
-    entrypoint: ["/bin/sh", "/bpearl-qdrant-tls.sh"]
+    entrypoint: ["/bin/sh", "/onetui-qdrant-tls.sh"]
     environment:
       QDRANT__SERVICE__API_KEY: fixture-admin-only
       QDRANT__SERVICE__READ_ONLY_API_KEY: fixture-reader-only
@@ -45,8 +45,8 @@ services:
       - /qdrant/storage
       - /qdrant/tls
     volumes:
-      - ./fixtures/qdrant-tls.sh:/bpearl-qdrant-tls.sh:ro
-      - ./fixtures/server.ext:/bpearl-server.ext:ro
+      - ./fixtures/qdrant-tls.sh:/onetui-qdrant-tls.sh:ro
+      - ./fixtures/server.ext:/onetui-server.ext:ro
     healthcheck:
       test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:6334 -servername localhost -alpn h2 -CAfile /qdrant/tls/ca.crt -verify_hostname localhost -verify_return_error < /dev/null > /dev/null 2>&1"]
       interval: 1s

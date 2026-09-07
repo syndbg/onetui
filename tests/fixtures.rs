@@ -15,8 +15,8 @@ use rustls::pki_types::{CertificateDer, pem::PemObject};
 use tokio_postgres::{Client, SimpleQueryMessage};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
-const PG: &str = "host=127.0.0.1 port=15432 user=bpearl_reader password=fixture-reader-only dbname=bpearl_fixture sslmode=disable";
-const PG_ADMIN: &str = "host=127.0.0.1 port=15432 user=bpearl_fixture_admin password=fixture-admin-only dbname=bpearl_fixture sslmode=disable";
+const PG: &str = "host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable";
+const PG_ADMIN: &str = "host=127.0.0.1 port=15432 user=onetui_fixture_admin password=fixture-admin-only dbname=onetui_fixture sslmode=disable";
 const QDRANT: &str = "http://127.0.0.1:16334";
 
 struct FixturePg {
@@ -83,7 +83,7 @@ async fn wait_for_backend(observer: &Client, pid: i32, expected: &str) {
 }
 
 fn check(alias: &str, pg: &str, key: &str) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_bpearl"))
+    Command::new(env!("CARGO_BIN_EXE_onetui"))
         .args([
             "--check",
             "--config",
@@ -91,8 +91,8 @@ fn check(alias: &str, pg: &str, key: &str) -> std::process::Output {
             "--connection",
             alias,
         ])
-        .env("BPEARL_POSTGRES_URL", pg)
-        .env("BPEARL_QDRANT_API_KEY", key)
+        .env("ONETUI_POSTGRES_URL", pg)
+        .env("ONETUI_QDRANT_API_KEY", key)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .unwrap()
@@ -143,20 +143,20 @@ fn fixture_ca(service: &str, path: &str) -> tempfile::NamedTempFile {
 #[test]
 #[ignore = "requires the disposable Docker Compose PostgreSQL TLS fixture"]
 fn postgres_tls_checks_ca_and_hostname() {
-    let ca = fixture_ca("postgres", "/var/lib/postgresql/data/bpearl-ca.crt");
+    let ca = fixture_ca("postgres", "/var/lib/postgresql/data/onetui-ca.crt");
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(
         config,
-        "[connections.tls]\nkind='postgres'\nurl_env='BPEARL_POSTGRES_URL'\nca_file='{}'\n",
+        "[connections.tls]\nkind='postgres'\nurl_env='ONETUI_POSTGRES_URL'\nca_file='{}'\n",
         ca.path().display()
     )
     .unwrap();
     let tls = PG.replace("sslmode=disable", "sslmode=require");
     for (dsn, success) in [(tls.replace("127.0.0.1", "localhost"), true), (tls, false)] {
-        let output = Command::new(env!("CARGO_BIN_EXE_bpearl"))
+        let output = Command::new(env!("CARGO_BIN_EXE_onetui"))
             .args(["--check", "--connection", "tls", "--config"])
             .arg(config.path())
-            .env("BPEARL_POSTGRES_URL", dsn)
+            .env("ONETUI_POSTGRES_URL", dsn)
             .output()
             .unwrap();
         assert_eq!(
@@ -180,7 +180,7 @@ fn postgres_tls_checks_ca_and_hostname() {
 #[ignore = "requires the disposable Docker Compose Qdrant TLS fixture"]
 fn qdrant_https_verifies_trust_hostname_and_authentication() {
     let ca = fixture_ca("qdrant-tls", "/qdrant/tls/ca.crt");
-    let unrelated_ca = fixture_ca("postgres", "/var/lib/postgresql/data/bpearl-ca.crt");
+    let unrelated_ca = fixture_ca("postgres", "/var/lib/postgresql/data/onetui-ca.crt");
     let empty_cert_dir = tempfile::tempdir().unwrap();
     for (endpoint, trusted_ca, key, expected) in [
         (
@@ -227,15 +227,15 @@ fn qdrant_https_verifies_trust_hostname_and_authentication() {
         ),
     ] {
         let mut config = tempfile::NamedTempFile::new().unwrap();
-        writeln!(config, "[connections.tls]\nkind='qdrant'\nurl='{endpoint}'\napi_key_env='BPEARL_QDRANT_API_KEY'").unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_bpearl"))
+        writeln!(config, "[connections.tls]\nkind='qdrant'\nurl='{endpoint}'\napi_key_env='ONETUI_QDRANT_API_KEY'").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_onetui"))
             .args(["--check", "--connection", "tls", "--config"])
             .arg(config.path())
             .args(["--timeout", "2"])
             // rustls-native-certs reads these in the child only; the OS trust store is untouched.
             .env("SSL_CERT_FILE", trusted_ca)
             .env("SSL_CERT_DIR", empty_cert_dir.path())
-            .env("BPEARL_QDRANT_API_KEY", key)
+            .env("ONETUI_QDRANT_API_KEY", key)
             .output()
             .unwrap();
         let error = String::from_utf8_lossy(&output.stderr);
@@ -459,7 +459,7 @@ async fn postgres_independent_pages_do_not_claim_a_snapshot() {
 #[tokio::test]
 #[ignore = "requires the disposable PostgreSQL TLS fixture"]
 async fn postgres_cancel_over_tls_finishes_before_connection_reuse() {
-    let ca = fixture_ca("postgres", "/var/lib/postgresql/data/bpearl-ca.crt");
+    let ca = fixture_ca("postgres", "/var/lib/postgresql/data/onetui-ca.crt");
     let mut roots = rustls::RootCertStore::empty();
     for cert in CertificateDer::pem_file_iter(ca.path()).unwrap() {
         roots.add(cert.unwrap()).unwrap();
@@ -575,7 +575,7 @@ async fn qdrant_scroll_and_lazy_details() {
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
-    let name = format!("bpearl_fixture_{}", std::process::id());
+    let name = format!("onetui_fixture_{}", std::process::id());
     client
         .create_collection(
             CreateCollectionBuilder::new(&name)
@@ -708,7 +708,7 @@ async fn qdrant_large_payload_and_vector_variants() {
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
-    let name = format!("bpearl_variants_{}", std::process::id());
+    let name = format!("onetui_variants_{}", std::process::id());
     let params = std::collections::HashMap::from([
         (
             "dense".to_owned(),

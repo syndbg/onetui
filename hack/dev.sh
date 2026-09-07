@@ -3,14 +3,14 @@ set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$repo_root"
-compose=(docker compose --project-name bpearl-fixtures --env-file /dev/null -f "$repo_root/hack/compose.yaml")
+compose=(docker compose --project-name onetui-fixtures --env-file /dev/null -f "$repo_root/hack/compose.yaml")
 
 # Never inherit real database credentials for fixture commands.
-export BPEARL_POSTGRES_URL='postgresql://bpearl_reader:fixture-reader-only@127.0.0.1:15432/bpearl_fixture?sslmode=disable'
-export BPEARL_QDRANT_API_KEY='fixture-reader-only'
+export ONETUI_POSTGRES_URL='postgresql://onetui_reader:fixture-reader-only@127.0.0.1:15432/onetui_fixture?sslmode=disable'
+export ONETUI_QDRANT_API_KEY='fixture-reader-only'
 
 check_connection() {
-    ./target/debug/bpearl --check --config hack/connections.toml --connection "$1" --timeout 2
+    ./target/debug/onetui --check --config hack/connections.toml --connection "$1" --timeout 2
 }
 
 up() {
@@ -42,7 +42,7 @@ cleanup() {
 
 case "${1:-}" in
     up|check|test)
-        if [[ ! -x target/debug/bpearl ]]; then
+        if [[ ! -x target/debug/onetui ]]; then
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
@@ -70,7 +70,7 @@ case "$1" in
     logs) "${compose[@]}" logs --no-color --tail 100 ;;
     test)
         if [[ -n $("${compose[@]}" ps --all --quiet) ]]; then
-            printf 'Existing bpearl-fixtures containers found; refusing to reset them. Run make dev-down first.\n' >&2
+            printf 'Existing onetui-fixtures containers found; refusing to reset them. Run make dev-down first.\n' >&2
             exit 1
         fi
         trap cleanup EXIT

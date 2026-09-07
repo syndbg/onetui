@@ -61,7 +61,7 @@ async fn run_reply(reply: ListReply) -> Output {
             "[connections.test]\nkind='qdrant'\nurl='http://{address}'"
         )
         .unwrap();
-        Command::new(env!("CARGO_BIN_EXE_bpearl"))
+        Command::new(env!("CARGO_BIN_EXE_onetui"))
             .args(["--check", "--connection", "test", "--config"])
             .arg(config.path())
             .args(["--timeout", "2"])

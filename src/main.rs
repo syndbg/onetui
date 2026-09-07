@@ -12,7 +12,7 @@ use clap::Parser;
 #[command(
     version,
     about,
-    long_about = "BlackPearl database browser. This first slice supports headless connection checks; the TUI is not implemented yet."
+    long_about = "OneTUI database browser. This first slice supports headless connection checks; the TUI is not implemented yet."
 )]
 struct Args {
     /// Perform a read-only metadata check without opening a terminal UI

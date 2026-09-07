@@ -44,7 +44,7 @@ fn postgres_config(dsn: &str, deadline: Duration) -> Result<tokio_postgres::Conf
         config.ssl_mode(SslMode::Require);
     }
     config.connect_timeout(deadline);
-    config.application_name("bpearl-check");
+    config.application_name("onetui-check");
     config.options(format!(
         "-c default_transaction_read_only=on -c statement_timeout={}",
         deadline.as_millis()
@@ -261,6 +261,6 @@ mod tests {
     fn empty_or_invalid_ca_is_rejected() {
         let file = tempfile::NamedTempFile::new().unwrap();
         assert!(pg_tls(Some(file.path())).is_err());
-        assert!(pg_tls(Some(Path::new("/nonexistent/bpearl-ca.pem"))).is_err());
+        assert!(pg_tls(Some(Path::new("/nonexistent/onetui-ca.pem"))).is_err());
     }
 }

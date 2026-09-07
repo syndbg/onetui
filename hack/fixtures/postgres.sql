@@ -1,5 +1,5 @@
-CREATE ROLE bpearl_reader LOGIN PASSWORD 'fixture-reader-only';
-ALTER ROLE bpearl_reader SET default_transaction_read_only = on;
+CREATE ROLE onetui_reader LOGIN PASSWORD 'fixture-reader-only';
+ALTER ROLE onetui_reader SET default_transaction_read_only = on;
 CREATE TYPE order_state AS ENUM ('pending', 'paid');
 CREATE DOMAIN positive_amount AS numeric CHECK (VALUE >= 0);
 CREATE TABLE sample_rows (
@@ -27,6 +27,6 @@ CREATE TABLE composite_rows (
 INSERT INTO composite_rows VALUES ('a', 1), ('a', 2), ('b''; DELETE FROM keyed_rows; --', 1), ('b''; DELETE FROM keyed_rows; --', 2);
 CREATE TABLE changing_rows (id bigint PRIMARY KEY);
 INSERT INTO changing_rows VALUES (1), (2), (3), (4);
-GRANT CONNECT ON DATABASE bpearl_fixture TO bpearl_reader;
-GRANT USAGE ON SCHEMA public TO bpearl_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO bpearl_reader;
+GRANT CONNECT ON DATABASE onetui_fixture TO onetui_reader;
+GRANT USAGE ON SCHEMA public TO onetui_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO onetui_reader;

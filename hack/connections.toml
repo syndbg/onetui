@@ -1,9 +1,9 @@
 # Environment references are populated with fixture-only values by hack/dev.sh.
 [connections.local_pg]
 kind = "postgres"
-url_env = "BPEARL_POSTGRES_URL"
+url_env = "ONETUI_POSTGRES_URL"
 
 [connections.local_qdrant]
 kind = "qdrant"
 url = "http://127.0.0.1:16334"
-api_key_env = "BPEARL_QDRANT_API_KEY"
+api_key_env = "ONETUI_QDRANT_API_KEY"
