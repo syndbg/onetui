@@ -31,6 +31,33 @@ CREATE SCHEMA empty_schema;
 GRANT USAGE ON SCHEMA empty_schema TO onetui_reader;
 CREATE TABLE restricted_rows (id integer);
 CREATE TABLE "quoted'; -- relation" ("odd""column" text);
+INSERT INTO "quoted'; -- relation" VALUES ('quoted value');
+CREATE TABLE browse_composite (
+    tenant text COLLATE "C",
+    id bigint,
+    c0 text,
+    PRIMARY KEY (tenant, id)
+);
+INSERT INTO browse_composite SELECT E'a''; --\nСофия', i, 'value' FROM generate_series(1, 205) AS i;
+INSERT INTO browse_composite SELECT 'b', i, 'value' FROM generate_series(1, 205) AS i;
+CREATE TABLE browse_bigint (id bigint PRIMARY KEY);
+INSERT INTO browse_bigint SELECT 9007199254740992 + i FROM generate_series(1, 205) AS i;
+CREATE VIEW browse_offset AS SELECT id FROM browse_bigint;
+CREATE TABLE browse_zero ();
+CREATE TABLE browse_nullable (id bigint UNIQUE);
+INSERT INTO browse_nullable VALUES (NULL), (1);
+CREATE TABLE browse_partial (id bigint NOT NULL);
+CREATE UNIQUE INDEX ON browse_partial (id) WHERE id > 0;
+CREATE TABLE browse_expression (id bigint NOT NULL);
+CREATE UNIQUE INDEX ON browse_expression ((id + 1));
+CREATE TABLE browse_uuid (id uuid PRIMARY KEY);
+CREATE TABLE browse_parent (id bigint PRIMARY KEY);
+CREATE TABLE browse_child () INHERITS (browse_parent);
+CREATE VIEW browse_oversized AS SELECT repeat('x', 1048577) AS value;
+CREATE VIEW browse_page_limit AS SELECT repeat('x', 20000) AS value FROM generate_series(1, 100);
+CREATE TABLE browse_lookahead (id bigint PRIMARY KEY, value text);
+INSERT INTO browse_lookahead SELECT i, CASE WHEN i = 101 THEN repeat('x', 1048577) ELSE 'ok' END FROM generate_series(1, 101) AS i;
+CREATE VIEW browse_slow AS SELECT 'done'::text AS value FROM pg_sleep(30);
 GRANT CONNECT ON DATABASE onetui_fixture TO onetui_reader;
 GRANT USAGE ON SCHEMA public TO onetui_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO onetui_reader;

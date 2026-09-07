@@ -1,6 +1,6 @@
 # onetui-postgres
 
-PostgreSQL metadata/check queries, verified TLS, cancellation, descriptors and PostgreSQL-only tests. Metadata browsing stops at column detail; row browsing is not implemented.
+PostgreSQL row/metadata/check queries, verified TLS, cancellation, descriptors and PostgreSQL-only tests. Row requests use short read-only transactions, native bigint/text keysets where eligible and explicit best-effort OFFSET otherwise. Field text is guarded on the server; oversized pages fail without advancing continuation. No idle browsing cursor.
 
 ## Validation
 

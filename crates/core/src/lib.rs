@@ -26,14 +26,45 @@ impl Resource {
 
 #[derive(Clone, Debug)]
 pub struct Row {
-    pub cells: Vec<String>,
+    pub cells: Vec<Option<String>>,
     pub target: Option<Resource>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Column {
+    pub name: String,
+    pub datatype: String,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Page {
     pub rows: Vec<Row>,
     pub next: bool,
+    pub columns: Vec<Column>,
+    pub continuation: Option<String>,
+    pub notice: String,
+}
+
+impl Page {
+    pub fn bytes(&self) -> usize {
+        self.rows
+            .iter()
+            .map(|row| {
+                row.cells.iter().flatten().map(String::len).sum::<usize>()
+                    + row
+                        .target
+                        .as_ref()
+                        .map_or(0, |target| target.path.iter().map(String::len).sum())
+            })
+            .sum::<usize>()
+            + self
+                .columns
+                .iter()
+                .map(|column| column.name.len() + column.datatype.len())
+                .sum::<usize>()
+            + self.continuation.as_ref().map_or(0, String::len)
+            + self.notice.len()
+    }
 }
 
 // Escape terminal controls and bidirectional overrides once, before storing display data.

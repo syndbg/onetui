@@ -73,6 +73,7 @@ pub async fn run(mut app: App, deadline: Duration) -> Result<()> {
                         ca_file,
                         request.resource.clone(),
                         request.offset,
+                        request.continuation.clone(),
                         deadline,
                         receiver,
                     ));
@@ -105,7 +106,7 @@ pub async fn run(mut app: App, deadline: Duration) -> Result<()> {
             result = async { (&mut worker.as_mut().expect("guarded worker").task).await }, if worker.is_some() => {
                 let finished = worker.take().expect("completed worker");
                 // The global panic hook restores terminal modes; do not resume drawing after a worker panic.
-                let result = result.map_err(|_| anyhow!("metadata worker failed; terminal restored"))?;
+                let result = result.map_err(|_| anyhow!("browsing worker failed; terminal restored"))?;
                 app.complete(&finished.request, result);
             },
         }
@@ -138,7 +139,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .unwrap_or_else(|| "choose connection".into());
     frame.render_widget(
         Paragraph::new(format!(
-            "OneTUI | {alias} | read-only metadata\n{}",
+            "OneTUI | {alias} | read-only\n{}",
             app.view.resource.breadcrumb()
         )),
         header,
@@ -163,35 +164,44 @@ pub fn draw(frame: &mut Frame, app: &App) {
             body,
         );
     } else if app.detail {
-        let row = &app.view.page.rows[app.view.selected];
-        let text = app
-            .descriptor()
-            .columns
-            .iter()
-            .zip(&row.cells)
-            .map(|(column, value)| format!("{column}: {value}"))
-            .collect::<Vec<_>>()
-            .join("\n");
         frame.render_widget(
-            Paragraph::new(text)
+            Paragraph::new(app.detail_text.as_str())
                 .wrap(Wrap { trim: false })
-                .block(Block::bordered().title("Column metadata — Esc back")),
+                .scroll((app.detail_scroll, 0))
+                .block(Block::bordered().title(format!(
+                    "Field {}/{} | chunk {}/{} | h/l fields, j/k scroll, n/p chunks, Esc back",
+                    app.view.column + 1,
+                    app.column_count(),
+                    app.detail_chunk + 1,
+                    app.detail_chunks
+                ))),
             body,
         );
     } else {
         let descriptor = app.descriptor();
-        let rows = app
-            .view
-            .page
-            .rows
-            .iter()
-            .map(|row| Row::new(row.cells.iter().map(String::as_str)));
-        let widths =
-            vec![Constraint::Ratio(1, descriptor.columns.len() as u32); descriptor.columns.len()];
+        let start = app.view.column / 4 * 4;
+        let end = (start + 4).min(app.column_count());
+        let rows = app.view.page.rows.iter().map(|row| {
+            Row::new(row.cells.iter().skip(start).take(end - start).map(|cell| {
+                let value = cell.as_deref().unwrap_or("NULL");
+                let mut preview: String = value.chars().take(128).collect();
+                if preview.len() < value.len() {
+                    preview.push('…');
+                }
+                preview
+            }))
+        });
+        let widths = vec![Constraint::Ratio(1, (end - start).max(1) as u32); end - start];
         let table = Table::new(rows, widths)
             .header(
-                Row::new(descriptor.columns.iter().copied())
-                    .style(Style::new().add_modifier(Modifier::BOLD)),
+                Row::new((start..end).map(|i| {
+                    format!(
+                        "{}{}",
+                        if i == app.view.column { "> " } else { "" },
+                        app.column_name(i)
+                    )
+                }))
+                .style(Style::new().add_modifier(Modifier::BOLD)),
             )
             .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ")
@@ -214,7 +224,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let scope = if app.view.resource.id == "connections" {
         "configured aliases"
     } else {
-        "metadata only; offset pages, no cross-request snapshot"
+        if app.view.page.notice.is_empty() {
+            "metadata; offset pages, no cross-request snapshot"
+        } else {
+            &app.view.page.notice
+        }
     };
     frame.render_widget(
         Paragraph::new(format!(
@@ -226,7 +240,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         status,
     );
     let prompt = app.command.as_ref().map(|value| format!(":{value}\nEnter execute | Esc cancel"))
-        .unwrap_or_else(|| "Enter open | Esc back | n/p pages | r refresh | c connections | : commands | ? help | q quit".into());
+        .unwrap_or_else(|| "Enter open/detail | m columns | h/l fields | Esc back | n/p pages/chunks | r refresh | c connections | : commands | ? help | q quit".into());
     frame.render_widget(Paragraph::new(prompt).wrap(Wrap { trim: false }), command);
 }
 
@@ -250,6 +264,53 @@ mod tests {
             app.act(Action::Help);
             terminal.draw(|frame| draw(frame, &app)).unwrap();
         }
+    }
+
+    #[test]
+    fn dynamic_row_columns_and_bounded_detail_render_on_narrow_frames() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "[connections.pg]\nkind='postgres'\nurl_env='UNUSED'").unwrap();
+        let mut app = App::new(
+            onetui_core::config::Config::load(file.path()).unwrap(),
+            Some("pg"),
+        );
+        let request = app.request.take().unwrap();
+        app.view.resource =
+            onetui_core::Resource::new("postgres.rows", vec!["public".into(), "test".into()]);
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: (0..6)
+                    .map(|i| onetui_core::Column {
+                        name: format!("column{i}"),
+                        datatype: "text".into(),
+                    })
+                    .collect(),
+                rows: vec![onetui_core::Row {
+                    cells: vec![
+                        None,
+                        Some(String::new()),
+                        Some("NULL".into()),
+                        Some("🌊".repeat(5000)),
+                        Some("four".into()),
+                        Some("five".into()),
+                    ],
+                    target: None,
+                }],
+                ..Page::default()
+            }),
+        );
+        for (width, height) in [(1, 1), (20, 10), (100, 30)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            for _ in 0..6 {
+                terminal.draw(|frame| draw(frame, &app)).unwrap();
+                app.act(Action::Right);
+            }
+            app.act(Action::Open);
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            app.act(Action::Back);
+        }
+        assert_eq!(app.view.column, 5);
     }
 
     #[test]

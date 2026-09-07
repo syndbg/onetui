@@ -9,15 +9,15 @@ use crate::check;
 
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
 
-fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
+pub(crate) fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
     match error.code().map(|code| code.code()) {
-        Some("42501") => anyhow!("PostgreSQL metadata access denied"),
+        Some("42501") => anyhow!("PostgreSQL access denied"),
         Some("57014") => anyhow!("PostgreSQL request timed out or was cancelled"),
         Some(code) if code.starts_with("28") => {
             anyhow!("PostgreSQL authentication failed; check credentials")
         }
         _ => {
-            anyhow!("PostgreSQL metadata request failed; check permissions, endpoint and TLS trust")
+            anyhow!("PostgreSQL request failed; check permissions, endpoint and TLS trust")
         }
     }
 }
@@ -27,13 +27,14 @@ pub async fn fetch(
     ca_file: Option<PathBuf>,
     resource: Resource,
     offset: i64,
+    continuation: Option<String>,
     deadline: Duration,
     mut cancel: oneshot::Receiver<()>,
 ) -> Result<Page> {
+    let until = tokio::time::Instant::now() + deadline;
     let mut config = check::postgres_config(&url, deadline)?;
     config.application_name("onetui-browse");
     let tls = check::postgres_tls(&config, ca_file.as_deref())?;
-    let until = tokio::time::Instant::now() + deadline;
     let (client, driver) = tokio::select! {
         result = tokio::time::timeout_at(until, config.connect(tls.clone())) => {
             result.map_err(|_| anyhow!("PostgreSQL connection timed out"))?.map_err(pg_error)?
@@ -42,11 +43,17 @@ pub async fn fetch(
     };
     // This request owns both halves. No detached driver or idle browsing transaction survives it.
     tokio::pin!(driver);
-    let query = metadata(&client, &resource, offset);
+    let query = async {
+        if resource.id == "postgres.rows" {
+            crate::rows::fetch(&client, &resource, offset, continuation.as_deref()).await
+        } else {
+            metadata(&client, &resource, offset).await
+        }
+    };
     tokio::pin!(query);
     tokio::select! {
         result = &mut query => return result,
-        _ = &mut driver => bail!("PostgreSQL connection closed during metadata read"),
+        _ = &mut driver => bail!("PostgreSQL connection closed during read"),
         _ = tokio::time::sleep_until(until) => {},
         _ = &mut cancel => {},
     }
@@ -94,26 +101,26 @@ async fn metadata(client: &Client, resource: &Resource, offset: i64) -> Result<P
     let mut page = Page {
         next: rows.len() > PAGE_SIZE as usize,
         rows: Vec::new(),
+        ..Page::default()
     };
     let mut bytes = 0;
     for row in rows.into_iter().take(PAGE_SIZE as usize) {
         let name: String = row.try_get(0).map_err(pg_error)?;
         let target = match (resource.id, resource.path.as_slice()) {
             ("postgres.schemas", []) => Some(Resource::new("postgres.relations", vec![name])),
-            ("postgres.relations", [schema]) => Some(Resource::new(
-                "postgres.columns",
-                vec![schema.clone(), name],
-            )),
+            ("postgres.relations", [schema]) => {
+                Some(Resource::new("postgres.rows", vec![schema.clone(), name]))
+            }
             _ => None,
         };
         let cells = (0..row.len())
             .map(|i| {
                 row.try_get::<_, String>(i)
-                    .map(|v| display(&v))
+                    .map(|v| Some(display(&v)))
                     .map_err(pg_error)
             })
             .collect::<Result<Vec<_>>>()?;
-        bytes += cells.iter().map(String::len).sum::<usize>();
+        bytes += cells.iter().flatten().map(String::len).sum::<usize>();
         ensure!(
             bytes <= PAGE_BYTES,
             "Metadata page exceeds the 1 MiB display limit; current page retained"

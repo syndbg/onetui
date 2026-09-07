@@ -1,5 +1,6 @@
 mod browse;
 mod check;
+mod rows;
 pub use browse::fetch;
 pub use check::check;
 use onetui_core::catalog::ResourceDescriptor;
@@ -21,15 +22,22 @@ pub const COLUMNS: ResourceDescriptor = ResourceDescriptor {
 };
 
 pub fn descriptor(id: &str) -> Option<&'static ResourceDescriptor> {
-    [&SCHEMAS, &RELATIONS, &COLUMNS]
+    [&SCHEMAS, &RELATIONS, &COLUMNS, &ROWS]
         .into_iter()
         .find(|entry| entry.id == id)
 }
 
+pub const ROWS: ResourceDescriptor = ResourceDescriptor {
+    id: "postgres.rows",
+    description: "Read-only rows; column names and PostgreSQL types discovered at runtime",
+    columns: &[],
+};
+
 pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "id": "postgres", "operations": ["check", "metadata_browse"],
-        "resources": [&SCHEMAS, &RELATIONS, &COLUMNS],
+        "id": "postgres", "operations": ["check", "metadata_browse", "row_browse"],
+        "resources": [&SCHEMAS, &RELATIONS, &COLUMNS, &ROWS],
+        "row_paging": "100 rows; non-null unique default-B-tree bigint/text keysets (all composite components), otherwise best-effort OFFSET. No cross-page snapshot.",
         "configuration": {
             "kind": {"required": true, "values": ["postgres"], "purpose": "Select the PostgreSQL connector"},
             "url_env": {"required": true, "type": "string", "purpose": "Environment variable containing the DSN; explicit host required", "values": "Nonempty ASCII letters, digits, underscores or hyphens", "example": "ONETUI_POSTGRES_URL"},

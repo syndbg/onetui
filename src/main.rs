@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 #[command(
     version,
     about,
-    long_about = "OneTUI database browser. Browse PostgreSQL schema/relation/column metadata in the terminal, check PostgreSQL/Qdrant connectivity, or dump the offline capability catalog. Row/point browsing is not implemented yet."
+    long_about = "OneTUI database browser. Browse PostgreSQL rows and schema/relation/column metadata in the terminal, check PostgreSQL/Qdrant connectivity, or dump the offline capability catalog. Qdrant point browsing and page-local filter/sort are not implemented yet."
 )]
 struct Args {
     #[command(subcommand)]
@@ -27,7 +27,7 @@ struct Args {
     /// Read only this configuration file (otherwise use the XDG config path)
     #[arg(long)]
     config: Option<PathBuf>,
-    /// Active check/metadata-request deadline in seconds (not displayed-data expiry)
+    /// Active check/browsing-request deadline in seconds (not displayed-data expiry)
     #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=300))]
     timeout: u64,
 }

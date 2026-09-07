@@ -1345,9 +1345,11 @@ name = "onetui-postgres"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures-util",
  "onetui-core",
  "rustls",
  "rustls-native-certs",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

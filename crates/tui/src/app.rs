@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use onetui_core::catalog::{ACTIONS, Action, ActionDescriptor, ResourceDescriptor};
 use onetui_core::config::Config;
-use onetui_core::{PAGE_SIZE, Page, Resource, Row, display};
+use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
 
 #[derive(Clone)]
 pub struct Request {
@@ -13,6 +13,7 @@ pub struct Request {
     pub alias: String,
     pub resource: Resource,
     pub offset: i64,
+    pub continuation: Option<String>,
     reset: bool,
 }
 
@@ -22,6 +23,7 @@ pub struct View {
     pub page: Page,
     pub selected: usize,
     pub offset: i64,
+    pub column: usize,
     previous: VecDeque<(i64, Page, usize)>,
 }
 
@@ -33,6 +35,7 @@ impl View {
             page: Page::default(),
             selected: 0,
             offset: 0,
+            column: 0,
             previous: VecDeque::new(),
         }
     }
@@ -48,6 +51,10 @@ pub struct App {
     pub error: Option<String>,
     pub help: bool,
     pub detail: bool,
+    pub detail_text: String,
+    pub detail_chunk: usize,
+    pub detail_chunks: usize,
+    pub detail_scroll: u16,
     pub command: Option<String>,
     pub quit: bool,
 }
@@ -64,6 +71,10 @@ impl App {
             error: None,
             help: false,
             detail: false,
+            detail_text: String::new(),
+            detail_chunk: 0,
+            detail_chunks: 0,
+            detail_scroll: 0,
             command: None,
             quit: false,
         };
@@ -101,20 +112,23 @@ impl App {
             .into_iter()
             .map(|(alias, kind)| Row {
                 cells: vec![
-                    display(alias),
-                    kind.into(),
-                    if kind == "postgres" {
-                        "metadata"
-                    } else {
-                        "not implemented; --check only"
-                    }
-                    .into(),
+                    Some(display(alias)),
+                    Some(kind.into()),
+                    Some(
+                        if kind == "postgres" {
+                            "rows + metadata"
+                        } else {
+                            "not implemented; --check only"
+                        }
+                        .into(),
+                    ),
                 ],
                 target: None,
             })
             .collect();
         self.help = false;
         self.detail = false;
+        self.detail_text.clear();
     }
 
     fn load(&mut self, offset: i64, reset: bool) {
@@ -125,6 +139,11 @@ impl App {
             alias: self.view.alias.clone().expect("datasource view has alias"),
             resource: self.view.resource.clone(),
             offset,
+            continuation: if reset {
+                None
+            } else {
+                self.view.page.continuation.clone()
+            },
             reset,
         });
     }
@@ -135,7 +154,7 @@ impl App {
         }
         self.loading = false;
         match result {
-            Ok(page) => {
+            Ok(page) if page.bytes() <= PAGE_BYTES => {
                 if request.reset {
                     self.view.previous.clear();
                 } else {
@@ -151,7 +170,12 @@ impl App {
                 self.view.page = page;
                 self.view.offset = request.offset;
                 self.view.selected = 0;
+                self.view.column = self.view.column.min(self.column_count().saturating_sub(1));
                 self.error = None;
+            }
+            Ok(_) => {
+                self.error =
+                    Some("Page exceeds the 1 MiB display limit; current page retained".into())
             }
             Err(error) => self.error = Some(display(&error.to_string())),
         }
@@ -159,10 +183,31 @@ impl App {
 
     pub fn available(&self, action: Action) -> bool {
         match action {
+            Action::Columns => {
+                !self.loading
+                    && !self.detail
+                    && !self.help
+                    && (self.view.resource.id == "postgres.rows"
+                        || (self.view.resource.id == "postgres.relations"
+                            && !self.view.page.rows.is_empty()))
+            }
+            Action::Left | Action::Right => self.column_count() > 0,
             Action::Back => self.help || self.detail || !self.parents.is_empty(),
             Action::Open => !self.loading && !self.view.page.rows.is_empty(),
-            Action::Next => !self.loading && self.view.page.next,
-            Action::Previous => !self.loading && !self.view.previous.is_empty(),
+            Action::Next => {
+                if self.detail {
+                    self.detail_chunk + 1 < self.detail_chunks
+                } else {
+                    !self.loading && self.view.page.next
+                }
+            }
+            Action::Previous => {
+                if self.detail {
+                    self.detail_chunk > 0
+                } else {
+                    !self.loading && !self.view.previous.is_empty()
+                }
+            }
             Action::Up | Action::Down => !self.view.page.rows.is_empty(),
             _ => true,
         }
@@ -177,6 +222,51 @@ impl App {
         }
     }
 
+    pub fn column_count(&self) -> usize {
+        if self.view.page.columns.is_empty() {
+            self.descriptor().columns.len()
+        } else {
+            self.view.page.columns.len()
+        }
+    }
+
+    pub fn column_name(&self, index: usize) -> &str {
+        if self.view.page.columns.is_empty() {
+            self.descriptor().columns[index]
+        } else {
+            &self.view.page.columns[index].name
+        }
+    }
+
+    fn detail_text(&mut self) {
+        let cell = &self.view.page.rows[self.view.selected].cells[self.view.column];
+        let value = cell.as_deref().unwrap_or("");
+        self.detail_chunks = value.chars().count().div_ceil(4096).max(1);
+        self.detail_chunk = self.detail_chunk.min(self.detail_chunks - 1);
+        let datatype = self
+            .view
+            .page
+            .columns
+            .get(self.view.column)
+            .map_or("metadata", |c| c.datatype.as_str());
+        self.detail_text = format!(
+            "{} | {} | {}\n{}",
+            self.column_name(self.view.column),
+            datatype,
+            match cell {
+                None => "SQL NULL",
+                Some(v) if v.is_empty() => "empty text",
+                Some(_) => "non-null text",
+            },
+            value
+                .chars()
+                .skip(self.detail_chunk * 4096)
+                .take(4096)
+                .collect::<String>()
+        );
+        self.detail_scroll = 0;
+    }
+
     pub fn actions(&self) -> impl Iterator<Item = &'static ActionDescriptor> + '_ {
         ACTIONS.iter().filter(|entry| self.available(entry.id))
     }
@@ -185,7 +275,61 @@ impl App {
         if !self.available(action) {
             return;
         }
+        if self.detail {
+            match action {
+                Action::Up => self.detail_scroll = self.detail_scroll.saturating_sub(1),
+                Action::Down => {
+                    self.detail_scroll = self.detail_scroll.saturating_add(1).min(16384)
+                }
+                Action::Next => {
+                    self.detail_chunk += 1;
+                    self.detail_text();
+                }
+                Action::Previous => {
+                    self.detail_chunk -= 1;
+                    self.detail_text();
+                }
+                Action::Open => return,
+                _ => {}
+            }
+            if matches!(
+                action,
+                Action::Up | Action::Down | Action::Next | Action::Previous
+            ) {
+                return;
+            }
+        }
         match action {
+            Action::Left | Action::Right => {
+                self.view.column = if action == Action::Left {
+                    self.view.column.saturating_sub(1)
+                } else {
+                    (self.view.column + 1).min(self.column_count().saturating_sub(1))
+                };
+                if self.detail {
+                    self.detail_chunk = 0;
+                    self.detail_text();
+                }
+            }
+            Action::Columns => {
+                let path = if self.view.resource.id == "postgres.rows" {
+                    self.view.resource.path.clone()
+                } else {
+                    self.view.page.rows[self.view.selected]
+                        .target
+                        .as_ref()
+                        .expect("relation target")
+                        .path
+                        .clone()
+                };
+                let alias = self.view.alias.clone();
+                let parent = std::mem::replace(
+                    &mut self.view,
+                    View::new(alias, Resource::new("postgres.columns", path)),
+                );
+                self.parents.push(parent);
+                self.load(0, true);
+            }
             Action::Up => self.view.selected = self.view.selected.saturating_sub(1),
             Action::Down => {
                 self.view.selected =
@@ -211,6 +355,8 @@ impl App {
                     (self.view.alias.clone(), target.clone())
                 } else {
                     self.detail = true;
+                    self.detail_chunk = 0;
+                    self.detail_text();
                     return;
                 };
                 let parent = std::mem::replace(&mut self.view, View::new(alias, target));
@@ -222,6 +368,7 @@ impl App {
                     self.help = false;
                 } else if self.detail {
                     self.detail = false;
+                    self.detail_text.clear();
                 } else if let Some(parent) = self.parents.pop() {
                     self.invalidate();
                     self.view = parent;
@@ -321,6 +468,8 @@ impl App {
             KeyCode::Char(c) => c.to_string(),
             KeyCode::Up => "Up".into(),
             KeyCode::Down => "Down".into(),
+            KeyCode::Left => "Left".into(),
+            KeyCode::Right => "Right".into(),
             KeyCode::Enter => "Enter".into(),
             KeyCode::Esc => "Esc".into(),
             _ => return,
@@ -349,13 +498,14 @@ mod tests {
     fn page(next: bool) -> Page {
         Page {
             rows: vec![Row {
-                cells: vec![display("public\x1b[31m")],
+                cells: vec![Some(display("public\x1b[31m"))],
                 target: Some(Resource::new(
                     "postgres.relations",
                     vec!["public\x1b[31m".into()],
                 )),
             }],
             next,
+            ..Page::default()
         }
     }
 
@@ -368,7 +518,7 @@ mod tests {
         app.complete(&old, Err(anyhow::anyhow!("old failure")));
         assert_eq!(app.view.resource, Resource::new("connections", vec![]));
         assert!(app.error.is_none());
-        assert_eq!(app.view.page.rows[0].cells[0], "pg");
+        assert_eq!(app.view.page.rows[0].cells[0].as_deref(), Some("pg"));
     }
 
     #[test]
@@ -407,7 +557,91 @@ mod tests {
         app.act(Action::Previous);
         assert_eq!(app.view.offset, 300);
         assert!(app.request.is_none());
-        assert!(!app.view.page.rows[0].cells[0].contains('\x1b'));
+        assert!(
+            !app.view.page.rows[0].cells[0]
+                .as_ref()
+                .unwrap()
+                .contains('\x1b')
+        );
+    }
+
+    #[test]
+    fn row_continuation_is_opaque_and_failure_preserves_data_and_position() {
+        let mut app = app();
+        let request = app.request.take().unwrap();
+        let mut first = page(true);
+        first.continuation = Some("connector-owned exact token".into());
+        app.complete(&request, Ok(first));
+        app.act(Action::Next);
+        let next = app.request.take().unwrap();
+        assert_eq!(next.continuation, app.view.page.continuation);
+        let token = next.continuation.clone();
+        let mut oversized = page(false);
+        oversized.rows[0].cells[0] = Some("x".repeat(PAGE_BYTES + 1));
+        app.complete(&next, Ok(oversized));
+        assert_eq!(app.view.offset, 0);
+        assert_eq!(app.view.page.continuation, token);
+        assert!(app.error.as_ref().unwrap().contains("limit"));
+        app.act(Action::Refresh);
+        assert!(app.request.as_ref().unwrap().continuation.is_none());
+        app.act(Action::Cancel);
+        assert_eq!(app.view.page.continuation, token);
+    }
+
+    #[test]
+    fn detail_preserves_null_empty_literal_and_every_unicode_chunk() {
+        let mut app = app();
+        app.view.resource = Resource::new("postgres.rows", vec!["public".into(), "sample".into()]);
+        let request = app.request.take().unwrap();
+        let text = "🌊".repeat(9000);
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: (0..4)
+                    .map(|i| onetui_core::Column {
+                        name: format!("c{i}"),
+                        datatype: "text".into(),
+                    })
+                    .collect(),
+                rows: vec![Row {
+                    cells: vec![
+                        None,
+                        Some(String::new()),
+                        Some("NULL".into()),
+                        Some(text.clone()),
+                    ],
+                    target: None,
+                }],
+                ..Page::default()
+            }),
+        );
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.detail_text.contains("SQL NULL"));
+        app.act(Action::Right);
+        assert!(app.detail_text.contains("empty text"));
+        app.act(Action::Right);
+        assert!(app.detail_text.contains("non-null text\nNULL"));
+        app.act(Action::Right);
+        assert_eq!(app.detail_chunks, 3);
+        let mut restored = String::new();
+        loop {
+            restored.push_str(app.detail_text.split_once('\n').unwrap().1);
+            app.act(Action::Down);
+            assert_eq!(app.detail_scroll, 1);
+            if !app.available(Action::Next) {
+                break;
+            }
+            app.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+            assert_eq!(app.detail_scroll, 0);
+        }
+        assert_eq!(restored, text);
+        assert!(app.request.is_none(), "detail chunks must never fetch");
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(app.view.resource.id, "postgres.columns");
+        app.act(Action::Back);
+        assert_eq!(app.view.resource.id, "postgres.rows");
+        assert_eq!(app.view.column, 3);
     }
 
     #[test]

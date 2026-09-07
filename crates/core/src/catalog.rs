@@ -14,6 +14,9 @@ pub enum Action {
     Help,
     Quit,
     Cancel,
+    Columns,
+    Left,
+    Right,
 }
 
 #[derive(Serialize)]
@@ -25,19 +28,34 @@ pub struct ActionDescriptor {
 
 pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
+        id: Action::Columns,
+        keys: &["m"],
+        description: "Open column metadata for the selected relation or current row view",
+    },
+    ActionDescriptor {
+        id: Action::Left,
+        keys: &["h", "Left"],
+        description: "Select the previous field",
+    },
+    ActionDescriptor {
+        id: Action::Right,
+        keys: &["l", "Right"],
+        description: "Select the next field",
+    },
+    ActionDescriptor {
         id: Action::Up,
         keys: &["k", "Up"],
-        description: "Select the previous item",
+        description: "Select the previous item; scroll up in detail",
     },
     ActionDescriptor {
         id: Action::Down,
         keys: &["j", "Down"],
-        description: "Select the next item",
+        description: "Select the next item; scroll down in detail",
     },
     ActionDescriptor {
         id: Action::Open,
         keys: &["Enter"],
-        description: "Open the selected resource or column detail",
+        description: "Open the selected resource or row detail",
     },
     ActionDescriptor {
         id: Action::Back,
@@ -52,12 +70,12 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Next,
         keys: &["n"],
-        description: "Fetch the next metadata page when available",
+        description: "Fetch the next page; next text chunk in detail",
     },
     ActionDescriptor {
         id: Action::Previous,
         keys: &["p"],
-        description: "Return to a retained previous page without fetching",
+        description: "Return to a retained previous page; previous text chunk in detail",
     },
     ActionDescriptor {
         id: Action::Refresh,

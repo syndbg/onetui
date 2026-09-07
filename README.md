@@ -4,7 +4,7 @@ Explore databases and streams from your terminal.
 
 OneTUI is an independent project for navigating data with a familiar k9s-style terminal interface: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-PostgreSQL metadata TUI and offline capability dump are implemented; live PostgreSQL metadata fixture validation passes. Row/point browsing, page filter/sort and configurable keybindings remain planned. PostgreSQL/Qdrant headless checks remain available.
+PostgreSQL row/metadata TUI and offline capability dump are implemented. Row paging/detail have live fixture coverage; page filter/sort, Qdrant point browsing and configurable keybindings remain planned. PostgreSQL/Qdrant headless checks remain available.
 
 The first release targets **PostgreSQL and Qdrant**, using **Rust, Ratatui, and Tokio**. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
 
@@ -22,7 +22,7 @@ Install Rust through rustup, Make, and Docker with Compose for the local databas
 make dev-up
 ./target/debug/onetui --help
 make check-local
-make run                # browse PostgreSQL metadata; q returns to the shell
+make run                # browse PostgreSQL rows/metadata; q returns to the shell
 make dev-down
 ```
 
@@ -34,9 +34,9 @@ alias ot='onetui'
 
 Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. This is only a shell shortcut; the executable and configuration directory remain `onetui`.
 
-`--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1–300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the metadata TUI; displayed data does not expire while idle. See [PostgreSQL usage and limits](docs/postgres.md).
+`--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1–300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the PostgreSQL TUI; displayed data does not expire while idle. See [PostgreSQL usage and limits](docs/postgres.md).
 
-## Metadata browsing and offline catalog
+## PostgreSQL browsing and offline catalog
 
 ```sh
 onetui --config "$HOME/onetui.toml"
@@ -46,7 +46,7 @@ onetui schema --datasource postgres
 onetui schema --datasource qdrant
 ```
 
-Interactive mode currently navigates schemas → tables/views → columns → column metadata detail. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
+Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
 
 See [PostgreSQL usage](docs/postgres.md) for keys, limits, cancellation behavior and remaining work. This adds no TOML settings or config-discovery changes.
 
@@ -56,7 +56,7 @@ See [PostgreSQL usage](docs/postgres.md) for keys, limits, cancellation behavior
 | --- | --- |
 | `onetui` (root) | CLI dispatch, catalog assembly and release/developer workflow tests |
 | [`onetui-core`](crates/core/README.md) | Configuration, shared display/resource contracts and actions; no database SDKs |
-| [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, metadata queries, descriptors and PostgreSQL-only tests |
+| [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, row/metadata queries, descriptors and PostgreSQL-only tests |
 | [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, descriptors and Qdrant-only tests |
 | [`onetui-tui`](crates/tui/README.md) | Navigation, request lifecycle, rendering and terminal tests |
 
@@ -88,7 +88,7 @@ alias ot='onetui --config "$HOME/onetui.toml"'
 
 ### Supported settings and defaults
 
-Currently, the only top-level setting is `[connections]`, containing named `[connections.<alias>]` entries. **PostgreSQL supports metadata browsing and headless checks; Qdrant supports headless checks only.** There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
+Currently, the only top-level setting is `[connections]`, containing named `[connections.<alias>]` entries. **PostgreSQL supports row/metadata browsing and headless checks; Qdrant supports headless checks only.** There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
 
 | Field | Applies to | Required / default |
 | --- | --- | --- |
@@ -136,7 +136,7 @@ make workflow-lint       # workflow gate; requires Go to run pinned actionlint
 
 No manual secret exports or startup retries are needed. Readiness requires a successful authenticated metadata check against each backend. `test-integration` refuses existing fixture containers instead of deleting a running development setup; use `make dev-down` first. Fixture initialization generates a private CA and localhost-only server certificate valid for two days; recreate the disposable containers if these expire.
 
-The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. The row/point experiments are not shipped browsing commands. Connector-specific tests live under their own packages; the new PostgreSQL metadata journey has its own fixture test. `dev-down` removes the fixture containers/network and their temporary data; it does not touch external databases.
+The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. Historical fixed-query experiments remain separate from the production PostgreSQL row/metadata tests. Connector-specific tests live under their own packages; the TUI package owns its keyboard/request-state PostgreSQL journey. Production coverage includes typed composite keysets, server-side size guards, cancellation and connection cleanup. `dev-down` removes the fixture containers/network and their temporary data; it does not touch external databases.
 
 ## CI and releases
 
