@@ -39,6 +39,12 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
         "qdrant.collections"
     );
     assert_eq!(schema["shell"]["keybindings_configurable"], false);
+    assert!(
+        !schema["shell"]["action_context"]
+            .as_str()
+            .unwrap()
+            .contains("Qdrant browsing is not implemented")
+    );
     assert!(String::from_utf8_lossy(&output.stdout).contains("qdrant.points"));
     let example = schema["configuration"]["example_toml"].as_str().unwrap();
     let file = tempfile::NamedTempFile::new().unwrap();

@@ -17,7 +17,7 @@ pub fn dump<P: Provider>(catalog: &[P], datasource: Option<&str>) -> Result<Stri
         "purpose": "Offline implemented-capability catalog, not a live database schema or permission guarantee",
         "datasources": datasources,
         "shell": {"resources": [&CONNECTIONS], "actions": ACTIONS, "keybindings_configurable": false,
-            "action_context": "Help shows currently available actions. Navigation keys do not apply inside the ':' command prompt. Qdrant browsing is not implemented."},
+            "action_context": "Help shows currently available actions. Navigation keys do not apply inside the ':' command prompt."},
         "configuration": {
             "format": "TOML; only connections is a supported top-level table. Every entry is validated, including unselected aliases; unknown kinds/fields, invalid reference names, relative PostgreSQL CA paths and invalid Qdrant URLs are rejected.",
             "location_order": ["--config <path> (relative paths use the working directory)", "$XDG_CONFIG_HOME/onetui/config.toml (absolute XDG_CONFIG_HOME only)", "$HOME/.config/onetui/config.toml (absolute HOME only)"],

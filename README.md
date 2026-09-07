@@ -8,33 +8,18 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 
 ## Features and datasource support
 
-```text
-OneTUI
-├── Supported now (read-only)
-│   ├── PostgreSQL
-│   │   ├── Schemas, tables, views and column metadata
-│   │   ├── Row paging and cached field detail
-│   │   └── Headless connection checks
-│   └── Qdrant
-│       ├── Collections and collection metadata
-│       ├── Point ID paging
-│       ├── On-demand payload and dense/sparse/multivector detail
-│       └── Headless connection checks
-├── Shared interface
-│   ├── Connection switching and command palette
-│   ├── Page-local filtering and lexical sorting
-│   ├── Request cancellation
-│   └── Offline resource/action/configuration catalog (`onetui schema`)
-└── Planned (not implemented)
-    ├── Datasources
-    │   ├── DynamoDB
-    │   ├── Kafka
-    │   ├── NATS
-    │   └── RabbitMQ
-    ├── Write operations
-    ├── Backend-specific querying
-    └── Customizable keybindings
-```
+| Datasource | Status | Supported | Not supported yet |
+| --- | --- | --- | --- |
+| PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, cached field detail, headless checks | SQL editor, server-side query/filter controls, writes |
+| Qdrant | Implemented, read-only | Collections and metadata, point ID paging, on-demand payload and dense/sparse/multivector detail, headless checks | Server-side payload filtering, similarity search, writes |
+| DynamoDB | Planned | None | Connector and all datasource operations |
+| Kafka | Planned | None | Connector and all datasource operations |
+| NATS | Planned | None | Connector and all datasource operations |
+| RabbitMQ | Planned | None | Connector and all datasource operations |
+
+Qdrant browsing means opening a collection, paging through its point IDs, then opening a point's payload or vectors. Those are existing reads, not a similarity search. See [Qdrant usage](docs/qdrant.md) for navigation and limits.
+
+PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering only searches cached text on the displayed page. Customizable keybindings and backend-specific querying are planned.
 
 Read and write support is the direction for OneTUI, not a capability of the initial release. Write behavior and permissions will be defined per datasource; broker administration is outside v0.1.
 
@@ -50,7 +35,7 @@ Datasources are compiled into the binary using static enum dispatch. Adding one 
 
 ## Build and run
 
-Install Rust through rustup, Make, and Docker with Compose for the local databases. The repository pins Rust 1.95.0, rustfmt and Clippy; rustup installs the pinned toolchain on first use. Build locally; there is no published package:
+Install Rust through rustup, Make, and Docker with Compose for the local databases. The repository requires and pins Rust 1.98.1, with rustfmt and Clippy; rustup installs the pinned toolchain on first use. Build locally; there is no published package:
 
 ```sh
 make dev-up
@@ -137,6 +122,16 @@ alias ot='onetui --config "$HOME/onetui.toml"'
 ```
 
 ### Supported settings and defaults
+
+Start with the CLI dump when configuring OneTUI. It describes the settings, defaults, examples, resources and actions known to your installed version:
+
+```sh
+onetui schema
+onetui schema --datasource postgres
+onetui schema --datasource qdrant
+```
+
+The commands print JSON offline without reading your config, resolving secrets or connecting to a datasource. This is OneTUI's configuration and capability catalog, not the schema of a live database or a dump of your current settings. Use it as the version-specific reference; the table below summarizes the connection settings.
 
 Currently, the only top-level setting is `[connections]`, containing named `[connections.<alias>]` entries. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
 
