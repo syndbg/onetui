@@ -17,7 +17,16 @@ INSERT INTO sample_rows VALUES
     (3, 'NULL', NULL, NULL, NULL, 'paid', 0),
     (4, E'Unicode: София 🌊\ncontrol: \x1b[31m', 1, NULL, ARRAY['quote"'], 'pending', 1);
 CREATE VIEW sample_view AS SELECT ordinal, note FROM sample_rows;
+CREATE TABLE keyed_rows (id bigint PRIMARY KEY, note text);
+INSERT INTO keyed_rows VALUES (9007199254740993, 'first'), (9007199254740994, 'second'), (9007199254740995, 'third');
+CREATE TABLE composite_rows (
+    tenant text COLLATE "C",
+    id bigint,
+    PRIMARY KEY (tenant, id)
+);
+INSERT INTO composite_rows VALUES ('a', 1), ('a', 2), ('b''; DELETE FROM keyed_rows; --', 1), ('b''; DELETE FROM keyed_rows; --', 2);
+CREATE TABLE changing_rows (id bigint PRIMARY KEY);
+INSERT INTO changing_rows VALUES (1), (2), (3), (4);
 GRANT CONNECT ON DATABASE bpearl_fixture TO bpearl_reader;
 GRANT USAGE ON SCHEMA public TO bpearl_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO bpearl_reader;
-

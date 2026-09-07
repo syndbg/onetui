@@ -64,7 +64,7 @@ docker compose -f fixtures/compose.yaml down
 
 Allow Qdrant to finish startup before running tests; if a check reports connection refused immediately after `up`, retry once it is ready. PostgreSQL has a readiness check. Fixture initialization generates a private CA and localhost-only server certificate valid for two days; recreate the disposable containers if these expire.
 
-The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise real authentication failures, PostgreSQL text/cursor paging and rollback, TLS CA/hostname verification, and Qdrant numeric/UUID paging with on-demand payload/vector retrieval. The Qdrant test creates and removes its own collection using the fixture admin key. These client experiments are not shipped browsing commands. `down` removes the fixture containers/network and their temporary data; it does not touch external databases.
+The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS and connection loss. Qdrant tests cover numeric/UUID paging with on-demand payload/vector retrieval. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; the Qdrant test creates and removes its own collection using the fixture admin key. These client experiments are not shipped browsing commands. `down` removes the fixture containers/network and their temporary data; it does not touch external databases.
 
 ```sh
 cargo fmt --all -- --check
