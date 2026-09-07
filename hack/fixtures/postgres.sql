@@ -27,6 +27,11 @@ CREATE TABLE composite_rows (
 INSERT INTO composite_rows VALUES ('a', 1), ('a', 2), ('b''; DELETE FROM keyed_rows; --', 1), ('b''; DELETE FROM keyed_rows; --', 2);
 CREATE TABLE changing_rows (id bigint PRIMARY KEY);
 INSERT INTO changing_rows VALUES (1), (2), (3), (4);
+CREATE SCHEMA empty_schema;
+GRANT USAGE ON SCHEMA empty_schema TO onetui_reader;
+CREATE TABLE restricted_rows (id integer);
+CREATE TABLE "quoted'; -- relation" ("odd""column" text);
 GRANT CONNECT ON DATABASE onetui_fixture TO onetui_reader;
 GRANT USAGE ON SCHEMA public TO onetui_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO onetui_reader;
+REVOKE SELECT ON restricted_rows FROM onetui_reader;

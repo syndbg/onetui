@@ -45,6 +45,21 @@ impl ResolvedConnection {
 }
 
 impl Config {
+    pub fn aliases(&self) -> Vec<(&str, &'static str)> {
+        self.connections
+            .iter()
+            .map(|(alias, connection)| {
+                (
+                    alias.as_str(),
+                    match connection {
+                        Connection::Postgres { .. } => "postgres",
+                        Connection::Qdrant { .. } => "qdrant",
+                    },
+                )
+            })
+            .collect()
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .map_err(|_| anyhow!("cannot read config file; check --config and file permissions"))?;

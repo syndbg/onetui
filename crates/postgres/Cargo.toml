@@ -1,0 +1,19 @@
+[package]
+name = "onetui-postgres"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+onetui-core = { path = "../core" }
+anyhow.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

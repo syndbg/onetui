@@ -1,13 +1,16 @@
 # Local development
 
-Run these commands from the repository root. Requirements: rustup, Make, Bash, Docker Engine/Desktop and Docker Compose with `up --wait` support. macOS and Linux are the initial targets. No database installation, manual secret exports or RTK installation is required.
+Run these commands from the repository root. Requirements: rustup, Make, Bash, Docker Engine/Desktop and Docker Compose with `up --wait` support. OpenSSL is also required for the Qdrant TLS test's unrelated test CA. macOS and Linux are the initial targets. No database installation, manual secret exports or RTK installation is required.
 
 ```sh
 make dev-up        # builds onetui, starts databases, waits for authenticated reads
 make check-local   # runs both headless checks with fake reader credentials
+make run           # PostgreSQL metadata TUI; uses existing fixtures, q quits
 make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
+
+`make run` builds and supplies fake PostgreSQL credentials; it does not start/recreate containers. The current journey ends at column metadata, not row values. See [PostgreSQL usage](../docs/postgres.md).
 
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 
@@ -24,13 +27,16 @@ make verify
 make test-integration
 ```
 
-`verify` needs no Docker but its protocol tests bind ephemeral loopback ports. `test-integration` requires no existing `onetui-fixtures` containers, creates fresh fixtures, runs ignored tests serially, and tears down on success, failure, SIGINT or SIGTERM. SIGKILL/daemon loss can prevent cleanup; recover with `make dev-down`. Do not run fixture commands concurrently in different terminals/checkouts: they deliberately share fixed ports/project names.
+`verify` needs no Docker but its protocol tests bind ephemeral loopback ports. `test-integration` requires no existing `onetui-fixtures` containers, creates fresh fixtures, runs each package's ignored fixture tests serially, and tears down on success, failure, SIGINT or SIGTERM. SIGKILL/daemon loss can prevent cleanup; recover with `make dev-down`. Do not run fixture commands concurrently in different terminals/checkouts: they deliberately share fixed ports/project names.
 
 To retain containers for debugging, use `make dev-up` followed by:
 
 ```sh
-cargo test --locked --test fixtures -- --ignored --test-threads=1
+cargo test -p onetui-postgres --locked --test fixtures -- --ignored --test-threads=1
+cargo test -p onetui-qdrant --locked --test fixtures -- --ignored --test-threads=1
 ```
+
+These are separate package-owned suites, not a backend-parameterized test harness. `make verify` runs workspace-wide build/lint/default tests. For non-Docker package tests, run `make build` followed by `cargo test -p onetui-postgres --locked` or `cargo test -p onetui-qdrant --locked`. CLI tests use `target/debug/onetui`; test-only `ONETUI_TEST_BIN` optionally selects another prebuilt binary path (prefer an absolute path for custom target directories).
 
 Those tests change only disposable fixture tables/collections and their own reader sessions. Finish with `make dev-down`.
 

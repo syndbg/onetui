@@ -1,18 +1,23 @@
-[package]
-name = "onetui"
+[workspace]
+members = ["crates/core", "crates/postgres", "crates/qdrant", "crates/tui"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
-description = "OneTUI: a terminal browser for databases and streams"
-publish = false
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+futures-util = "0.3"
 qdrant-client = { version = "1.19", default-features = false }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "time"] }
 tokio-postgres = "0.7"
 tokio-postgres-rustls = { version = "0.14", features = ["ring"] }
@@ -20,7 +25,28 @@ tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 toml = "1.0"
 url = "2"
 
-[dev-dependencies]
+nix = { version = "0.31", features = ["term", "fs"] }
 tempfile = "3"
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic-prost = "0.14"
+
+[package]
+name = "onetui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "OneTUI: a terminal browser for databases and streams"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+onetui-core = { path = "crates/core" }
+onetui-postgres = { path = "crates/postgres" }
+onetui-qdrant = { path = "crates/qdrant" }
+onetui-tui = { path = "crates/tui" }
+
+[dev-dependencies]
+tempfile.workspace = true

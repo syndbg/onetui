@@ -1,7 +1,5 @@
-//! Exercises the actual CLI against a local gRPC peer, without a database fixture.
+//! Exercises the Qdrant connector against a local gRPC peer, without a database fixture.
 use std::convert::Infallible;
-use std::io::Write;
-use std::process::{Command, Output};
 use std::task::{Context, Poll};
 
 use qdrant_client::qdrant::{
@@ -46,7 +44,7 @@ impl Service<http::Request<tonic::body::Body>> for ListReply {
     }
 }
 
-async fn run_reply(reply: ListReply) -> Output {
+async fn run_reply(reply: ListReply) -> anyhow::Result<String> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(
@@ -54,24 +52,15 @@ async fn run_reply(reply: ListReply) -> Output {
             .add_service(reply)
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
     );
-    let output = tokio::task::spawn_blocking(move || {
-        let mut config = tempfile::NamedTempFile::new().unwrap();
-        writeln!(
-            config,
-            "[connections.test]\nkind='qdrant'\nurl='http://{address}'"
-        )
-        .unwrap();
-        Command::new(env!("CARGO_BIN_EXE_onetui"))
-            .args(["--check", "--connection", "test", "--config"])
-            .arg(config.path())
-            .args(["--timeout", "2"])
-            .output()
-            .unwrap()
-    })
+    let output = onetui_qdrant::check(
+        &format!("http://{address}"),
+        None,
+        std::time::Duration::from_secs(2),
+    )
     .await;
     server.abort();
     let _ = server.await;
-    output.unwrap()
+    output
 }
 
 #[tokio::test]
@@ -83,20 +72,14 @@ async fn oversized_metadata_is_rejected_with_a_useful_limit_error() {
         ..Default::default()
     })))
     .await;
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let error = String::from_utf8_lossy(&output.stderr);
+    let error = output.unwrap_err().to_string();
     assert!(error.contains("1 MiB"), "{error}");
 }
 
 #[tokio::test]
 async fn small_metadata_succeeds_and_server_errors_do_not_leak_details() {
     let output = run_reply(ListReply(Ok(ListCollectionsResponse::default()))).await;
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.is_ok(), "{output:?}");
     for (code, expected) in [
         (tonic::Code::PermissionDenied, "denied"),
         (tonic::Code::Unauthenticated, "authentication"),
@@ -108,8 +91,7 @@ async fn small_metadata_succeeds_and_server_errors_do_not_leak_details() {
             .metadata_mut()
             .insert("api-key", "fake-secret-do-not-print".parse().unwrap());
         let output = run_reply(ListReply(Err(status))).await;
-        assert!(!output.status.success());
-        let error = String::from_utf8_lossy(&output.stderr);
+        let error = output.unwrap_err().to_string();
         assert!(error.contains(expected), "{error}");
         assert!(!error.contains("fake-secret-do-not-print"));
         assert!(!error.contains('\u{1b}'));

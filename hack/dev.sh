@@ -13,21 +13,22 @@ check_connection() {
     ./target/debug/onetui --check --config hack/connections.toml --connection "$1" --timeout 2
 }
 
+wait_for_connection() {
+    local alias=$1 deadline=$((SECONDS + 60))
+    until check_connection "$alias" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline )); then
+            check_connection "$alias"
+            return 1
+        fi
+        sleep 1
+    done
+    printf 'Ready: %s\n' "$alias"
+}
+
 up() {
     "${compose[@]}" up -d --wait --wait-timeout 60
-    # Qdrant's image has no healthcheck utility. Probe the same authenticated RPC as the CLI.
-    local alias deadline
-    for alias in local_pg local_qdrant; do
-        deadline=$((SECONDS + 60))
-        until check_connection "$alias" >/dev/null 2>&1; do
-            if (( SECONDS >= deadline )); then
-                check_connection "$alias"
-                return 1
-            fi
-            sleep 1
-        done
-        printf 'Ready: %s\n' "$alias"
-    done
+    wait_for_connection local_pg
+    wait_for_connection local_qdrant
 }
 
 cleanup() {
@@ -41,15 +42,19 @@ cleanup() {
 }
 
 case "${1:-}" in
-    up|check|test)
+    up|check|test|run)
         if [[ ! -x target/debug/onetui ]]; then
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
         ;;
     down|logs) ;;
-    *) printf 'Usage: bash hack/dev.sh {up|check|test|down|logs}\n' >&2; exit 2 ;;
+    *) printf 'Usage: bash hack/dev.sh {up|check|test|run|down|logs}\n' >&2; exit 2 ;;
 esac
+
+if [[ "$1" == run ]]; then
+    exec ./target/debug/onetui --config hack/connections.toml --connection local_pg
+fi
 
 # The test clients use localhost; never create/delete fixtures on a remote Docker context.
 if [[ -n ${DOCKER_CONTEXT:-} || -z ${DOCKER_HOST:-} ]]; then
@@ -77,6 +82,6 @@ case "$1" in
         trap 'exit 130' INT
         trap 'exit 143' TERM
         up
-        cargo test --locked --test fixtures -- --ignored --test-threads=1
+        cargo test --workspace --locked --test fixtures -- --ignored --test-threads=1
         ;;
 esac

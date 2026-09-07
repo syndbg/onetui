@@ -3,11 +3,12 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release fmt lint test verify workflow-lint dev-up dev-down dev-logs check-local test-integration release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-down dev-logs check-local test-integration release-check package
 
 help:
 	@printf '%s\n' \
 	  'build / build-release  Build the debug / release binary (locked dependencies)' \
+	  'run                    Build and browse local PostgreSQL metadata (start with dev-up)' \
 	  'fmt                    Format Rust sources' \
 	  'lint                   Check formatting, Clippy and shell syntax' \
 	  'test                   Run tests without Docker' \
@@ -21,22 +22,25 @@ help:
 	  'package TAG=v...        Build a native archive and SHA-256 file under dist/'
 
 build:
-	cargo build --locked
+	cargo build --workspace --locked
 
 build-release:
 	cargo build --release --locked
+
+run: build
+	bash hack/dev.sh run
 
 fmt:
 	cargo fmt --all
 
 lint:
 	cargo fmt --all -- --check
-	cargo clippy --all-targets --locked -- -D warnings
+	cargo clippy --workspace --all-targets --locked -- -D warnings
 	for script in hack/dev.sh hack/release.sh; do bash -n "$$script" || exit; done
 	for script in hack/fixtures/*-tls.sh; do sh -n "$$script" || exit; done
 
 test:
-	cargo test --locked
+	cargo test --workspace --locked
 
 verify: build lint test
 
