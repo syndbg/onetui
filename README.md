@@ -45,7 +45,7 @@ PostgreSQL requires certificate/hostname-verified TLS by default; `sslmode=prefe
 
 Remote Qdrant URLs must use `https://` with native trust roots; `http://` is limited to loopback hosts. Specify the gRPC port (normally 6334), not the REST port; ports are never rewritten. URL credentials, path prefixes, queries and fragments are unsupported. Qdrant custom-CA config and client certificates are not implemented. Collection-scoped keys may not permit listing; that is reported as denied, not an empty result.
 
-The Qdrant check caps its protobuf metadata response at 1 MiB; this is not a process-memory ceiling. PostgreSQL returns one boolean catalog result. Neither check proves permission to read every table/collection.
+The Qdrant check caps its protobuf metadata response at 1 MiB and reports an explicit limit error if exceeded; this is not a process-memory ceiling. PostgreSQL returns one boolean catalog result. Neither check proves permission to read every table/collection.
 
 ## Disposable local fixtures and tests
 
@@ -64,7 +64,7 @@ docker compose -f fixtures/compose.yaml down
 
 Allow Qdrant to finish startup before running tests; if a check reports connection refused immediately after `up`, retry once it is ready. PostgreSQL has a readiness check. Fixture initialization generates a private CA and localhost-only server certificate valid for two days; recreate the disposable containers if these expire.
 
-The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS and connection loss. Qdrant tests cover numeric/UUID paging with on-demand payload/vector retrieval. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; the Qdrant test creates and removes its own collection using the fixture admin key. These client experiments are not shipped browsing commands. `down` removes the fixture containers/network and their temporary data; it does not touch external databases.
+The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. These client experiments are not shipped browsing commands. `down` removes the fixture containers/network and their temporary data; it does not touch external databases.
 
 ```sh
 cargo fmt --all -- --check

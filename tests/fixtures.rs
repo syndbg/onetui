@@ -5,8 +5,11 @@ use std::time::Duration;
 
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
-    CreateCollectionBuilder, Distance, GetPointsBuilder, PointStruct, ScrollPointsBuilder,
-    UpsertPointsBuilder, VectorParamsBuilder,
+    CreateCollectionBuilder, DeletePointsBuilder, Distance, GetPointsBuilder,
+    MultiVectorComparator, MultiVectorConfigBuilder, NamedVectors, PointStruct,
+    ScrollPointsBuilder, SparseVectorConfig, SparseVectorParams, UpsertPointsBuilder, Vector,
+    VectorParamsBuilder, VectorParamsMap, VectorsConfig, points_client::PointsClient,
+    vector_output, vectors_config,
 };
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use tokio_postgres::{Client, SimpleQueryMessage};
@@ -562,9 +565,140 @@ async fn qdrant_scroll_and_lazy_details() {
         assert_eq!(detail.result.len(), 1);
         assert!(!detail.result[0].payload.is_empty());
         assert!(detail.result[0].vectors.is_some());
+        let numeric = client
+            .get_points(
+                GetPointsBuilder::new(&name, vec![1_u64.into()])
+                    .with_payload(true)
+                    .with_vectors(false),
+            )
+            .await?;
+        assert_eq!(numeric.result.len(), 1);
+        assert!(!numeric.result[0].payload.is_empty());
+        assert!(numeric.result[0].vectors.is_none());
+        client
+            .delete_points(
+                DeletePointsBuilder::new(&name)
+                    .points(vec![qdrant_client::qdrant::PointId::from(1_u64)])
+                    .wait(true),
+            )
+            .await?;
+        let missing = client
+            .get_points(GetPointsBuilder::new(&name, vec![1_u64.into()]))
+            .await?;
+        assert!(missing.result.is_empty());
         Ok::<_, qdrant_client::QdrantError>(())
     }
     .await;
+    client.delete_collection(&name).await.unwrap();
+    result.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL fixture"]
+async fn postgres_row_limit_does_not_limit_cell_bytes() {
+    let reader = FixturePg::plain(PG).await;
+    let observer = FixturePg::plain(PG_ADMIN).await;
+    // A single row already exceeds a small display budget; LIMIT is not a byte cap.
+    let result = reader
+        .client
+        .simple_query("SELECT repeat('🌊', 524288) AS value LIMIT 1")
+        .await
+        .unwrap();
+    let row = result
+        .iter()
+        .find_map(|m| match m {
+            SimpleQueryMessage::Row(row) => Some(row),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(row.get("value").unwrap().len(), 2 * 1024 * 1024);
+    wait_for_backend(&observer.client, reader.pid().await, "idle").await;
+    // Server-side projection can flag an oversized field without sending its full text.
+    let row = reader.client.query_one(
+        "SELECT CASE WHEN octet_length(value) <= $1 THEN value END, octet_length(value) > $1 FROM (SELECT repeat('🌊', 524288) AS value) s LIMIT 1",
+        &[&1_048_576_i32]
+    ).await.unwrap();
+    assert_eq!(row.get::<_, Option<String>>(0), None);
+    assert!(row.get::<_, bool>(1));
+    wait_for_backend(&observer.client, reader.pid().await, "idle").await;
+}
+
+#[tokio::test]
+#[ignore = "creates only its own collection in the disposable Qdrant fixture"]
+async fn qdrant_large_payload_and_vector_variants() {
+    let client = Qdrant::from_url(QDRANT)
+        .api_key("fixture-admin-only")
+        .skip_compatibility_check()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let name = format!("bpearl_variants_{}", std::process::id());
+    let params = std::collections::HashMap::from([
+        (
+            "dense".to_owned(),
+            VectorParamsBuilder::new(3, Distance::Dot).build(),
+        ),
+        (
+            "multi".to_owned(),
+            VectorParamsBuilder::new(3, Distance::Dot)
+                .multivector_config(MultiVectorConfigBuilder::new(MultiVectorComparator::MaxSim))
+                .build(),
+        ),
+    ]);
+    client
+        .create_collection(
+            CreateCollectionBuilder::new(&name)
+                .vectors_config(VectorsConfig {
+                    config: Some(vectors_config::Config::ParamsMap(VectorParamsMap {
+                        map: params,
+                    })),
+                })
+                .sparse_vectors_config(SparseVectorConfig {
+                    map: std::collections::HashMap::from([(
+                        "sparse".to_owned(),
+                        SparseVectorParams::default(),
+                    )]),
+                }),
+        )
+        .await
+        .unwrap();
+    let result = async {
+        let empty = client.scroll(ScrollPointsBuilder::new(&name).limit(2)).await?;
+        assert!(empty.result.is_empty());
+        assert!(empty.next_page_offset.is_none());
+        let vectors = NamedVectors::default()
+            .add_vector("dense", Vector::new_dense(vec![1.0, 2.0, 3.0]))
+            .add_vector("sparse", Vector::new_sparse(vec![3, 1000], vec![0.5, 1.5]))
+            .add_vector("multi", Vector::new_multi(vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]]));
+        client.upsert_points(UpsertPointsBuilder::new(&name, vec![
+            PointStruct::new(1_u64, vectors, [("large", "x".repeat(2 * 1024 * 1024).into())]),
+        ]).wait(true)).await?;
+        let page = client.scroll(ScrollPointsBuilder::new(&name).limit(2).with_payload(false).with_vectors(false)).await?;
+        assert_eq!(page.result.len(), 1);
+        assert!(page.result[0].payload.is_empty());
+        assert!(page.result[0].vectors.is_none());
+
+        let detail = client.get_points(GetPointsBuilder::new(&name, vec![1_u64.into()])
+            .with_payload(false).with_vectors(true)).await?;
+        let vectors = detail.result[0].vectors.as_ref().unwrap();
+        assert!(matches!(vectors.get_vector_by_name("dense"), Some(vector_output::Vector::Dense(v)) if v.data == [1.0, 2.0, 3.0]));
+        assert!(matches!(vectors.get_vector_by_name("sparse"), Some(vector_output::Vector::Sparse(v)) if v.indices == [3, 1000] && v.values == [0.5, 1.5]));
+        assert!(matches!(vectors.get_vector_by_name("multi"), Some(vector_output::Vector::MultiDense(v)) if v.vectors.len() == 2 && v.vectors.iter().all(|v| v.data.len() == 3)));
+
+        let channel = tonic::transport::Endpoint::from_static(QDRANT)
+            .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(5)).connect().await.unwrap();
+        let mut bounded = PointsClient::new(channel).max_decoding_message_size(1024 * 1024);
+        let request: qdrant_client::qdrant::GetPoints = GetPointsBuilder::new(&name, vec![1_u64.into()])
+            .with_payload(true).with_vectors(false).build();
+        let mut request = tonic::Request::new(request);
+        request.metadata_mut().insert("api-key", "fixture-reader-only".parse().unwrap());
+        let error = bounded.get(request).await.unwrap_err();
+        assert_eq!(error.code(), tonic::Code::OutOfRange);
+        // A rejected detail request must not make an ID-only retry fail.
+        let retry = client.scroll(ScrollPointsBuilder::new(&name).limit(2).with_payload(false).with_vectors(false)).await?;
+        assert_eq!(retry.result[0].id, page.result[0].id);
+        Ok::<_, qdrant_client::QdrantError>(())
+    }.await;
     client.delete_collection(&name).await.unwrap();
     result.unwrap();
 }

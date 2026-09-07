@@ -195,6 +195,7 @@ async fn qdrant(value: &str, api_key: Option<&str>, deadline: Duration) -> Resul
         .list(request).await.map_err(|status| match status.code() {
             tonic::Code::Unauthenticated => anyhow!("Qdrant authentication failed; check api_key_env"),
             tonic::Code::PermissionDenied => anyhow!("Qdrant collection listing denied; the key may be collection-scoped"),
+            tonic::Code::OutOfRange => anyhow!("Qdrant metadata response exceeded the 1 MiB limit, or the server rejected an out-of-range request"),
             tonic::Code::ResourceExhausted => anyhow!("Qdrant response exceeded the 1 MiB metadata limit or server resources were exhausted"),
             tonic::Code::DeadlineExceeded => anyhow!("Qdrant metadata check timed out"),
             _ => anyhow!("Qdrant metadata check failed (gRPC code {})", status.code() as i32),
