@@ -119,7 +119,7 @@ async fn both_cli_checks_and_auth_failures() {
     }
 }
 
-fn fixture_ca() -> tempfile::NamedTempFile {
+fn fixture_ca(service: &str, path: &str) -> tempfile::NamedTempFile {
     let cert = Command::new("docker")
         .args([
             "compose",
@@ -127,9 +127,9 @@ fn fixture_ca() -> tempfile::NamedTempFile {
             "hack/compose.yaml",
             "exec",
             "-T",
-            "postgres",
+            service,
             "cat",
-            "/var/lib/postgresql/data/bpearl-ca.crt",
+            path,
         ])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
@@ -143,7 +143,7 @@ fn fixture_ca() -> tempfile::NamedTempFile {
 #[test]
 #[ignore = "requires the disposable Docker Compose PostgreSQL TLS fixture"]
 fn postgres_tls_checks_ca_and_hostname() {
-    let ca = fixture_ca();
+    let ca = fixture_ca("postgres", "/var/lib/postgresql/data/bpearl-ca.crt");
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(
         config,
@@ -174,6 +174,82 @@ fn postgres_tls_checks_ca_and_hostname() {
         "fixture-reader-only",
     );
     assert!(!output.status.success());
+}
+
+#[test]
+#[ignore = "requires the disposable Docker Compose Qdrant TLS fixture"]
+fn qdrant_https_verifies_trust_hostname_and_authentication() {
+    let ca = fixture_ca("qdrant-tls", "/qdrant/tls/ca.crt");
+    let unrelated_ca = fixture_ca("postgres", "/var/lib/postgresql/data/bpearl-ca.crt");
+    let empty_cert_dir = tempfile::tempdir().unwrap();
+    for (endpoint, trusted_ca, key, expected) in [
+        (
+            "https://localhost:16335",
+            ca.path(),
+            "fixture-reader-only",
+            None,
+        ),
+        (
+            "https://127.0.0.1:16335",
+            ca.path(),
+            "fixture-reader-only",
+            Some("TLS certificate trust"),
+        ),
+        (
+            "https://localhost:16335",
+            unrelated_ca.path(),
+            "fixture-reader-only",
+            Some("TLS certificate trust"),
+        ),
+        (
+            "https://localhost:16335",
+            ca.path(),
+            "fake-wrong-secret",
+            Some("authentication failed"),
+        ),
+        (
+            "http://localhost:16335",
+            ca.path(),
+            "fixture-reader-only",
+            Some("Qdrant"),
+        ),
+        (
+            "https://localhost:16334",
+            ca.path(),
+            "fixture-reader-only",
+            Some("TLS certificate trust"),
+        ),
+        (
+            "https://localhost:16335",
+            ca.path(),
+            "fixture-reader-only",
+            None,
+        ),
+    ] {
+        let mut config = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config, "[connections.tls]\nkind='qdrant'\nurl='{endpoint}'\napi_key_env='BPEARL_QDRANT_API_KEY'").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_bpearl"))
+            .args(["--check", "--connection", "tls", "--config"])
+            .arg(config.path())
+            .args(["--timeout", "2"])
+            // rustls-native-certs reads these in the child only; the OS trust store is untouched.
+            .env("SSL_CERT_FILE", trusted_ca)
+            .env("SSL_CERT_DIR", empty_cert_dir.path())
+            .env("BPEARL_QDRANT_API_KEY", key)
+            .output()
+            .unwrap();
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.success(), expected.is_none(), "{error}");
+        if let Some(expected) = expected {
+            assert!(error.contains(expected), "{error}");
+            assert!(output.stdout.is_empty());
+        } else {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("OK tls (qdrant)"));
+        }
+        assert!(!error.contains("fake-wrong-secret"));
+        assert!(!error.contains("fixture-reader-only"));
+        assert!(!error.contains('\u{1b}'));
+    }
 }
 
 #[tokio::test]
@@ -383,7 +459,7 @@ async fn postgres_independent_pages_do_not_claim_a_snapshot() {
 #[tokio::test]
 #[ignore = "requires the disposable PostgreSQL TLS fixture"]
 async fn postgres_cancel_over_tls_finishes_before_connection_reuse() {
-    let ca = fixture_ca();
+    let ca = fixture_ca("postgres", "/var/lib/postgresql/data/bpearl-ca.crt");
     let mut roots = rustls::RootCertStore::empty();
     for cert in CertificateDer::pem_file_iter(ca.path()).unwrap() {
         roots.add(cert.unwrap()).unwrap();

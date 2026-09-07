@@ -29,3 +29,26 @@ services:
       - "127.0.0.1:16334:6334"
     tmpfs:
       - /qdrant/storage
+  qdrant-tls:
+    image: qdrant/qdrant:v1.18.2
+    entrypoint: ["/bin/sh", "/bpearl-qdrant-tls.sh"]
+    environment:
+      QDRANT__SERVICE__API_KEY: fixture-admin-only
+      QDRANT__SERVICE__READ_ONLY_API_KEY: fixture-reader-only
+      QDRANT__SERVICE__ENABLE_TLS: "true"
+      QDRANT__TLS__CERT: /qdrant/tls/server.crt
+      QDRANT__TLS__KEY: /qdrant/tls/server.key
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:16335:6334"
+    tmpfs:
+      - /qdrant/storage
+      - /qdrant/tls
+    volumes:
+      - ./fixtures/qdrant-tls.sh:/bpearl-qdrant-tls.sh:ro
+      - ./fixtures/server.ext:/bpearl-server.ext:ro
+    healthcheck:
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:6334 -servername localhost -alpn h2 -CAfile /qdrant/tls/ca.crt -verify_hostname localhost -verify_return_error < /dev/null > /dev/null 2>&1"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

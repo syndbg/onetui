@@ -33,7 +33,7 @@ lint:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --locked -- -D warnings
 	for script in hack/dev.sh hack/release.sh; do bash -n "$$script" || exit; done
-	sh -n hack/fixtures/postgres-tls.sh
+	for script in hack/fixtures/*-tls.sh; do sh -n "$$script" || exit; done
 
 test:
 	cargo test --locked

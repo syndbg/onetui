@@ -50,7 +50,7 @@ The Qdrant check caps its protobuf metadata response at 1 MiB and reports an exp
 
 ## Disposable local fixtures and tests
 
-The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds only to loopback ports 15432/16334, and stores data in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `bpearl-fixtures`; don't reuse it for valuable data.
+The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds only to loopback ports 15432/16334 (plus 16335 for a separate Qdrant TLS fixture), and stores data in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `bpearl-fixtures`; don't reuse it for valuable data.
 
 ```sh
 make help
