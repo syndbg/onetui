@@ -27,7 +27,7 @@ fn terminal() -> Result<(TerminalGuard, DefaultTerminal)> {
         std::io::stdin().is_terminal() && stdout().is_terminal(),
         "interactive browsing requires a terminal on stdin/stdout; use --check or schema for headless operation"
     );
-    // Partial initialization errors must also attempt restoration.
+    // Restore terminal modes even if initialization fails halfway through.
     let guard = TerminalGuard;
     let terminal = ratatui::try_init().map_err(|_| anyhow!("cannot initialize terminal"))?;
     Ok((guard, terminal))

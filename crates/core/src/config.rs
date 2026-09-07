@@ -23,7 +23,7 @@ enum Connection {
     },
 }
 
-// Intentionally no Debug: these values contain resolved credentials.
+// Debug output would expose resolved credentials.
 pub enum ResolvedConnection {
     Postgres {
         url: String,

@@ -41,7 +41,7 @@ pub async fn fetch(
         }
         _ = &mut cancel => bail!("Request cancelled; connection discarded"),
     };
-    // This request owns both halves. No detached driver or idle browsing transaction survives it.
+    // Keep client and driver scoped to this request; neither may survive it.
     tokio::pin!(driver);
     let query = async {
         if resource.id == "postgres.rows" {

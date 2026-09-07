@@ -51,7 +51,7 @@ impl View {
     }
 
     fn rebuild(&mut self, keep: Option<usize>) {
-        // Presentation indices only: native row order and continuation must never be rewritten.
+        // Reorder display indices without changing native rows or continuation.
         self.visible = self
             .page
             .rows

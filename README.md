@@ -2,19 +2,17 @@
 
 Explore databases and streams from your terminal.
 
-OneTUI is an independent project for navigating data with a familiar k9s-style terminal interface: connection switching, a command palette, tables, filtering, and drill-down inspection.
+OneTUI uses k9s-style navigation: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-PostgreSQL row/metadata TUI and offline capability dump are implemented. Page-local filter/sort and the actual-CLI/live-PostgreSQL terminal journey are covered. Qdrant point browsing and configurable keybindings remain planned. PostgreSQL/Qdrant headless checks remain available.
+Implemented: PostgreSQL row/metadata browsing, page-local filter/sort, and an offline capability dump. Tests cover the CLI and terminal against live PostgreSQL fixtures. Both backends support headless checks. Qdrant point browsing and configurable keybindings remain planned.
 
-The first release targets **PostgreSQL and Qdrant**, using **Rust, Ratatui, and Tokio**. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
+The first release targets PostgreSQL and Qdrant, using Rust, Ratatui, and Tokio. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
 
 Start with:
 
 - [ADR convention](docs/adr/0000-record-architecture-decisions.md): how decisions are recorded, numbered and superseded..
 - [Static provider dispatch ADR](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md): accepted enum-based interfaces and built-in catalog; no dynamic plugins or dispatch-related future boxing. Implementation pending.
 - [Provider lifecycle ADR](docs/adr/0001-register-providers-and-own-session-lifecycles.md): connection lifetime, native heartbeats and rejected alternatives; its boxed-dispatch choice is superseded by ADR-0002.
-
-Project name: **OneTUI**. Repository and intended executable: **`onetui`**.
 
 The initial product is a read-only browser. Backend-specific querying follows the browsing foundation; data editing and broker administration are outside the initial scope.
 
@@ -38,7 +36,7 @@ alias ot='onetui'
 
 Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. This is only a shell shortcut; the executable and configuration directory remain `onetui`.
 
-`--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1–300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the PostgreSQL TUI; displayed data does not expire while idle. See [PostgreSQL usage and limits](docs/postgres.md).
+`--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1-300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the PostgreSQL TUI; displayed data does not expire while idle. See [PostgreSQL usage and limits](docs/postgres.md).
 
 ## PostgreSQL browsing and offline catalog
 
@@ -52,7 +50,7 @@ onetui schema --datasource qdrant
 
 Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `/` filters this page's cached text; `s` cycles lexical sort on the selected field; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
 
-See [PostgreSQL usage](docs/postgres.md) for keys, limits, cancellation behavior and remaining work. This adds no TOML settings or config-discovery changes.
+See [PostgreSQL usage](docs/postgres.md) for keys, limits, cancellation behavior and remaining work. Browsing uses the connection configuration described below.
 
 ## Workspace packages
 
@@ -76,7 +74,7 @@ OneTUI reads **one TOML file**, selected in this order on both Linux and macOS:
 2. `$XDG_CONFIG_HOME/onetui/config.toml`, when `XDG_CONFIG_HOME` is a nonempty absolute path.
 3. `$HOME/.config/onetui/config.toml` otherwise, provided `HOME` is an absolute path.
 
-**`~/onetui.toml` is an explicit alternative, not an automatically discovered default.** OneTUI does not search the project directory or merge configuration files. It does not create a config file or populate connections automatically; a missing/unreadable selected file is an error, not a reason to try another location. `hack/connections.toml` is only the disposable development example selected by the Make setup.
+Use `--config` to select `~/onetui.toml`; it is not discovered automatically. OneTUI does not search the project directory or merge configuration files. It does not create a config file or populate connections automatically; a missing/unreadable selected file is an error, not a reason to try another location. `hack/connections.toml` is only the disposable development example selected by the Make setup.
 
 To keep your configuration directly in your home directory, save the TOML below as `~/onetui.toml` and select it explicitly:
 
@@ -104,7 +102,7 @@ Currently, the only top-level setting is `[connections]`, containing named `[con
 
 Connection aliases and environment-reference names must contain only ASCII letters, digits, underscores or hyphens, and cannot be empty. Only the selected connection's environment references are resolved. The names `ONETUI_POSTGRES_URL` and `ONETUI_QDRANT_API_KEY` below are examples, not automatically read variables; you may explicitly reference other names. Store credentials in those environment variables, not inline password/API-key fields.
 
-Unknown settings are rejected, including unsupported connection fields. Keybindings, themes, views, plugins and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1–300 seconds**. Errors do not echo config contents or driver error chains.
+Unknown settings are rejected, including unsupported connection fields. Keybindings, themes, views, plugins and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1-300 seconds**. Errors do not echo config contents or driver error chains.
 
 Example config (save it at the default location or at the explicit path passed to `--config`):
 

@@ -7,13 +7,13 @@ date: 2026-09-07
 
 ## Decision
 
-Record significant architecture decisions as Markdown ADRs in `docs/adr/`. Keep each record focused on the decision, its context, rationale, alternatives and consequences. Include interface examples when they clarify the contract.
+Keep architecture decisions in `docs/adr/` as Markdown. Explain the choice, why it was made, the alternatives and its consequences. Include examples where they help.
 
-Keep delivery checklists and test results in issues and pull requests. An accepted decision does not mean its implementation is complete.
+Keep delivery checklists and test results in issues and pull requests. An accepted decision can still await implementation.
 
 ## Context
 
-Separating durable decisions from changing delivery details preserves the reasons behind the design without turning each ADR into another task tracker.
+ADRs keep the reasons for decisions separate from delivery details.
 
 ## Convention
 
@@ -26,4 +26,4 @@ Separating durable decisions from changing delivery details preserves the reason
 
 ## Alternatives and consequences
 
-Keeping decisions only in chat or changing task lists makes their rationale hard to recover as implementation tasks change. ADRs add a small documentation cost but keep decisions and rejected alternatives discoverable beside the code. No ADR generator, external decision tracker or additional tooling is required.
+Decisions left in chat or changing task lists are hard to find later. Markdown ADRs keep them beside the code without a generator or external tracker.

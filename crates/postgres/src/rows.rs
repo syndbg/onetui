@@ -54,7 +54,7 @@ pub(crate) async fn fetch(
         .batch_execute("BEGIN READ ONLY")
         .await
         .map_err(pg_error)?;
-    // Acquire the relation lock before reading its catalog shape; no human-time transaction.
+    // Lock the relation before reading its catalog shape; finish the transaction before display.
     client
         .simple_query(&format!("SELECT 1 FROM {table} LIMIT 0"))
         .await
@@ -201,7 +201,7 @@ pub(crate) async fn fetch(
         )
     };
     // Materialization covers only LIMIT+1 rows. Native keys preserve numeric/collation ordering.
-    // The flag distinguishes oversized data from actual SQL NULL; guarded fields never cross the wire.
+    // Flag oversized data separately from SQL NULL; omit its text from the response.
     let sql = format!(
         "WITH page AS MATERIALIZED (SELECT {} FROM {table} AS src {predicate} {ordering} {limit} {skip}), \
          sized AS (SELECT *, ({size}) > {FIELD_BYTES} AS oversized FROM page) \

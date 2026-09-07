@@ -36,7 +36,7 @@ cargo test -p onetui-postgres --locked --test fixtures -- --ignored --test-threa
 cargo test -p onetui-qdrant --locked --test fixtures -- --ignored --test-threads=1
 ```
 
-These are separate package-owned suites, not a backend-parameterized test harness. `make verify` runs workspace-wide build/lint/default tests. For non-Docker package tests, run `make build` followed by `cargo test -p onetui-postgres --locked` or `cargo test -p onetui-qdrant --locked`. CLI tests use `target/debug/onetui`; test-only `ONETUI_TEST_BIN` optionally selects another prebuilt binary path (prefer an absolute path for custom target directories).
+Keep these package-owned suites separate; do not parameterize a harness over both backends. `make verify` runs workspace-wide build/lint/default tests. For non-Docker package tests, run `make build` followed by `cargo test -p onetui-postgres --locked` or `cargo test -p onetui-qdrant --locked`. CLI tests use `target/debug/onetui`; test-only `ONETUI_TEST_BIN` optionally selects another prebuilt binary path (prefer an absolute path for custom target directories).
 
 Those tests change only disposable fixture tables/collections and their own reader sessions. Finish with `make dev-down`.
 
