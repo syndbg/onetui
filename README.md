@@ -10,6 +10,9 @@ The first release targets **PostgreSQL and Qdrant**, using **Rust, Ratatui, and 
 
 Start with:
 
+- [ADR convention](docs/adr/0000-record-architecture-decisions.md): how decisions are recorded, numbered and superseded..
+- [Provider architecture ADR](docs/adr/0001-register-providers-and-own-session-lifecycles.md): accepted target interfaces, connection lifetime, native heartbeats and rejected alternatives; implementation pending.
+
 Project name: **OneTUI**. Repository and intended executable: **`onetui`**.
 
 The initial product is a read-only browser. Backend-specific querying follows the browsing foundation; data editing and broker administration are outside the initial scope.
