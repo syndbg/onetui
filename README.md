@@ -25,9 +25,57 @@ make check-local
 make dev-down
 ```
 
+Prefer a shorter command? Once `onetui` is on your `PATH`, add this to `~/.zshrc` (or `~/.bashrc` for Bash):
+
+```sh
+alias ot='onetui'
+```
+
+Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. This is only a shell shortcut; the executable and configuration directory remain `onetui`.
+
 `--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default connection-check deadline (1–300 seconds); Ctrl-C cancels a pending check. Running without `--check` currently reports that the TUI is not implemented.
 
-Configuration defaults to `$XDG_CONFIG_HOME/onetui/config.toml`, or `$HOME/.config/onetui/config.toml` when XDG_CONFIG_HOME is absent, empty or relative. `--config` selects exactly that file. Only the selected connection's environment references are resolved. Unknown configuration fields are rejected; errors do not echo config contents or driver error chains.
+## Configuration
+
+### File location
+
+OneTUI reads **one TOML file**, selected in this order on both Linux and macOS:
+
+1. `--config <path>`, when provided. Relative paths are relative to the current working directory.
+2. `$XDG_CONFIG_HOME/onetui/config.toml`, when `XDG_CONFIG_HOME` is a nonempty absolute path.
+3. `$HOME/.config/onetui/config.toml` otherwise, provided `HOME` is an absolute path.
+
+**`~/onetui.toml` is an explicit alternative, not an automatically discovered default.** OneTUI does not search the project directory or merge configuration files. It does not create a config file or populate connections automatically; a missing/unreadable selected file is an error, not a reason to try another location. `hack/connections.toml` is only the disposable development example selected by the Make setup.
+
+To keep your configuration directly in your home directory, save the TOML below as `~/onetui.toml` and select it explicitly:
+
+```sh
+onetui --config "$HOME/onetui.toml" --check --connection local_pg
+```
+
+This reads only the specified file, without merging the default config. Set its referenced environment variables before checking a connection. To make this location the default for your shortcut, use this alias instead of the plain `ot` alias above:
+
+```sh
+alias ot='onetui --config "$HOME/onetui.toml"'
+```
+
+### Supported settings and defaults
+
+Currently, the only top-level setting is `[connections]`, containing named `[connections.<alias>]` entries. **PostgreSQL and Qdrant headless metadata checks are the only implemented datasource operations.** There are no built-in connection aliases or default endpoints; pass `--connection <alias>` to select an entry.
+
+| Field | Applies to | Required / default |
+| --- | --- | --- |
+| `kind` | Every connection | Required: exactly `"postgres"` or `"qdrant"` |
+| `url_env` | PostgreSQL | Required: name of the environment variable containing the connection string; no inline `url` field |
+| `ca_file` | PostgreSQL | Optional absolute PEM trust-store path; omitted uses the native-root loader. An explicit file replaces those roots and cannot be combined with `sslmode=disable` |
+| `url` | Qdrant | Required: explicit HTTP(S) gRPC endpoint; no default server is supplied |
+| `api_key_env` | Qdrant | Optional environment-variable name; omitted sends no API key. If configured, its value must be present and nonempty |
+
+Connection aliases and environment-reference names must contain only ASCII letters, digits, underscores or hyphens, and cannot be empty. Only the selected connection's environment references are resolved. The names `ONETUI_POSTGRES_URL` and `ONETUI_QDRANT_API_KEY` below are examples, not automatically read variables; you may explicitly reference other names. Store credentials in those environment variables, not inline password/API-key fields.
+
+Unknown settings are rejected, including unsupported connection fields. Keybindings, themes, views, plugins and timeout settings are **not supported in this TOML file yet**. The check deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1–300 seconds**. Errors do not echo config contents or driver error chains.
+
+Example config (save it at the default location or at the explicit path passed to `--config`):
 
 ```toml
 [connections.local_pg]
