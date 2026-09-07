@@ -1,0 +1,10 @@
+# Fake credentials below are for the loopback-only disposable fixtures.
+[connections.local_pg]
+kind = "postgres"
+url_env = "BPEARL_POSTGRES_URL"
+
+[connections.local_qdrant]
+kind = "qdrant"
+url = "http://127.0.0.1:16334"
+api_key_env = "BPEARL_QDRANT_API_KEY"
+

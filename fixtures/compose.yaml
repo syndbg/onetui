@@ -1,0 +1,31 @@
+name: bpearl-fixtures
+services:
+  postgres:
+    image: postgres:16.13
+    environment:
+      POSTGRES_USER: bpearl_fixture_admin
+      POSTGRES_PASSWORD: fixture-admin-only
+      POSTGRES_DB: bpearl_fixture
+    ports:
+      - "127.0.0.1:15432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./postgres.sql:/docker-entrypoint-initdb.d/01-fixture.sql:ro
+      - ./postgres-tls.sh:/docker-entrypoint-initdb.d/02-tls.sh:ro
+      - ./server.ext:/bpearl-server.ext:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bpearl_fixture_admin -d bpearl_fixture"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    environment:
+      QDRANT__SERVICE__API_KEY: fixture-admin-only
+      QDRANT__SERVICE__READ_ONLY_API_KEY: fixture-reader-only
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:16334:6334"
+    tmpfs:
+      - /qdrant/storage
