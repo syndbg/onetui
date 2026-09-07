@@ -2,19 +2,51 @@
 
 Explore databases and streams from your terminal.
 
-OneTUI uses k9s-style navigation: connection switching, a command palette, tables, filtering, and drill-down inspection.
+OneTUI brings k9s-style navigation to databases and streams: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-PostgreSQL row/metadata browsing and Qdrant collection/point browsing use the same shell, page-local filter/sort and offline capability dump. Both backends support headless checks. Development targets v0.1.0; configurable keybindings remain planned. See [validation and release status](CONTRIBUTING.md#validation-status).
+The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are implemented; write operations and additional datasources are planned for later versions. See [validation and release status](CONTRIBUTING.md#validation-status).
 
-The first release targets PostgreSQL and Qdrant, using Rust, Ratatui, and Tokio. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
+## Features and datasource support
 
-Start with:
+```text
+OneTUI
+├── Supported now (read-only)
+│   ├── PostgreSQL
+│   │   ├── Schemas, tables, views and column metadata
+│   │   ├── Row paging and cached field detail
+│   │   └── Headless connection checks
+│   └── Qdrant
+│       ├── Collections and collection metadata
+│       ├── Point ID paging
+│       ├── On-demand payload and dense/sparse/multivector detail
+│       └── Headless connection checks
+├── Shared interface
+│   ├── Connection switching and command palette
+│   ├── Page-local filtering and lexical sorting
+│   ├── Request cancellation
+│   └── Offline resource/action/configuration catalog (`onetui schema`)
+└── Planned (not implemented)
+    ├── Datasources
+    │   ├── DynamoDB
+    │   ├── Kafka
+    │   ├── NATS
+    │   └── RabbitMQ
+    ├── Write operations
+    ├── Backend-specific querying
+    └── Customizable keybindings
+```
 
-- [ADR convention](docs/adr/0000-record-architecture-decisions.md): how decisions are recorded, numbered and superseded..
-- [Static provider dispatch ADR](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md): implemented native async interfaces, built-in enums and catalog; no dynamic plugins or dispatch-related future boxing.
-- [Provider lifecycle ADR](docs/adr/0001-register-providers-and-own-session-lifecycles.md): connection lifetime, native heartbeats and rejected alternatives; its boxed-dispatch choice is superseded by ADR-0002.
+Read and write support is the direction for OneTUI, not a capability of the initial release. Write behavior and permissions will be defined per datasource; broker administration is outside v0.1.
 
-The initial product is a read-only browser. Backend-specific querying follows the browsing foundation; data editing and broker administration are outside the initial scope.
+## Tech stack
+
+- Rust (2024 edition), with a Cargo workspace and separate datasource packages.
+- Ratatui and Crossterm for terminal rendering, keyboard input and terminal lifecycle.
+- Tokio for asynchronous requests, cancellation and connection tasks.
+- `tokio-postgres` with Rustls for PostgreSQL; `qdrant-client` and Tonic for Qdrant gRPC.
+- Clap for CLI arguments; Serde, JSON and TOML for configuration and the offline catalog.
+
+Datasources are compiled into the binary using static enum dispatch. Adding one requires a connector package and a rebuild; runtime plugins are not planned.
 
 ## Build and run
 
