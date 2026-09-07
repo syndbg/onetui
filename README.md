@@ -4,7 +4,7 @@ Explore databases and streams from your terminal.
 
 OneTUI uses k9s-style navigation: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-PostgreSQL row/metadata browsing and Qdrant collection/point browsing use the same shell, page-local filter/sort and offline capability dump. Both backends support headless checks. Development targets v0.1.0; configurable keybindings and hosted release validation remain planned.
+PostgreSQL row/metadata browsing and Qdrant collection/point browsing use the same shell, page-local filter/sort and offline capability dump. Both backends support headless checks. Development targets v0.1.0; configurable keybindings remain planned. See [validation and release status](CONTRIBUTING.md#validation-status).
 
 The first release targets PostgreSQL and Qdrant, using Rust, Ratatui, and Tokio. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
 
@@ -16,7 +16,7 @@ Start with:
 
 The initial product is a read-only browser. Backend-specific querying follows the browsing foundation; data editing and broker administration are outside the initial scope.
 
-## Run the first slice
+## Build and run
 
 Install Rust through rustup, Make, and Docker with Compose for the local databases. The repository pins Rust 1.95.0, rustfmt and Clippy; rustup installs the pinned toolchain on first use. Build locally; there is no published package:
 
@@ -27,6 +27,15 @@ make check-local
 make run                # browse PostgreSQL rows/metadata; q returns to the shell
 make dev-down
 ```
+
+To build without Docker and use your own configured databases:
+
+```sh
+make build-release
+./target/release/onetui --config "$HOME/onetui.toml"
+```
+
+The binary is `target/release/onetui`; add its directory to your `PATH` or copy it to a directory already on your `PATH`. Configure connections as described below before browsing.
 
 Prefer a shorter command? Once `onetui` is on your `PATH`, add this to `~/.zshrc` (or `~/.bashrc` for Bash):
 
@@ -155,11 +164,11 @@ The opt-in fixture tests use only the fixed loopback fixture endpoints. They exe
 
 ## Contributing
 
-Separate PR and main workflows run the same Make targets on Linux x86_64 and macOS arm64; Docker integration tests run on Linux. Main also builds the release profile. Dependencies are locked and workflow actions are pinned to commit SHAs. Workflow definitions are present; hosted results are not yet verified.
+Separate PR and main workflows run the same Make targets on Linux x86_64 and macOS arm64; Docker integration tests run on Linux. Main also builds the release profile. Dependencies are locked and workflow actions are pinned to commit SHAs. See [validation status](CONTRIBUTING.md#validation-status) for the verified commit and remaining release checks.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, pull requests, required checks and release instructions.
 
-Package/publication availability remains to be decided before distribution; Cargo registry publishing is disabled.
+See [performance checks](docs/performance.md) for reproducible timing samples and memory-limit caveats. Cargo registry publishing is disabled; releases use the archive workflow described in CONTRIBUTING.md.
 
 ## License
 

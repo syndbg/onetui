@@ -34,7 +34,9 @@ async fn fetch(
     continuation: Option<String>,
 ) -> anyhow::Result<Page> {
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-    executor
+    let resource_id = resource.id;
+    let started = std::time::Instant::now();
+    let result = executor
         .fetch_page(
             PageRequest {
                 resource,
@@ -42,7 +44,12 @@ async fn fetch(
             },
             context,
         )
-        .await
+        .await;
+    eprintln!(
+        "qdrant {resource_id} fetch/decode/format: {:?}",
+        started.elapsed()
+    );
+    result
 }
 
 #[tokio::test]

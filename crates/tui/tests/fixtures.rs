@@ -645,8 +645,12 @@ mod terminal {
         pty.wait(&["postgres.relations", "browse_uuid"]);
         pty.open_filtered("browse_slow");
         pty.wait(&["postgres.rows", "Loading"]);
+        let cancelled_pid = observer.sleeping_pid().await;
+        let started = Instant::now();
         pty.send(b"\x03");
         pty.wait(&["Requestcancelled"]);
+        eprintln!("PTY cancel-to-visible-status (10 ms polling): {:?}", started.elapsed());
+        observer.wait_gone(cancelled_pid).await;
         pty.send(b":back\r");
         pty.wait(&["postgres.relations", "browse_slow"]);
         pty.open_filtered("keyed_rows");

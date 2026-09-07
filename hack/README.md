@@ -50,6 +50,8 @@ cargo test -p onetui-tui --locked --test fixtures actual_cli_terminal_worker_and
 
 The TUI suite switches PostgreSQL aliases during active reads and tests worker panic, forced abort and stalled shutdown with real connections. Its test child receives `ONETUI_LIFECYCLE_TEST_MODE` (`panic`, `read`, `shutdown`, `quit_read`) and `ONETUI_LIFECYCLE_TEST_DSN` from the harness only; these are not CLI settings. The child waits for the parent to inspect terminal flags and server PIDs before exiting. Default PostgreSQL tests use temporary FIFOs and child-only `SSL_CERT_FILE`/`SSL_CERT_DIR` values to verify certificate-load deadlines and SIGINT; the host trust store is unchanged.
 
+For optimized render, connector and cancellation timings, see [performance checks](../docs/performance.md). The timing tests use existing fixtures and add no application settings.
+
 ## Troubleshooting
 
 - Docker unavailable: start Docker Desktop/Engine and check `docker info`; setup failures return nonzero. Remote/TCP contexts are refused: these clients require a local Unix-socket Docker daemon and loopback port forwarding.

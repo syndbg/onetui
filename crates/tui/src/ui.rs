@@ -274,6 +274,82 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    #[ignore = "timing sample; run with --release --nocapture"]
+    fn large_page_render_timings() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use std::time::Instant;
+
+        let mut app = App::new(
+            onetui_core::config::Config::parse(
+                "[connections.sample]\nkind='fake'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap(),
+            Some("sample"),
+        );
+        let request = app.request.take().unwrap();
+        app.view.resource = onetui_core::Resource::new("fake.rows", vec![]);
+        let raw = format!("{}\n\u{001b}", "🌊".repeat(512));
+        let started = Instant::now();
+        let page = Page {
+            columns: (0..4)
+                .map(|i| onetui_core::Column {
+                    name: format!("field{i}"),
+                    datatype: "text".into(),
+                })
+                .collect(),
+            rows: (0..100)
+                .map(|_| onetui_core::Row {
+                    cells: (0..4).map(|_| Some(display(&raw))).collect(),
+                    target: None,
+                })
+                .collect(),
+            ..Page::default()
+        };
+        let format_time = started.elapsed();
+        let bytes = page.bytes();
+        assert!(bytes <= onetui_core::PAGE_BYTES);
+        let started = Instant::now();
+        app.complete(&request, Ok(page));
+        let install_time = started.elapsed();
+        assert_eq!(app.view.page.rows.len(), 100);
+        let cached_cell = app.view.page.rows[0].cells[0].as_ref().unwrap().as_ptr();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let mut unchanged = Vec::new();
+        let mut input_draw = Vec::new();
+        app.act(Action::Refresh);
+        assert!(app.loading);
+        for _ in 0..100 {
+            let started = Instant::now();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            unchanged.push(started.elapsed());
+            let started = Instant::now();
+            app.key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            input_draw.push(started.elapsed());
+        }
+        assert_eq!(app.view.selected, 99);
+        assert_eq!(
+            app.view.page.rows[0].cells[0].as_ref().unwrap().as_ptr(),
+            cached_cell
+        );
+        app.act(Action::Cancel);
+        app.act(Action::Open);
+        assert!(app.detail);
+        let cached_detail = app.detail_text.as_ptr();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert_eq!(app.detail_text.as_ptr(), cached_detail);
+        unchanged.sort_unstable();
+        input_draw.sort_unstable();
+        eprintln!(
+            "120x40, 100x4 cells, {bytes} retained bytes: format={format_time:?}, install={install_time:?}; 100 samples median/max: unchanged={:?}/{:?}, key-to-TestBackend-draw={:?}/{:?}",
+            unchanged[50], unchanged[99], input_draw[50], input_draw[99]
+        );
+    }
+
+    #[test]
     fn empty_help_and_narrow_frames_render_without_panics() {
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(config, "[connections]").unwrap();

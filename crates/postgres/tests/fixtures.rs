@@ -24,7 +24,9 @@ async fn browse(
     continuation: Option<String>,
 ) -> anyhow::Result<onetui_core::Page> {
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-    reader
+    let resource_id = resource.id;
+    let started = std::time::Instant::now();
+    let result = reader
         .fetch_page(
             PageRequest {
                 resource,
@@ -32,7 +34,12 @@ async fn browse(
             },
             context,
         )
-        .await
+        .await;
+    eprintln!(
+        "postgres {resource_id} fetch/decode/format: {:?}",
+        started.elapsed()
+    );
+    result
 }
 
 #[tokio::test]
@@ -432,6 +439,7 @@ async fn production_row_cancel_discards_active_connection_and_allows_new_read() 
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("row request never reached server sleep");
+    let started = std::time::Instant::now();
     cancel.send(()).unwrap();
     let error = tokio::time::timeout(Duration::from_secs(3), task)
         .await
@@ -439,6 +447,7 @@ async fn production_row_cancel_discards_active_connection_and_allows_new_read() 
         .unwrap()
         .unwrap_err();
     assert!(error.to_string().contains("cancelled"));
+    eprintln!("postgres active-read cancellation: {:?}", started.elapsed());
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             if observer.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'onetui-browse'", &[]).await.unwrap().get::<_, i64>(0) == 0 { break; }

@@ -13,6 +13,13 @@ fn help_version_and_nonterminal_error_work_without_configuration() {
         assert!(text.contains("onetui"), "{text}");
         if arg == "--version" {
             assert_eq!(text.trim(), concat!("onetui ", env!("CARGO_PKG_VERSION")));
+        } else {
+            assert!(text.contains("Qdrant collections and points"), "{text}");
+            assert!(
+                text.contains("payloads and vectors loaded on demand"),
+                "{text}"
+            );
+            assert!(!text.contains("not implemented"), "{text}");
         }
     }
     let output = binary().output().unwrap();

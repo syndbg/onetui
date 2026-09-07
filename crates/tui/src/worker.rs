@@ -233,10 +233,12 @@ mod tests {
             worker.event().await,
             WorkerEvent::Status(ConnectionStatus::Connected)
         ));
+        let started = std::time::Instant::now();
         app.act(Action::Cancel);
         worker.cancel();
         let result = page(&mut worker).await;
         assert!(result.is_err());
+        eprintln!("pending-worker cancellation: {:?}", started.elapsed());
         let stale = worker.request.take().unwrap();
         app.act(Action::Refresh);
         app.complete(&stale, result);

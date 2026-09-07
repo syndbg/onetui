@@ -48,7 +48,7 @@ Development target: v0.1.0, stored as `0.1.0` in Cargo. It is not yet a publishe
 4. Click **Publish release**. The `release: published` workflow checks out the tagged revision, rejects tag/Cargo-version mismatches, reruns validation, and builds native archives for Linux x86_64 (`x86_64-unknown-linux-gnu`) and macOS arm64 (`aarch64-apple-darwin`).
 5. Wait for the Release workflow to succeed and verify the two `.tar.gz` assets and their `.sha256` files. Both builds must pass before assets are uploaded. A published release is visible while builds run; do not announce it until assets are complete.
 
-No workflow creates a release, tag, version-bump commit or crates.io publication. PR/main workflows have read-only repository permissions. Only the final release-upload job has `contents: write`; build jobs do not receive that permission. These definitions have not yet been exercised on GitHub.
+No workflow creates a release, tag, version-bump commit or crates.io publication. PR/main workflows have read-only repository permissions. Only the final release-upload job has `contents: write`; build jobs do not receive that permission. The Release workflow has not yet been exercised on GitHub.
 
 ### Local packaging and verification
 
@@ -65,3 +65,11 @@ Artifacts are initially unsigned/unnotarized. Linux binaries use the runner's GN
 If validation fails, fix it through review and use the corrected release version/tag; do not silently move a published tag. If only upload fails, inspect existing assets before rerunning the upload job: uploads deliberately do not overwrite published files. GitHub can partially upload a batch, so recovery may require removing incomplete assets through the Releases UI before retrying. Nothing uploads to an external telemetry or package service.
 
 References: [release workflow events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release), [workflow token permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions), [hosted runner platforms](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+
+### Validation status
+
+On September 7, 2026, [Main run 34154703652](https://github.com/syndbg/onetui/actions/runs/34154703652) passed at `83adaf5f434304ab67259e17e5db0098a20ed135` on macOS arm64 and Linux x86_64, including Linux Docker integration tests. Subsequent local help/test/documentation changes still need hosted CI after submission.
+
+Local macOS checks cover formatting, Clippy, 57 default tests, workflow lint and 22 Docker integration tests. The integration suites also passed with optimized test harnesses and the extracted release executable; cleanup removed all three fixture containers and their network. Tests cover narrow terminals, Unicode, oversized responses, TLS/authentication failures, deadlines and interruption, offline deterministic schema output and configuration validation. See [performance checks](docs/performance.md) for measured timing scope and allocation limitations.
+
+A native `aarch64-apple-darwin` archive containing the release binary, README and LICENSE was built in a temporary directory, checksum-verified, extracted and smoke-tested. Existing `dist/` artifacts were left untouched. This validates local packaging preparation, not GitHub asset publication. No PR-event or Release workflow run, uploaded assets, signing/notarization, older Linux compatibility or other target architectures were validated.
