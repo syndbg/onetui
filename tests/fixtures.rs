@@ -1,4 +1,4 @@
-//! Explicitly opted-in checks against fixtures/compose.yaml only; never production endpoints.
+//! Explicitly opted-in checks against hack/compose.yaml only; never production endpoints.
 use std::io::Write;
 use std::process::Command;
 use std::time::Duration;
@@ -87,7 +87,7 @@ fn check(alias: &str, pg: &str, key: &str) -> std::process::Output {
         .args([
             "--check",
             "--config",
-            "fixtures/connections.toml",
+            "hack/connections.toml",
             "--connection",
             alias,
         ])
@@ -124,7 +124,7 @@ fn fixture_ca() -> tempfile::NamedTempFile {
         .args([
             "compose",
             "-f",
-            "fixtures/compose.yaml",
+            "hack/compose.yaml",
             "exec",
             "-T",
             "postgres",

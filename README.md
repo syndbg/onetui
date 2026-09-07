@@ -4,7 +4,7 @@ Explore databases and streams from your terminal.
 
 BlackPearl is an independent project for navigating data with a familiar k9s-style terminal interface: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-**Status: first implementation slice. Headless PostgreSQL/Qdrant checks work; the TUI, browsing commands, schema dump and configurable keybindings are not implemented yet.**
+Headless PostgreSQL/Qdrant checks work; the TUI, browsing commands, schema dump and configurable keybindings are not implemented yet.
 
 The first release targets **PostgreSQL and Qdrant**, using **Rust, Ratatui, and Tokio**. DynamoDB, Kafka, NATS, and RabbitMQ are later targets.
 
@@ -16,12 +16,13 @@ The initial product is a read-only browser. Backend-specific querying follows th
 
 ## Run the first slice
 
-Use a recent stable Rust toolchain (validated with Rust 1.95 on macOS arm64). Build locally; there is no published package:
+Install Rust through rustup, Make, and Docker with Compose for the local databases. The repository pins Rust 1.95.0, rustfmt and Clippy; rustup installs the pinned toolchain on first use. Build locally; there is no published package:
 
 ```sh
-cargo build --locked
+make dev-up
 ./target/debug/bpearl --help
-./target/debug/bpearl --check --config ./fixtures/connections.toml --connection local_pg
+make check-local
+make dev-down
 ```
 
 `--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default connection-check deadline (1–300 seconds); Ctrl-C cancels a pending check. Running without `--check` currently reports that the TUI is not implemented.
@@ -49,26 +50,23 @@ The Qdrant check caps its protobuf metadata response at 1 MiB and reports an exp
 
 ## Disposable local fixtures and tests
 
-The fixtures use PostgreSQL 16.13 and Qdrant 1.18.2, bind only to loopback ports 15432/16334, and store data in temporary container memory. Credentials below are **fake, fixture-only values**. The Compose project is `bpearl-fixtures`; don't reuse it for valuable data.
+The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds only to loopback ports 15432/16334, and stores data in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `bpearl-fixtures`; don't reuse it for valuable data.
 
 ```sh
-docker compose -f fixtures/compose.yaml up -d --wait
-export BPEARL_POSTGRES_URL='postgresql://bpearl_reader:fixture-reader-only@127.0.0.1:15432/bpearl_fixture?sslmode=disable'
-export BPEARL_QDRANT_API_KEY='fixture-reader-only'
-cargo run --locked -- --check --config fixtures/connections.toml --connection local_pg
-cargo run --locked -- --check --config fixtures/connections.toml --connection local_qdrant
-cargo test --locked
-cargo test --locked --test fixtures -- --ignored --test-threads=1
-docker compose -f fixtures/compose.yaml down
+make help
+make verify              # build, formatting, Clippy, shell syntax, non-Docker tests
+make test-integration    # fresh databases -> readiness -> all fixture tests -> cleanup
+make workflow-lint       # optional locally; requires Go to run pinned actionlint
 ```
 
-Allow Qdrant to finish startup before running tests; if a check reports connection refused immediately after `up`, retry once it is ready. PostgreSQL has a readiness check. Fixture initialization generates a private CA and localhost-only server certificate valid for two days; recreate the disposable containers if these expire.
+No manual secret exports or startup retries are needed. Readiness requires a successful authenticated metadata check against each backend. `test-integration` refuses existing fixture containers instead of deleting a running development setup; use `make dev-down` first. Fixture initialization generates a private CA and localhost-only server certificate valid for two days; recreate the disposable containers if these expire.
 
-The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. These client experiments are not shipped browsing commands. `down` removes the fixture containers/network and their temporary data; it does not touch external databases.
+The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. These client experiments are not shipped browsing commands. `dev-down` removes the fixture containers/network and their temporary data; it does not touch external databases.
 
-```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --locked -- -D warnings
-```
+## CI and releases
 
-License and package/publication availability remain to be decided before distribution; Cargo publishing is disabled.
+Separate PR and main workflows run the same Make targets on Linux x86_64 and macOS arm64; Docker integration tests run on Linux. Main also builds the release profile. Dependencies are locked and workflow actions are pinned to commit SHAs. Workflow definitions are present; hosted results are not yet verified.
+
+Versions follow Semantic Versioning; the current development target is **v0.1.0**, represented as `0.1.0` in Cargo. Releases are published manually through the **GitHub Releases UI**, not by pushes or automatic version-bump bots. Publishing a release triggers validated binary packaging and attaches native archives plus SHA-256 files. See the [release checklist](docs/releases.md), including tag/version checks and current unsigned-platform limitations.
+
+License and package/publication availability remain to be decided before distribution; Cargo registry publishing is disabled.

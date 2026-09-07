@@ -11,9 +11,9 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
     volumes:
-      - ./postgres.sql:/docker-entrypoint-initdb.d/01-fixture.sql:ro
-      - ./postgres-tls.sh:/docker-entrypoint-initdb.d/02-tls.sh:ro
-      - ./server.ext:/bpearl-server.ext:ro
+      - ./fixtures/postgres.sql:/docker-entrypoint-initdb.d/01-fixture.sql:ro
+      - ./fixtures/postgres-tls.sh:/docker-entrypoint-initdb.d/02-tls.sh:ro
+      - ./fixtures/server.ext:/bpearl-server.ext:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bpearl_fixture_admin -d bpearl_fixture"]
       interval: 1s

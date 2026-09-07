@@ -1,5 +1,5 @@
 /target/
+/dist/
 /.code-review-graph/
 /config.local.toml
 /.env
-

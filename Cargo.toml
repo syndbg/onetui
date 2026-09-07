@@ -1,8 +1,8 @@
 [package]
 name = "bpearl"
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 description = "BlackPearl: a terminal browser for databases and streams"
 publish = false
 

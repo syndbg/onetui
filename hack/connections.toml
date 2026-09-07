@@ -1,4 +1,4 @@
-# Fake credentials below are for the loopback-only disposable fixtures.
+# Environment references are populated with fixture-only values by hack/dev.sh.
 [connections.local_pg]
 kind = "postgres"
 url_env = "BPEARL_POSTGRES_URL"
@@ -7,4 +7,3 @@ url_env = "BPEARL_POSTGRES_URL"
 kind = "qdrant"
 url = "http://127.0.0.1:16334"
 api_key_env = "BPEARL_QDRANT_API_KEY"
-
