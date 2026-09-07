@@ -11,7 +11,8 @@ The first release targets **PostgreSQL and Qdrant**, using **Rust, Ratatui, and 
 Start with:
 
 - [ADR convention](docs/adr/0000-record-architecture-decisions.md): how decisions are recorded, numbered and superseded..
-- [Provider architecture ADR](docs/adr/0001-register-providers-and-own-session-lifecycles.md): accepted target interfaces, connection lifetime, native heartbeats and rejected alternatives; implementation pending.
+- [Static provider dispatch ADR](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md): accepted enum-based interfaces and built-in catalog; no dynamic plugins or dispatch-related future boxing. Implementation pending.
+- [Provider lifecycle ADR](docs/adr/0001-register-providers-and-own-session-lifecycles.md): connection lifetime, native heartbeats and rejected alternatives; its boxed-dispatch choice is superseded by ADR-0002.
 
 Project name: **OneTUI**. Repository and intended executable: **`onetui`**.
 

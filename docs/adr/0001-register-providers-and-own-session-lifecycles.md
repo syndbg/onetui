@@ -1,9 +1,11 @@
 ---
-status: accepted
+status: superseded
 date: 2026-09-07
 ---
 
 # ADR-0001: Register providers and give executors ownership of session lifecycles
+
+The boxed-dispatch choice was later superseded. The provider responsibilities, datasource semantics, configuration and lifecycle policies still apply. The original decision and examples below remain as historical rationale, not the current dispatch prescription.
 
 ## Decision
 
