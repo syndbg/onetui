@@ -545,7 +545,34 @@ mod terminal {
 
     #[tokio::test]
     #[ignore = "requires disposable PostgreSQL/Qdrant fixtures and built CLI for connection switching"]
-    async fn actual_cli_terminal_worker_and_postgres_journey() {
+    async fn actual_cli_terminal_worker_and_datasource_switching() {
+        use futures_util::FutureExt;
+        use qdrant_client::qdrant::{
+            CreateCollectionBuilder, Distance, PointStruct, UpsertPointsBuilder,
+            VectorParamsBuilder,
+        };
+
+        // This client only seeds/cleans UI data; protocol assertions stay in the connector package.
+        let fixture = qdrant_client::Qdrant::from_url("http://127.0.0.1:16334")
+            .api_key("fixture-admin-only")
+            .skip_compatibility_check()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let collection = format!("onetui_tui_{}", std::process::id());
+        fixture
+            .create_collection(
+                CreateCollectionBuilder::new(&collection)
+                    .vectors_config(VectorParamsBuilder::new(3, Distance::Dot)),
+            )
+            .await
+            .unwrap();
+        // Preserve a failed UI assertion while still removing this test's collection.
+        let journey = std::panic::AssertUnwindSafe(async {
+        let points: Vec<_> = (1_u64..=105).map(|id| {
+            PointStruct::new(id, vec![1.0, 2.0, 3.0], [("title", format!("onetui-tui-point-{id}").into())])
+        }).collect();
+        fixture.upsert_points(UpsertPointsBuilder::new(&collection, points).wait(true)).await.unwrap();
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(
             config,
@@ -663,6 +690,52 @@ mod terminal {
         pty.wait(&["OneTUI|qd|read-only", "qdrant.collections", "Connected"]);
         assert!(!String::from_utf8_lossy(&pty.output).contains("9007199254740993"));
         assert!(!String::from_utf8_lossy(&pty.output).contains("Request cancelled"));
+        pty.open_filtered(&collection);
+        pty.wait(&["OneTUI|qd|", "qdrant.collection", "metadata", "points"]);
+        pty.send(b"\r");
+        pty.wait(&["qdrant.points", "100items", "numeric"]);
+        pty.send(b"n");
+        pty.wait(&["Page2|", "5items", "105"]);
+        pty.send(b"p");
+        pty.wait(&["Page1|", "100items"]);
+        pty.send(b"r");
+        pty.wait(&["Page1|", "100items"]);
+        pty.send(b"\r");
+        pty.wait(&["qdrant.point", "payload", "vectors"]);
+        pty.send(b"\r");
+        pty.wait(&["qdrant.payload", "onetui-tui-point-1"]);
+        pty.send(b"\r");
+        pty.wait(&["Field1/1", "onetui-tui-point-1"]);
+        pty.send(b":back\r");
+        pty.wait(&["qdrant.payload", "onetui-tui-point-1"]);
+        pty.send(b":back\r");
+        pty.wait(&["qdrant.point", "vectors"]);
+        pty.send(b"j\r");
+        pty.wait(&["qdrant.vectors", "dense", "(unnamed)"]);
+        pty.send(b"lll\r");
+        pty.wait(&["Field4/4", "[1.0,2.0,3.0]"]);
+        pty.send(b":back\r");
+        pty.wait(&["qdrant.vectors", "dense"]);
+        pty.send(b":back\r");
+        pty.wait(&["qdrant.point", "payload"]);
+        pty.send(b":back\r");
+        pty.wait(&["qdrant.points", "100items"]);
+        pty.send(b":back\r");
+        pty.wait(&["qdrant.collection", "metadata"]);
+        pty.send(b"j\r");
+        pty.wait(&["qdrant.metadata", "points_count(approximate)"]);
+        observer.wait_count(0).await;
+
+        pty.send(b"c");
+        pty.wait(&["connections", "pg"]);
+        pty.open_filtered("pg");
+        pty.wait(&["OneTUI|pg|", "postgres.schemas", "public"]);
+        pty.open_filtered("public");
+        pty.wait(&["postgres.relations", "keyed_rows"]);
+        pty.open_filtered("keyed_rows");
+        pty.wait(&["OneTUI|pg|", "postgres.rows", "9007199254740993"]);
+        observer.wait_count(1).await;
+        assert!(!String::from_utf8_lossy(&pty.output).contains("onetui-tui-point-1"));
         pty.output.clear();
         pty.master.as_mut().unwrap().write_all(b"q").unwrap();
         let until = Instant::now() + Duration::from_secs(3);
@@ -683,5 +756,15 @@ mod terminal {
         );
         assert!(output.contains("\x1b[?25h"), "cursor not restored");
         observer.wait_count(0).await;
+        }).catch_unwind().await;
+        let cleanup = fixture.delete_collection(&collection).await;
+        if let Err(panic) = journey {
+            assert!(
+                cleanup.is_ok(),
+                "UI journey failed and fixture collection cleanup failed"
+            );
+            std::panic::resume_unwind(panic);
+        }
+        cleanup.unwrap();
     }
 }

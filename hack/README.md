@@ -40,7 +40,13 @@ Keep these package-owned suites separate; do not parameterize a harness over bot
 
 Those tests change only disposable fixture tables/collections and their own reader sessions. Finish with `make dev-down`.
 
-Provider lifecycle checks need no extra configuration: PostgreSQL fixtures observe TLS session reuse, idle transaction state, cancellation and reconnection. Qdrant's default local protocol tests count connections/RPCs and verify channel cleanup. Its fixture suite tests production collection/point/detail reads and a Qdrant-only CLI/PTY journey. The TUI journey exercises the same provider worker used by `make run`, including resize/input interleaving and switching from a delayed PostgreSQL read to Qdrant. The harness supplies its child-only `ONETUI_LIVE_PTY_KEY` reference with the fake reader key; it is not a production setting.
+Provider lifecycle checks need no extra configuration: PostgreSQL fixtures observe TLS session reuse, idle transaction state, cancellation and reconnection. Qdrant's default local protocol tests count connections/RPCs and verify channel cleanup. Its fixture suite tests production collection/point/detail reads and a Qdrant-only CLI/PTY journey. The TUI journey runs both full browsing paths in one process, switches from a delayed PostgreSQL read to Qdrant, and returns to PostgreSQL after point detail inspection. It seeds 105 small points in its own `onetui_tui_<pid>` collection and deletes that collection afterward, even after a caught assertion panic. The harness supplies its child-only `ONETUI_LIVE_PTY_KEY` reference with the fake reader key; it is not a production setting.
+
+With fixtures already started by `make dev-up`, run just that coordination check:
+
+```sh
+cargo test -p onetui-tui --locked --test fixtures actual_cli_terminal_worker_and_datasource_switching -- --ignored --test-threads=1
+```
 
 The TUI suite switches PostgreSQL aliases during active reads and tests worker panic, forced abort and stalled shutdown with real connections. Its test child receives `ONETUI_LIFECYCLE_TEST_MODE` (`panic`, `read`, `shutdown`, `quit_read`) and `ONETUI_LIFECYCLE_TEST_DSN` from the harness only; these are not CLI settings. The child waits for the parent to inspect terminal flags and server PIDs before exiting. Default PostgreSQL tests use temporary FIFOs and child-only `SSL_CERT_FILE`/`SSL_CERT_DIR` values to verify certificate-load deadlines and SIGINT; the host trust store is unchanged.
 

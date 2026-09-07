@@ -1403,6 +1403,7 @@ dependencies = [
  "nix",
  "onetui-core",
  "onetui-postgres",
+ "qdrant-client",
  "ratatui",
  "serde_json",
  "tempfile",

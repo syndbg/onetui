@@ -6,7 +6,9 @@ Navigation state, request identity/cancellation, terminal lifecycle and renderin
 
 The worker owns a generic executor for one selected alias, with one active request and one replaceable pending request. Descriptors supply entry resources and navigation targets. Production code imports no connector or database SDK; PostgreSQL is a dev dependency for this package's live journey. Session/request identities reject stale pages, errors and transport status. Unix input uses Crossterm's polling backend; the PTY journey also checks repeated resize/input interleaving.
 
-Live tests also switch aliases during active queries, including PostgreSQL to Qdrant through the built CLI, and inject worker panic, uncooperative reads and stalled shutdown through a test-only provider wrapper. Exact terminal flags and PostgreSQL PIDs are checked before the fault-test child exits, so process termination cannot hide a leaked driver. PostgreSQL's native client is a dev-only observer dependency; no production backend branch or fault-injection option is added. The Qdrant package owns its full browsing/PTY journey; this package tests cross-alias coordination only.
+Live tests run both full browsing journeys in one CLI process: PostgreSQL rows/detail, an active-query switch to Qdrant paging/payload/vectors/metadata, then a successful return to PostgreSQL. The Qdrant client is a dev-only fixture seeder; it creates and removes the test's own collection, including cleanup after an assertion panic. Connector protocol/value assertions remain in their packages, without a parameterized backend harness.
+
+Separate tests inject worker panic, uncooperative reads and stalled shutdown through a test-only provider wrapper. Exact terminal flags and PostgreSQL PIDs are checked before the fault-test child exits, so process termination cannot hide a leaked driver. PostgreSQL's native client is a dev-only observer dependency; no production backend branch or fault-injection option is added.
 
 ```sh
 make build
