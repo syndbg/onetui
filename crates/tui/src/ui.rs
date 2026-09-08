@@ -283,11 +283,7 @@ fn command_bar(frame: &mut Frame, area: Rect, app: &App) {
             " Enter apply (empty clears) | Esc discard | max 256 UTF-8 bytes ",
         )
     } else if let Some(value) = &app.command {
-        (
-            " Command ",
-            format!(":{value}"),
-            " Enter execute | Esc cancel ",
-        )
+        ("", format!(":{value}"), "")
     } else {
         let sort = app.view.sort.map_or_else(
             || "source order".into(),
@@ -300,14 +296,14 @@ fn command_bar(frame: &mut Frame, area: Rect, app: &App) {
             },
         );
         (
-            " : commands | / filter page | T themes | ? help | q quit ",
+            " Page-local filter / sort ",
             format!(
                 "Page-local: {}/{} shown | filter: {:?} | lexical sort: {sort}",
                 app.view.visible.len(),
                 app.view.page.rows.len(),
                 display(&app.view.filter)
             ),
-            " Enter open | Esc back | j/k move | h/l fields | s sort | n/p pages | r refresh | c connections ",
+            " / edit filter | s cycle sort ",
         )
     };
     let style = Style::new().fg(color(p.key_hint)).bg(color(p.surface));
@@ -339,6 +335,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Block::new().style(Style::new().fg(color(p.text)).bg(color(p.background))),
         area,
     );
+    let show_command = app.command.is_some()
+        || app.filter_input.is_some()
+        || app.theme_menu.is_some()
+        || !app.view.filter.is_empty()
+        || app.view.sort.is_some();
     let [header, info, command, body, status] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(if area.height >= 20 && area.width >= 60 {
@@ -346,7 +347,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
         } else {
             1
         }),
-        Constraint::Length(if area.height >= 12 { 3 } else { 1 }),
+        Constraint::Length(if !show_command {
+            0
+        } else if area.height >= 12 {
+            3
+        } else {
+            1
+        }),
         Constraint::Min(1),
         Constraint::Length(if area.height >= 12 { 2 } else { 1 }),
     ])
@@ -380,7 +387,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         version,
     );
     context(frame, info, app);
-    command_bar(frame, command, app);
+    if show_command {
+        command_bar(frame, command, app);
+    }
     if app.theme_menu.is_some() {
         let rows = onetui_theme::Theme::ALL.iter().map(|theme| {
             let name = serde_json::to_value(theme).unwrap();
@@ -580,6 +589,10 @@ mod tests {
                 .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
                 .collect::<Vec<_>>()
         };
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = lines(&terminal);
+        assert!(text[9].contains("connections [2 shown / 2 loaded]"));
+        assert!(!text.join("").contains("Page-local:"));
         app.act(Action::Filter);
         app.filter_input = Some("4b".into());
         terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -603,6 +616,28 @@ mod tests {
         assert!(lines(&terminal)[10].contains(":refresh"));
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.view.filter, "4b");
+
+        app.act(Action::Filter);
+        app.filter_input = Some(String::new());
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
+        app.act(Action::Sort);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(lines(&terminal)[9].contains("Page-local filter / sort"));
+        app.act(Action::Sort);
+        app.act(Action::Sort);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
+        app.key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = lines(&terminal);
+        assert_eq!(text[9], format!("╭{}╮", "─".repeat(118)));
+        assert_eq!(text[10], format!("│:{}│", " ".repeat(117)));
+        assert_eq!(text[11], format!("╰{}╯", "─".repeat(118)));
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
 
         app.act(Action::Filter);
         app.filter_input = Some(format!("{}\u{001b}END", "🌊".repeat(50)));
@@ -721,12 +756,12 @@ mod tests {
             "1 shown / 1 loaded",
             "m      columns",
             "n      next",
-            ": commands",
             "София\\u{1b}",
         ] {
             assert!(text.contains(expected), "missing {expected}:\n{text}");
         }
         assert!(!text.contains("p      previous"));
+        assert!(!text.contains("Page-local:"));
         assert!(!text.contains("DO_NOT_RENDER"));
         assert!(!text.contains('\u{001b}'));
         let selected = terminal
