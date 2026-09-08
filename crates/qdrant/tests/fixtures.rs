@@ -15,6 +15,76 @@ use std::time::Duration;
 
 const QDRANT: &str = "http://127.0.0.1:16334";
 
+#[tokio::test]
+#[ignore = "requires make dev-seed in the local Qdrant fixture"]
+async fn demo_data_browses_all_points_and_vector_shapes() {
+    let mut executor = browser();
+    for (name, count) in [
+        ("demo_products", 1500),
+        ("demo_documents", 1200),
+        ("demo_vectors", 350),
+        ("demo_payload_cases", 12),
+        ("demo_empty", 0),
+    ] {
+        let resource = Resource::new("qdrant.points", vec![name.into()]);
+        let mut token = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let page = fetch(&executor, resource.clone(), token).await.unwrap();
+            assert!(page.rows.len() <= 100);
+            for row in page.rows {
+                assert!(seen.insert(row.cells[0].clone()), "duplicate in {name}");
+            }
+            if !page.next {
+                break;
+            }
+            token = Some(page.continuation.expect("next page needs a token"));
+        }
+        assert_eq!(seen.len(), count, "{name}");
+    }
+    let client = Qdrant::from_url(QDRANT)
+        .api_key("fixture-reader-only")
+        .skip_compatibility_check()
+        .build()
+        .unwrap();
+    let products = client
+        .get_points(GetPointsBuilder::new("demo_products", [1_u64.into()]).with_payload(true))
+        .await
+        .unwrap();
+    assert_eq!(products.result[0].payload.len(), 22);
+    let vectors = client
+        .get_points(GetPointsBuilder::new("demo_vectors", [1_u64.into()]).with_vectors(true))
+        .await
+        .unwrap();
+    let vectors = vectors.result[0].vectors.as_ref().unwrap();
+    assert!(
+        matches!(vectors.get_vector_by_name("dense"), Some(vector_output::Vector::Dense(v)) if v.data.len() == 8)
+    );
+    assert!(
+        matches!(vectors.get_vector_by_name("sparse"), Some(vector_output::Vector::Sparse(v)) if v.indices.len() == 2)
+    );
+    assert!(
+        matches!(vectors.get_vector_by_name("multi"), Some(vector_output::Vector::MultiDense(v)) if v.vectors.len() == 3)
+    );
+    for id in ["1", "9", "10", "12"] {
+        let payload = fetch(
+            &executor,
+            Resource::new(
+                "qdrant.payload",
+                vec!["demo_payload_cases".into(), id.into()],
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!payload.rows.is_empty());
+    }
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+}
+
 #[cfg(unix)]
 #[path = "support/terminal.rs"]
 mod terminal;

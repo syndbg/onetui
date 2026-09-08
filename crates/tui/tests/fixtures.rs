@@ -646,6 +646,11 @@ mod terminal {
         pty.open_filtered("browse_slow");
         pty.wait(&["postgres.rows", "Loading"]);
         let cancelled_pid = observer.sleeping_pid().await;
+        pty.send(b"T");
+        pty.wait(&["Themepreview", "catppuccin", "monokai", "flexoki"]);
+        pty.send(b"j\r");
+        pty.wait(&["postgres.rows", "Loading"]);
+        assert_eq!(observer.sleeping_pid().await, cancelled_pid);
         let started = Instant::now();
         pty.send(b"\x03");
         pty.wait(&["Requestcancelled"]);

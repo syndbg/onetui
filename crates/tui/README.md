@@ -8,7 +8,7 @@ The top bar shows OneTUI, the selected alias, read-only mode and version. At 60 
 
 The table has rounded borders, alternating dark rows, a contrasting selected row and arrows for page-local sort direction. NULL cells are muted but retain their literal label. Loading, errors and ready states use palette-specific status colors with text labels; a connected transport does not mean live data refresh. Paging, filter/sort state and command input remain in the footer. The context panel never reads or displays connection strings, URLs or secret values.
 
-Run `make run` from the workspace root with fixtures already running. `?` opens action descriptions. Top-level `theme` selects one of ten built-in palettes, defaulting to Catppuccin; see [names, variants and configuration](../theme/README.md). The `onetui-theme` crate owns RGB roles; this renderer converts them to Ratatui colors. Every screen uses the same palette, with no per-theme renderer or provider branch. Restart to apply a configuration change; navigation and request lifecycles are unchanged.
+Run `make run` from the workspace root with fixtures already running. `?` opens action descriptions. `T` or `:themes` opens all ten palettes: `j`/`k` or arrows preview, Enter keeps for this session, Esc or Ctrl-C restores the previous theme. The menu preserves navigation and pending reads and does not write configuration. Top-level `theme` sets the startup palette, defaulting to Catppuccin; restart to read a configuration change. See [names, variants and configuration](../theme/README.md). The `onetui-theme` crate owns RGB roles; this renderer converts them to Ratatui colors. Every screen uses the same palette, with no per-theme renderer or provider branch.
 
 ## Validation
 

@@ -10,6 +10,42 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 const PG: &str = "host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable";
 const PG_ADMIN: &str = "host=127.0.0.1 port=15432 user=onetui_fixture_admin password=fixture-admin-only dbname=onetui_fixture sslmode=disable";
 
+#[tokio::test]
+#[ignore = "requires make dev-seed in the local PostgreSQL fixture"]
+async fn demo_data_browses_wide_typed_and_paged_rows() {
+    let mut reader = provider();
+    for (table, count, columns) in [
+        ("customers", 2000, 16),
+        ("events", 5000, 10),
+        ("type_samples", 250, 40),
+        ("wide_rows", 1500, 65),
+        ("empty_rows", 0, 2),
+    ] {
+        let resource =
+            onetui_core::Resource::new("postgres.rows", vec!["demo".into(), table.into()]);
+        let mut token = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let page = browse(&reader, resource.clone(), token).await.unwrap();
+            assert_eq!(page.columns.len(), columns, "{table}");
+            assert!(page.rows.len() <= 100);
+            for row in page.rows {
+                assert_eq!(row.cells.len(), columns);
+                assert!(seen.insert(row.cells[0].clone()), "duplicate in {table}");
+            }
+            if !page.next {
+                break;
+            }
+            token = Some(page.continuation.expect("next page needs a token"));
+        }
+        assert_eq!(seen.len(), count, "{table}");
+    }
+    reader
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+}
+
 fn provider() -> onetui_postgres::PostgresExecutor {
     onetui_postgres::PostgresProvider
         .configure(&toml::from_str("url_env='DSN'").unwrap(), &|_| {

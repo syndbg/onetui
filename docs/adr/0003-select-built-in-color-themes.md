@@ -74,7 +74,9 @@ Accepted values are exactly `catppuccin`, `gruvbox`, `solarized`, `nord`, `dracu
 
 Use the existing file selection rules: `--config PATH`, otherwise `$XDG_CONFIG_HOME/onetui/config.toml`, otherwise `$HOME/.config/onetui/config.toml`. There is no additional theme file or merge layer. For a home-directory file, use `onetui --config "$HOME/onetui.toml" --connection local_pg` with the theme and connection defined in that file.
 
-`onetui schema` must describe the setting, accepted names, default and example using the theme crate's metadata. It remains an offline description of supported configuration, not a dump of the user's selected theme or connection secrets. Read the theme once at startup; there is no CLI override, live reload or theme-switch key in this decision.
+`onetui schema` describes the setting, accepted names, default and example using the theme crate's metadata. It remains an offline description of supported configuration, not a dump of the user's selected theme or connection secrets. Read the configured default once at startup; there is no CLI override or file watching.
+
+The TUI owns a session-only picker opened with `T` or `:themes`. It lists `Theme::ALL`; arrows or `j`/`k` preview through the same renderer. Enter keeps the selection; Esc or Ctrl-C restores the palette active before opening the picker. Browsing state and pending requests stay intact. The picker never writes configuration: changing a preview must not overwrite a user's file, comments or startup preference. Persistent selection remains the top-level `theme` setting.
 
 ## Alternatives and consequences
 

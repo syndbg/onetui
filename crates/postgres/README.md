@@ -21,6 +21,8 @@ For live fixtures, use `make dev-up`, then:
 cargo test -p onetui-postgres --locked --test fixtures -- --ignored --test-threads=1
 ```
 
+Setup also seeds the separate `demo` schema with 8,750 rows, a 65-column table and representative PostgreSQL types. The package-owned `demo_data_browses_wide_typed_and_paged_rows` test reads every demo page and checks counts, widths and unique IDs. See [dataset inventory and additive seeding](../../hack/README.md#demo-data).
+
 Finish with `make dev-down` only when ready to discard the disposable data. CLI tests use the built workspace binary; test-only `ONETUI_TEST_BIN` optionally selects another prebuilt binary path. Use an absolute path for custom target directories.
 
 See [configuration](../../README.md#configuration) for settings, defaults, accepted values and examples, and [PostgreSQL usage](../../docs/postgres.md) for navigation and fixed limits.

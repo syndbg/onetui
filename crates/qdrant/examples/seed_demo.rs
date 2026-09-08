@@ -97,7 +97,7 @@ impl Dataset {
             "title": format!("Synthetic item {n}"), "sku": format!("DEMO-{n:06}"),
             "category": (["books", "electronics", "home", "outdoors"][(n % 4) as usize]),
             "price": (n % 10000) as f64 / 100.0, "stock": n % 250,
-            "active": n % 3 != 0, "rating": (n % 50) as f64 / 10.0,
+            "active": !n.is_multiple_of(3), "rating": (n % 50) as f64 / 10.0,
             "tags": ["demo", "synthetic", "browse"], "scores": [1, 2, 3],
             "available": [true, false], "optional": null, "empty_text": "",
             "empty_list": [], "empty_object": {}, "uuid": uuid,

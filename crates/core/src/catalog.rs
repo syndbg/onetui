@@ -63,22 +63,22 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Up,
         keys: &["k", "Up"],
-        description: "Select the previous item; scroll up in detail",
+        description: "Select the previous item; scroll up in detail; preview the previous theme",
     },
     ActionDescriptor {
         id: Action::Down,
         keys: &["j", "Down"],
-        description: "Select the next item; scroll down in detail",
+        description: "Select the next item; scroll down in detail; preview the next theme",
     },
     ActionDescriptor {
         id: Action::Open,
         keys: &["Enter"],
-        description: "Open the selected resource or row detail",
+        description: "Open the selected resource or row detail; keep the previewed theme for this session",
     },
     ActionDescriptor {
         id: Action::Back,
         keys: &["Esc"],
-        description: "Return to the retained parent view; close help/detail first",
+        description: "Return to the retained parent view; close help/detail first; restore theme when its menu is open",
     },
     ActionDescriptor {
         id: Action::Connections,
@@ -113,7 +113,7 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Cancel,
         keys: &["Ctrl-c"],
-        description: "Cancel active work; quit when idle",
+        description: "Restore theme when its menu is open; otherwise cancel active work or quit when idle",
     },
 ];
 

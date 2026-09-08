@@ -18,11 +18,11 @@ pub fn dump<P: Provider>(catalog: &[P], datasource: Option<&str>) -> Result<Stri
         "purpose": "Offline implemented-capability catalog, not a live database schema or permission guarantee",
         "datasources": datasources,
         "shell": {"resources": [&CONNECTIONS], "actions": ACTIONS, "keybindings_configurable": false,
-            "action_context": "Help shows currently available actions. Navigation keys do not apply inside the ':' command prompt."},
+            "action_context": "Help shows currently available actions. Navigation keys do not apply inside the ':' command prompt. T or :themes opens the theme menu: j/k or arrows preview, Enter keeps for this session, Esc or Ctrl-C restores the previous theme without cancelling requests."},
         "configuration": {
             "format": "TOML; top-level theme string and connections table. Every entry is validated, including unselected aliases; unknown themes/kinds/fields, invalid reference names, relative PostgreSQL CA paths and invalid Qdrant URLs are rejected.",
             "theme": {"type": "string", "purpose": "Color palette for every TUI screen", "enum": Theme::ALL, "default": Theme::default(), "required": false,
-                "behavior": "Case-sensitive built-in name; omission uses the default. Empty/unknown names and non-string values fail, including with --check. No environment expansion, separate theme file, CLI override or live reload; restart to apply."},
+                "behavior": "Case-sensitive startup default; omission uses the default. Empty/unknown names and non-string values fail, including with --check. T or :themes previews all built-in themes in-app; Enter keeps the selection for this session, Esc restores it. The menu never writes configuration. No environment expansion, separate theme file, CLI override or file watching; restart to read configuration changes."},
             "location_order": ["--config <path> (relative paths use the working directory)", "$XDG_CONFIG_HOME/onetui/config.toml (absolute XDG_CONFIG_HOME only)", "$HOME/.config/onetui/config.toml (absolute HOME only)"],
             "behavior": "Read exactly one file; no merge, creation, project search or fallback on missing file. ~/onetui.toml requires --config.",
             "aliases": "Nonempty ASCII letters, digits, underscores or hyphens; no built-in aliases/endpoints",

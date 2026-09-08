@@ -4,7 +4,9 @@ Built-in theme selection and semantic RGB palettes. Serde is the only runtime de
 
 ## Usage
 
-Set `theme = "monokai"` before any table in the existing OneTUI TOML file. Omission selects `catppuccin`. Names below are exact and case-sensitive; empty/unknown names and non-string values are errors, including with `--check`. No environment expansion, CLI override, separate theme file or live reload. Restart to apply changes. The earlier proposed `dark` and `light` names are not accepted.
+Set `theme = "monokai"` before any table in the existing OneTUI TOML file. Omission selects `catppuccin`. Names below are exact and case-sensitive; empty/unknown names and non-string values are errors, including with `--check`. No environment expansion, CLI override, separate theme file or file watching. Restart to read configuration changes. The earlier proposed `dark` and `light` names are not accepted.
+
+Inside the app, `T` or `:themes` lists all ten themes. `j`/`k` or arrows preview; Enter keeps the choice for the session; Esc or Ctrl-C restores the previous theme. This menu never writes configuration or cancels pending reads. Selection and input behavior belong to TUI, not this palette crate.
 
 Run `onetui schema` for the installed binary's accepted names, default and example. See [configuration](../../README.md#configuration) for file selection and connection setup.
 

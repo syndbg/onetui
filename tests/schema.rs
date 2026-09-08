@@ -46,6 +46,19 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
     assert_eq!(schema["configuration"]["theme"]["default"], "catppuccin");
     assert_eq!(schema["configuration"]["theme"]["type"], "string");
     assert_eq!(schema["configuration"]["theme"]["required"], false);
+    let themes = schema["shell"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["id"] == "themes")
+        .expect("theme menu action");
+    assert_eq!(themes["keys"], serde_json::json!(["T"]));
+    assert!(
+        schema["configuration"]["theme"]["behavior"]
+            .as_str()
+            .unwrap()
+            .contains("never writes configuration")
+    );
     assert!(
         !schema["shell"]["action_context"]
             .as_str()

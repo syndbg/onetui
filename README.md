@@ -138,7 +138,9 @@ The commands print JSON offline without reading your config, resolving secrets o
 
 Top-level settings are the optional `theme` string and required `[connections]` table, containing named `[connections.<alias>]` entries. Use an empty `[connections]` table when no aliases are configured. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
 
-`theme` colors every TUI screen. Accepted names are exactly `catppuccin`, `gruvbox`, `solarized`, `nord`, `dracula`, `tokyo-night`, `one-dark`, `rose-pine`, `monokai` and `flexoki`. Omission selects `catppuccin`; each name selects one fixed dark palette. Names are case-sensitive. Empty/unknown names and non-string values fail validation, including with `--check`, without echoing the supplied value. Theme names are not environment-expanded. There is no separate theme file, CLI override or live reload; restart to apply changes. Existing files without `theme` keep the original colors. See [palette variants and sources](crates/theme/README.md#palettes).
+`theme` colors every TUI screen. Accepted names are exactly `catppuccin`, `gruvbox`, `solarized`, `nord`, `dracula`, `tokyo-night`, `one-dark`, `rose-pine`, `monokai` and `flexoki`. Omission selects `catppuccin`; each name selects one fixed dark palette. Names are case-sensitive. Empty/unknown names and non-string values fail validation, including with `--check`, without echoing the supplied value. Theme names are not environment-expanded. There is no separate theme file, CLI override or file watching; restart to read configuration changes. Existing files without `theme` keep the original colors. See [palette variants and sources](crates/theme/README.md#palettes).
+
+Press `T` or type `:themes` and Enter to list all themes inside the app. `j`/`k` or arrows preview immediately; Enter keeps the choice for this session. Esc or Ctrl-C restores the previous theme. The menu leaves browsing and pending requests alone and never writes your config. Set top-level `theme` in your TOML file to change the startup default. Run `onetui schema` for supported settings and actions.
 
 | Field | Applies to | Required / default |
 | --- | --- | --- |
@@ -188,12 +190,17 @@ The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds 
 
 ```sh
 make help
+make dev-up              # start local fixtures and seed browsing demos
+make dev-seed            # add demos to already-running fixtures; no reset
+make run                 # browse PostgreSQL; c switches to local_qdrant
 make verify              # build, formatting, Clippy, shell syntax, non-Docker tests
 make test-integration    # fresh databases -> readiness -> all fixture tests -> cleanup
 make workflow-lint       # workflow gate; requires Go to run pinned actionlint
 ```
 
 No manual secret exports or startup retries are needed. Readiness requires a successful authenticated metadata check against each backend. `test-integration` refuses existing fixture containers instead of deleting a running development setup; use `make dev-down` first. Fixture initialization generates a private CA and localhost-only server certificate valid for two days; recreate the disposable containers if these expire.
+
+The demo includes 8,750 PostgreSQL rows across typed, wide and relational tables, plus 3,062 Qdrant points covering dense, named, sparse and multivectors. Open PostgreSQL's `demo` schema or a Qdrant `demo_*` collection. See the [dataset inventory](hack/README.md#demo-data) for counts and types. The small `public.sample_rows`/`sample_view` fixtures remain separate: SQL NULL, empty text, literal `"NULL"`, Unicode and escaped controls test display correctness, not realistic browsing volume.
 
 The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. Historical fixed-query experiments remain separate from the production PostgreSQL row/metadata tests. Connector-specific tests live under their own packages; the TUI package owns its keyboard/request-state PostgreSQL journey. Production coverage includes typed composite keysets, server-side size guards, cancellation and connection cleanup. `dev-down` removes the fixture containers/network and their temporary data; it does not touch external databases.
 

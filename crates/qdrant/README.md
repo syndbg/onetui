@@ -21,6 +21,8 @@ For live fixtures, use `make dev-up`, then:
 cargo test -p onetui-qdrant --locked --test fixtures -- --ignored --test-threads=1
 ```
 
+`make dev-up` / `make dev-seed` run this package's `seed_demo` example against the fixed local fixture, adding five `demo_*` collections with 3,062 points. It uses the existing SDK and fake admin key, not a production write operation. Existing collections are preserved; count mismatches fail. The package-owned `demo_data_browses_all_points_and_vector_shapes` test reads every demo page and checks payload/vector shapes. See [inventory and repeat-run behavior](../../hack/README.md#demo-data).
+
 Finish with `make dev-down` only when ready to discard the disposable data. CLI tests use the built workspace binary; test-only `ONETUI_TEST_BIN` optionally selects another prebuilt binary path. Use an absolute path for custom target directories. Qdrant TLS tests also need OpenSSL to generate an unrelated test CA.
 
 The production fixture test also drives the built CLI through a Qdrant-only PTY helper, including paging, cached detail and quit. Its child receives the existing `ONETUI_QDRANT_API_KEY` reference with a fake fixture value. PostgreSQL tests are not imported or parameterized here.

@@ -3,22 +3,50 @@
 Run these commands from the repository root. Requirements: rustup, Make, Bash, Docker Engine/Desktop and Docker Compose with `up --wait` support. OpenSSL is also required for the Qdrant TLS test's unrelated test CA. macOS and Linux are the initial targets. No database installation, manual secret exports or RTK installation is required.
 
 ```sh
-make dev-up        # builds onetui, starts databases, waits for authenticated reads
+make dev-up        # builds, starts databases, waits for reads, seeds demos
+make dev-seed      # adds demos to running fixtures without resetting them
 make check-local   # runs both headless checks with fake reader credentials
 make run           # PostgreSQL row/metadata TUI; uses existing fixtures, q quits
 make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
 
-`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens PostgreSQL initially. Enter opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Press `c` and select `local_qdrant` to browse Qdrant with the same keys. Its fresh fixture is empty; Qdrant-owned tests create and remove their own collections. See [PostgreSQL usage](../docs/postgres.md) and [Qdrant usage](../docs/qdrant.md).
+`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens PostgreSQL initially. Enter opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables. Press `c` and select `local_qdrant`, then a `demo_*` collection. See [PostgreSQL usage](../docs/postgres.md) and [Qdrant usage](../docs/qdrant.md).
 
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 
 A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` continues to check the two normal connection aliases.
 
-The scripts set fixture-only credentials in their own process and do not modify your shell/config. `connections.toml` contains the theme, connection aliases, endpoint and environment references. To preview another palette with `make run`, change its top-level `theme` to `"monokai"` or another name from `onetui schema`, then restart; no container reset is needed. A bare `onetui --check --config hack/connections.toml` still needs `--connection` and the referenced environment variables; use `make check-local` to supply them automatically.
+The scripts set fixture-only credentials in their own process and do not modify your shell/config. `connections.toml` contains the theme, connection aliases, endpoint and environment references. Press `T` or use `:themes` to preview all palettes with `j`/`k` or arrows; Enter keeps for this session, Esc or Ctrl-C restores the previous theme. To persist a startup preference, edit top-level `theme` in that file; the menu never writes it. `onetui schema` lists known settings and actions. A bare `onetui --check --config hack/connections.toml` still needs `--connection` and the referenced environment variables; use `make check-local` to supply them automatically.
 
 If you ran the previous `bpearl-fixtures` project, it remains untouched by this rename and may still occupy the same ports. When ready to discard its temporary data, run `docker compose --project-name bpearl-fixtures -f hack/compose.yaml down`, then `make dev-up` for the new `onetui-fixtures` project. Configuration now defaults to `~/.config/onetui/config.toml`; old configuration is not moved automatically. Environment references are explicit TOML values, so existing custom variable names still work when explicitly configured.
+
+## Demo data
+
+`make dev-up` seeds these datasets after readiness; `make dev-seed` adds them to an already-running setup. The reserved demo names are separate from the small `public` edge-case fixtures and collections owned by tests.
+
+| PostgreSQL relation | Rows | Columns | Coverage |
+| --- | ---: | ---: | --- |
+| `demo.customers` | 2,000 | 16 | UUIDs, nullable email, Unicode, money-like decimals, dates, arrays, nested JSONB, long notes |
+| `demo.events` | 5,000 | 10 | Customer foreign keys, timestamps, categories, duration, IP addresses, JSONB |
+| `demo.type_samples` | 250 | 40 | Integers beyond JavaScript precision, numeric, NaN/infinity, NULL/empty text, binary, dates/times/intervals, JSON, arrays, network types, bits, ranges, text search, geometry, money, enum/domain |
+| `demo.wide_rows` | 1,500 | 65 | ID plus 64 text columns, nullable cells, horizontal navigation |
+| `demo.empty_rows` | 0 | 2 | Empty results |
+| `demo.active_customers` | Derived | 16 | View over active customers |
+
+| Qdrant collection | Points | Coverage |
+| --- | ---: | --- |
+| `demo_products` | 1,500 | Numeric IDs, unnamed 8D dense vectors, 22 payload fields |
+| `demo_documents` | 1,200 | UUID IDs, named 8D title and 16D content vectors |
+| `demo_vectors` | 350 | Named 8D dense, sparse and 3×8 multivectors |
+| `demo_payload_cases` | 12 | Empty/missing/null values, arrays, nested objects, large integers, Unicode, escaped controls, long text |
+| `demo_empty` | 0 | Empty collection |
+
+Product/document/vector payloads mix strings, numbers, booleans, nulls, arrays, nested objects, geo coordinates and date/UUID strings. These cover common data shapes, not every database extension or possible vector layout. Point lists intentionally show IDs; open a point, then payload or vectors for lazy detail reads.
+
+The four-row `public.sample_rows`/`sample_view` fixtures test display distinctions: SQL NULL is absent data, empty text is present but blank, and the string `"NULL"` is ordinary text. Unicode must survive; newline/terminal controls are escaped so database content cannot control the terminal.
+
+PostgreSQL seeds run in one transaction and insert only missing primary keys; existing rows are unchanged. Qdrant writes new collections in batches of at most 100 points. Repeating setup preserves an existing demo collection when its exact count matches; a mismatch fails without modifying it. This also catches an interrupted partial seed. Inspect such a collection before explicitly removing it or resetting disposable fixtures. The seeder accepts no external endpoint or credentials: it uses only the fixed local fixture and fake admin key. Source: [PostgreSQL SQL](fixtures/postgres-demo.sql), [Qdrant example](../crates/qdrant/examples/seed_demo.rs).
 
 ## Validation
 
