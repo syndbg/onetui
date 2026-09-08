@@ -268,6 +268,70 @@ where
     }
 }
 
+fn command_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let p = app.config.theme.palette();
+    let (title, value, hint) = if app.theme_menu.is_some() {
+        (
+            " Themes ",
+            "j/k or arrows: preview | Enter: keep | Esc: revert".into(),
+            " Session only; config file is unchanged ",
+        )
+    } else if let Some(value) = &app.filter_input {
+        (
+            " Filter displayed page ",
+            format!("/{}", display(value)),
+            " Enter apply (empty clears) | Esc discard | max 256 UTF-8 bytes ",
+        )
+    } else if let Some(value) = &app.command {
+        (
+            " Command ",
+            format!(":{value}"),
+            " Enter execute | Esc cancel ",
+        )
+    } else {
+        let sort = app.view.sort.map_or_else(
+            || "source order".into(),
+            |(column, descending)| {
+                format!(
+                    "{} {}",
+                    app.column_name(column),
+                    if descending { "desc" } else { "asc" }
+                )
+            },
+        );
+        (
+            " : commands | / filter page | T themes | ? help | q quit ",
+            format!(
+                "Page-local: {}/{} shown | filter: {:?} | lexical sort: {sort}",
+                app.view.visible.len(),
+                app.view.page.rows.len(),
+                display(&app.view.filter)
+            ),
+            " Enter open | Esc back | j/k move | h/l fields | s sort | n/p pages | r refresh | c connections ",
+        )
+    };
+    let style = Style::new().fg(color(p.key_hint)).bg(color(p.surface));
+    let inner = if area.height >= 3 {
+        let block = panel(p, title)
+            .title_bottom(Line::styled(hint, style))
+            .style(style);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        inner
+    } else {
+        area
+    };
+    let line = Line::raw(value);
+    // Leave a cell for a wide glyph clipped at the left edge; keep the edited tail visible.
+    let scroll = if app.filter_input.is_some() || app.command.is_some() {
+        line.width()
+            .saturating_sub(usize::from(inner.width.saturating_sub(1))) as u16
+    } else {
+        0
+    };
+    frame.render_widget(Paragraph::new(line).style(style).scroll((0, scroll)), inner);
+}
+
 pub fn draw(frame: &mut Frame, app: &App) {
     let p = app.config.theme.palette();
     let area = frame.area();
@@ -275,15 +339,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Block::new().style(Style::new().fg(color(p.text)).bg(color(p.background))),
         area,
     );
-    let [header, info, body, status, command] = Layout::vertical([
+    let [header, info, command, body, status] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(if area.height >= 20 && area.width >= 60 {
             8
         } else {
             1
         }),
-        Constraint::Min(1),
         Constraint::Length(if area.height >= 12 { 3 } else { 1 }),
+        Constraint::Min(1),
         Constraint::Length(if area.height >= 12 { 2 } else { 1 }),
     ])
     .areas(area);
@@ -316,6 +380,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         version,
     );
     context(frame, info, app);
+    command_bar(frame, command, app);
     if app.theme_menu.is_some() {
         let rows = onetui_theme::Theme::ALL.iter().map(|theme| {
             let name = serde_json::to_value(theme).unwrap();
@@ -464,16 +529,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
             &app.view.page.notice
         }
     };
-    let local_sort = app.view.sort.map_or_else(
-        || "source order".into(),
-        |(column, descending)| {
-            format!(
-                "{} {}",
-                app.column_name(column),
-                if descending { "desc" } else { "asc" }
-            )
-        },
-    );
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -492,29 +547,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 app.view.page.rows.len(),
                 app.view.page.next,
             )),
-            Line::raw(format!(
-                "Page-local: {}/{} shown | filter: {:?} | lexical sort: {local_sort}",
-                app.view.visible.len(),
-                app.view.page.rows.len(),
-                display(&app.view.filter)
-            )),
         ])
         .style(Style::new().fg(color(p.muted))),
         status,
-    );
-    let prompt = if app.theme_menu.is_some() {
-        "j/k or arrows: preview | Enter: keep | Esc: revert\nSession only; config file is unchanged"
-            .into()
-    } else {
-        app.filter_input.as_ref().map(|value| format!("Filter displayed page: /{}\nEnter apply (empty clears) | Esc discard | max 256 UTF-8 bytes", display(value)))
-        .or_else(|| app.command.as_ref().map(|value| format!(":{value}\nEnter execute | Esc cancel")))
-        .unwrap_or_else(|| ": commands | T themes | ? all actions | q quit\nEnter open/detail | Esc back | j/k move | h/l fields | / filter page | s sort | n/p pages/chunks | r refresh | c connections".into())
-    };
-    frame.render_widget(
-        Paragraph::new(prompt)
-            .style(Style::new().fg(color(p.key_hint)).bg(color(p.surface)))
-            .wrap(Wrap { trim: false }),
-        command,
     );
 }
 
@@ -523,6 +558,73 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use std::io::Write;
+
+    #[test]
+    fn command_bar_stays_above_table_and_scrolls_long_input() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new(
+            onetui_core::config::Config::parse(
+                "[connections.a4b]\nkind='fake'\n[connections.other]\nkind='fake'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap(),
+            None,
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        let lines = |terminal: &Terminal<TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .chunks(120)
+                .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+        };
+        app.act(Action::Filter);
+        app.filter_input = Some("4b".into());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = lines(&terminal);
+        assert!(text[1].contains("Context"));
+        assert!(text[9].contains("Filter displayed page"));
+        assert!(text[10].contains("/4b"));
+        assert!(text[11].contains("Enter apply (empty clears) | Esc discard"));
+        assert!(text[12].contains("connections [2 shown / 2 loaded]"));
+        assert!(text[22].contains("Ready"));
+        assert!(text[23].contains("Page 1"));
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = lines(&terminal);
+        assert!(text[10].contains("Page-local: 1/2 shown | filter: \"4b\""));
+        assert!(text[12].contains("connections [1 shown / 2 loaded]"));
+        assert!(!text[22..].join("").contains("filter:"));
+        app.key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
+        app.command = Some("refresh".into());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(lines(&terminal)[10].contains(":refresh"));
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.view.filter, "4b");
+
+        app.act(Action::Filter);
+        app.filter_input = Some(format!("{}\u{001b}END", "🌊".repeat(50)));
+        for (width, height) in [(1, 1), (20, 6), (20, 12), (60, 20)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            assert!(!text.contains('\u{001b}'));
+            if width >= 20 {
+                assert!(
+                    text.contains("\\u{1b}END"),
+                    "edited tail hidden at {width}x{height}: {text}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn theme_menu_lists_all_names_and_tracks_preview_on_small_screens() {
@@ -682,23 +784,23 @@ mod tests {
         app.command = Some("connections".into());
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(contents(&terminal).contains(":connections"));
-        assert_eq!(terminal.backend().buffer()[(0, 22)].fg, color(p.key_hint));
-        assert_eq!(terminal.backend().buffer()[(0, 22)].bg, color(p.surface));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.key_hint));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.surface));
 
         app.command = None;
         app.help = true;
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(contents(&terminal).contains("Navigation actions"));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.text));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
+        assert_eq!(terminal.backend().buffer()[(1, 13)].fg, color(p.text));
+        assert_eq!(terminal.backend().buffer()[(1, 13)].bg, color(p.background));
 
         app.help = false;
         app.detail = true;
         app.detail_text = "Themed detail".into();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(contents(&terminal).contains("Themed detail"));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.text));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
+        assert_eq!(terminal.backend().buffer()[(1, 13)].fg, color(p.text));
+        assert_eq!(terminal.backend().buffer()[(1, 13)].bg, color(p.background));
     }
 
     #[test]
