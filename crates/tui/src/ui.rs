@@ -56,12 +56,24 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
     let p = app.config.theme.palette();
     if area.height < 8 {
         frame.render_widget(
-            Paragraph::new(app.view.resource.breadcrumb()).style(Style::new().fg(color(p.title))),
+            Paragraph::new(format!(
+                "read-only | {} | {}",
+                display(app.view.alias.as_deref().unwrap_or("choose connection")),
+                app.view.resource.breadcrumb()
+            ))
+            .style(Style::new().fg(color(p.title))),
             area,
         );
         return;
     }
-    let block = panel(p, " Context ");
+    let block = panel(
+        p,
+        Line::from(vec![
+            Span::raw(" Context | "),
+            Span::styled("read-only", Style::new().fg(color(p.error))),
+            Span::raw(" "),
+        ]),
+    );
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [details, keys] = Layout::horizontal([
@@ -442,8 +454,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         area,
     );
     let show_command = app.command.is_some() || app.filter_input.is_some();
-    let [header, info, command, body, status] = Layout::vertical([
-        Constraint::Length(1),
+    let [info, command, body, status] = Layout::vertical([
         Constraint::Length(if area.height >= 20 && area.width >= 60 {
             8
         } else {
@@ -460,34 +471,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Constraint::Length(if area.height >= 12 { 2 } else { 1 }),
     ])
     .areas(area);
-    let alias = app
-        .view
-        .alias
-        .as_deref()
-        .map(display)
-        .unwrap_or_else(|| "choose connection".into());
-    let [brand, version] = Layout::horizontal([
-        Constraint::Min(0),
-        Constraint::Length(if area.width >= 60 { 15 } else { 0 }),
-    ])
-    .areas(header);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("OneTUI", Style::new().fg(color(p.title)).bold()),
-            Span::raw(" | "),
-            Span::styled(alias, Style::new().fg(color(p.border))),
-            Span::raw(" | "),
-            Span::styled("read-only", Style::new().fg(color(p.error))),
-        ]))
-        .style(Style::new().bg(color(p.surface))),
-        brand,
-    );
-    frame.render_widget(
-        Paragraph::new(concat!("v", env!("CARGO_PKG_VERSION")))
-            .right_aligned()
-            .style(Style::new().fg(color(p.muted)).bg(color(p.surface))),
-        version,
-    );
     context(frame, info, app);
     if show_command {
         command_bar(frame, command, app);
@@ -628,6 +611,23 @@ pub fn draw(frame: &mut Frame, app: &App) {
             &app.view.page.notice
         }
     };
+    let version_text = concat!("v", env!("CARGO_PKG_VERSION"));
+    let [status, version] = Layout::horizontal([
+        Constraint::Min(1),
+        Constraint::Length(if area.width >= 40 {
+            version_text.len() as u16 + 1
+        } else {
+            0
+        }),
+    ])
+    .areas(status);
+    let [_, version] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(version);
+    frame.render_widget(
+        Paragraph::new(version_text)
+            .right_aligned()
+            .style(Style::new().fg(color(p.muted))),
+        version,
+    );
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -741,30 +741,30 @@ mod tests {
         };
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = lines(&terminal);
-        assert!(text[9].contains("connections [2 shown / 2 loaded]"));
+        assert!(text[8].contains("connections [2 shown / 2 loaded]"));
         assert!(!text.join("").contains("Page-local:"));
         app.act(Action::Filter);
         app.filter_input = Some("4b".into());
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = lines(&terminal);
-        assert!(text[1].contains("Context"));
-        assert!(text[..9].join("").contains("Filter displayed page"));
-        assert_eq!(text[9], format!("╭{}╮", "─".repeat(118)));
-        assert!(text[10].contains("/4b"));
-        assert!(text[..9].join("").contains("apply (empty clears)"));
-        assert_eq!(text[11], format!("╰{}╯", "─".repeat(118)));
-        assert!(text[12].contains("connections [2 shown / 2 loaded]"));
+        assert!(text[0].contains("Context"));
+        assert!(text[..8].join("").contains("Filter displayed page"));
+        assert_eq!(text[8], format!("╭{}╮", "─".repeat(118)));
+        assert!(text[9].contains("/4b"));
+        assert!(text[..8].join("").contains("apply (empty clears)"));
+        assert_eq!(text[10], format!("╰{}╯", "─".repeat(118)));
+        assert!(text[11].contains("connections [2 shown / 2 loaded]"));
         assert!(text[22].contains("Ready"));
         assert!(text[23].contains("Page 1"));
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = lines(&terminal);
-        assert!(text[9].contains("connections [1 shown / 2 loaded] | filter: \"4b\""));
+        assert!(text[8].contains("connections [1 shown / 2 loaded] | filter: \"4b\""));
         assert!(!text[22..].join("").contains("filter:"));
         app.key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
         app.command = Some("refresh".into());
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(lines(&terminal)[10].contains(":refresh"));
+        assert!(lines(&terminal)[9].contains(":refresh"));
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.view.filter, "4b");
 
@@ -772,24 +772,24 @@ mod tests {
         app.filter_input = Some(String::new());
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
+        assert!(lines(&terminal)[8].contains("connections [2 shown / 2 loaded]"));
         app.act(Action::Sort);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
-        assert!(lines(&terminal)[10].contains("alias ↑"));
+        assert!(lines(&terminal)[8].contains("connections [2 shown / 2 loaded]"));
+        assert!(lines(&terminal)[9].contains("alias ↑"));
         app.act(Action::Sort);
         app.act(Action::Sort);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
+        assert!(lines(&terminal)[8].contains("connections [2 shown / 2 loaded]"));
         app.key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = lines(&terminal);
-        assert_eq!(text[9], format!("╭{}╮", "─".repeat(118)));
-        assert_eq!(text[10], format!("│:{}│", " ".repeat(117)));
-        assert_eq!(text[11], format!("╰{}╯", "─".repeat(118)));
+        assert_eq!(text[8], format!("╭{}╮", "─".repeat(118)));
+        assert_eq!(text[9], format!("│:{}│", " ".repeat(117)));
+        assert_eq!(text[10], format!("╰{}╯", "─".repeat(118)));
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
+        assert!(lines(&terminal)[8].contains("connections [2 shown / 2 loaded]"));
 
         app.act(Action::Filter);
         app.filter_input = Some(format!("{}\u{001b}END", "🌊".repeat(50)));
@@ -832,8 +832,8 @@ mod tests {
                             .map(|x| buffer[(x, y)].symbol())
                             .collect::<String>()
                     };
-                    assert!(row(9).contains("Themes | preview"));
-                    assert!(row(10).contains("catppuccin"));
+                    assert!(row(8).contains("Themes | preview"));
+                    assert!(row(9).contains("catppuccin"));
                     let text = buffer
                         .content
                         .iter()
@@ -907,6 +907,14 @@ mod tests {
         };
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = contents(&terminal);
+        assert!(text.lines().next().unwrap().contains("Context | read-only"));
+        assert!(!text.contains("OneTUI"));
+        assert!(
+            text.lines()
+                .last()
+                .unwrap()
+                .ends_with(concat!("v", env!("CARGO_PKG_VERSION")))
+        );
         for expected in [
             "Connection sample",
             "Datasource fake",
@@ -978,26 +986,26 @@ mod tests {
         app.command = Some("connections".into());
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(contents(&terminal).contains(":connections"));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.key_hint));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.surface));
+        assert_eq!(terminal.backend().buffer()[(1, 9)].fg, color(p.key_hint));
+        assert_eq!(terminal.backend().buffer()[(1, 9)].bg, color(p.surface));
 
         app.command = None;
         app.help = true;
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(contents(&terminal).contains("DESCRIPTION"));
         assert_eq!(
-            terminal.backend().buffer()[(1, 10)].fg,
+            terminal.backend().buffer()[(1, 9)].fg,
             color(p.table_heading)
         );
-        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
+        assert_eq!(terminal.backend().buffer()[(1, 9)].bg, color(p.background));
 
         app.help = false;
         app.detail = true;
         app.detail_text = "Themed detail".into();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(contents(&terminal).contains("Themed detail"));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.text));
-        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
+        assert_eq!(terminal.backend().buffer()[(1, 9)].fg, color(p.text));
+        assert_eq!(terminal.backend().buffer()[(1, 9)].bg, color(p.background));
     }
 
     #[test]
@@ -1103,6 +1111,15 @@ mod tests {
         ] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let last = (0..width)
+                .map(|x| buffer[(x, height - 1)].symbol())
+                .collect::<String>();
+            if width >= 40 {
+                assert!(last.ends_with(concat!("v", env!("CARGO_PKG_VERSION"))));
+            } else {
+                assert!(!last.contains(concat!("v", env!("CARGO_PKG_VERSION"))));
+            }
             app.act(Action::Help);
             terminal.draw(|frame| draw(frame, &app)).unwrap();
         }

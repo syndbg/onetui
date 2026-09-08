@@ -4,6 +4,35 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 #[test]
+fn local_run_does_not_select_a_connection() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("hack")).unwrap();
+    std::fs::create_dir_all(temp.path().join("target/debug")).unwrap();
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/hack/dev.sh"),
+        temp.path().join("hack/dev.sh"),
+    )
+    .unwrap();
+    let binary = temp.path().join("target/debug/onetui");
+    std::fs::write(&binary, "#!/bin/bash\nprintf '%s\\n' \"$@\"\n").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new("bash")
+        .args(["hack/dev.sh", "run"])
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "--config\nhack/connections.toml\n"
+    );
+}
+
+#[test]
 fn fixture_setup_preserves_existing_containers_and_cleans_failed_startup() {
     let temp = tempfile::tempdir().unwrap();
     let docker = temp.path().join("docker");

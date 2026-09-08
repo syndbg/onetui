@@ -669,14 +669,14 @@ mod terminal {
             pty.send(b"c");
             pty.wait(&["connections", "pg_other"]);
             pty.open_filtered(alias);
-            pty.wait(&[&format!("OneTUI|{alias}|"), "postgres.schemas", "public"]);
+            pty.wait(&[&format!("Connection{alias}Tthemes"), "postgres.schemas", "public"]);
             observer.wait_gone(old_pid).await;
             observer.wait_count(1).await;
             pty.open_filtered("public");
             pty.wait(&["postgres.relations", "keyed_rows"]);
             pty.open_filtered("keyed_rows");
             pty.wait(&[
-                &format!("OneTUI|{alias}|"),
+                &format!("Connection{alias}Tthemes"),
                 "postgres.rows",
                 "Keyset",
                 "9007199254740993",
@@ -690,17 +690,17 @@ mod terminal {
         pty.send(b"c");
         pty.wait(&["connections", "qd"]);
         pty.open_filtered("qd");
-        pty.wait(&["OneTUI|qd|read-only", "qdrant.collections", "Connected"]);
+        pty.wait(&["ConnectionqdTthemes", "read-only", "qdrant.collections", "Connected"]);
         observer.wait_gone(old_pid).await;
         observer.wait_count(0).await;
         // Allow cancelled PostgreSQL completion to reach the worker before another draw.
         tokio::time::sleep(Duration::from_millis(250)).await;
         pty.send(b"r");
-        pty.wait(&["OneTUI|qd|read-only", "qdrant.collections", "Connected"]);
+        pty.wait(&["ConnectionqdTthemes", "read-only", "qdrant.collections", "Connected"]);
         assert!(!String::from_utf8_lossy(&pty.output).contains("9007199254740993"));
         assert!(!String::from_utf8_lossy(&pty.output).contains("Request cancelled"));
         pty.open_filtered(&collection);
-        pty.wait(&["OneTUI|qd|", "qdrant.collection", "metadata", "points"]);
+        pty.wait(&["ConnectionqdTthemes", "qdrant.collection", "metadata", "points"]);
         pty.send(b"\r");
         pty.wait(&["qdrant.points", "100items", "numeric"]);
         pty.send(b"n");
@@ -738,11 +738,11 @@ mod terminal {
         pty.send(b"c");
         pty.wait(&["connections", "pg"]);
         pty.open_filtered("pg");
-        pty.wait(&["OneTUI|pg|", "postgres.schemas", "public"]);
+        pty.wait(&["ConnectionpgTthemes", "postgres.schemas", "public"]);
         pty.open_filtered("public");
         pty.wait(&["postgres.relations", "keyed_rows"]);
         pty.open_filtered("keyed_rows");
-        pty.wait(&["OneTUI|pg|", "postgres.rows", "9007199254740993"]);
+        pty.wait(&["ConnectionpgTthemes", "postgres.rows", "9007199254740993"]);
         observer.wait_count(1).await;
         assert!(!String::from_utf8_lossy(&pty.output).contains("onetui-tui-point-1"));
         pty.output.clear();

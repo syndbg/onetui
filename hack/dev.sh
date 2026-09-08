@@ -59,7 +59,7 @@ case "${1:-}" in
 esac
 
 if [[ "$1" == run ]]; then
-    exec ./target/debug/onetui --config hack/connections.toml --connection local_pg
+    exec ./target/debug/onetui --config hack/connections.toml
 fi
 
 # The test clients use localhost; never create/delete fixtures on a remote Docker context.

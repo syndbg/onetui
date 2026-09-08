@@ -8,7 +8,7 @@ export TAG
 help:
 	@printf '%s\n' \
 	  'build / build-release  Build the debug / release binary (locked dependencies)' \
-	  'run                    Build and browse local PostgreSQL metadata (start with dev-up)' \
+	  'run                    Build and open the local connection picker (start with dev-up)' \
 	  'fmt                    Format Rust sources' \
 	  'lint                   Check formatting, Clippy and shell syntax' \
 	  'test                   Run tests without Docker' \

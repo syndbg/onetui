@@ -6,12 +6,12 @@ Run these commands from the repository root. Requirements: rustup, Make, Bash, D
 make dev-up        # builds, starts databases, waits for reads, seeds demos
 make dev-seed      # adds demos to running fixtures without resetting them
 make check-local   # runs both headless checks with fake reader credentials
-make run           # PostgreSQL row/metadata TUI; uses existing fixtures, q quits
+make run           # connection picker; uses existing fixtures, q quits
 make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
 
-`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens PostgreSQL initially. Enter opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables. Press `c` and select `local_qdrant`, then a `demo_*` collection. See [PostgreSQL usage](../docs/postgres.md) and [Qdrant usage](../docs/qdrant.md).
+`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens the connection picker without contacting a datasource. Choose `local_pg` or `local_qdrant` and press Enter. PostgreSQL opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables, or a Qdrant `demo_*` collection. Press `c` to return to the picker. Only an explicit CLI `--connection <alias>` skips the picker. See [PostgreSQL usage](../docs/postgres.md) and [Qdrant usage](../docs/qdrant.md).
 
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 

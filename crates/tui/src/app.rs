@@ -657,6 +657,27 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn startup_requires_explicit_alias_even_with_one_connection() {
+        for contents in [
+            "[connections]",
+            "[connections.a]\nkind='fake'",
+            "[connections.a]\nkind='fake'\n[connections.b]\nkind='fake'",
+        ] {
+            let config = Config::parse(contents, crate::test_provider::CATALOG).unwrap();
+            let app = App::new(config, None);
+            assert_eq!(app.view.resource.id, "connections");
+            assert!(app.view.alias.is_none());
+            assert!(app.request.is_none() && !app.loading);
+            assert!(app.connection_status.is_none());
+            if !app.view.page.rows.is_empty() {
+                let selected = App::new(app.config, Some("a"));
+                assert_eq!(selected.view.alias.as_deref(), Some("a"));
+                assert!(selected.request.is_some() && selected.loading);
+            }
+        }
+    }
+
+    #[test]
     fn theme_picker_previews_accepts_and_reverts_without_touching_browsing_or_config() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         let original = "theme='monokai'\n[connections.pg]\nkind='fake'";

@@ -41,7 +41,7 @@ Install Rust through rustup, Make, and Docker with Compose for the local databas
 make dev-up
 ./target/debug/onetui --help
 make check-local
-make run                # browse PostgreSQL rows/metadata; q returns to the shell
+make run                # choose a local connection; q returns to the shell
 make dev-down
 ```
 
@@ -66,7 +66,7 @@ Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. Th
 
 ## Browsing and offline catalog
 
-The TUI puts connection and resource context above the data table, with available action keys alongside it on wide terminals. Context controls change with the current mode. A plain bar below context appears only while typing `:` commands or `/` page filters. Applied filters appear in the table title; sorting uses column arrows, and theme controls stay in context. Ten built-in themes color the shared layout; Catppuccin is the default. Contrasting selection, sort arrows and labeled status colors distinguish navigation, loading and errors. The footer keeps status and paging visible. Smaller terminals use a compact header and single-line input bar; `?` opens action help.
+The Context panel is the header: its title includes `read-only`, and its fields identify the selected connection and resource. There is no duplicate top strip. Available action keys sit alongside context on wide terminals and change with the current mode. A plain bar below context appears only while typing `:` commands or `/` page filters. Applied filters appear in the table title; sorting uses column arrows, and theme controls stay in context. Ten built-in themes color the shared layout; Catppuccin is the default. The footer keeps status and paging visible, with the version at bottom-right. Smaller terminals use a compact header and single-line input bar; `?` opens action help. See [UI panels](docs/ui.md) for panel contents and sizing rules.
 
 ```sh
 onetui --config "$HOME/onetui.toml"
@@ -79,7 +79,9 @@ onetui schema --datasource qdrant
 
 Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `/` filters this page's cached text; `s` cycles lexical sort on the selected field; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
 
-Qdrant navigation opens collections, then a choice of points or metadata. Point pages fetch IDs only. Open a point, then select payload or vectors for a separate read. Dense, sparse and multivectors retain their values and names; limits reject oversized detail explicitly. `make run` starts on PostgreSQL; press `c` to select `local_qdrant` with the supplied fixture credentials. Fresh Qdrant fixtures are empty.
+Qdrant navigation opens collections, then a choice of points or metadata. Point pages fetch IDs only. Open a point, then select payload or vectors for a separate read. Dense, sparse and multivectors retain their values and names; limits reject oversized detail explicitly. `make run` opens the connection picker with fixture credentials supplied; select `local_qdrant` to browse the seeded demo collections.
+
+Without `--connection`, the TUI always starts at the connection picker, even with a single configured alias, and makes no datasource request until you choose one. Only an explicit flag such as `onetui --config "$HOME/onetui.toml" --connection local_pg` opens that datasource on startup. No previous or default connection is selected automatically.
 
 See [PostgreSQL usage](docs/postgres.md) and [Qdrant usage](docs/qdrant.md) for keys, limits and cancellation behavior. Browsing uses the connection configuration described below.
 
@@ -192,7 +194,7 @@ The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds 
 make help
 make dev-up              # start local fixtures and seed browsing demos
 make dev-seed            # add demos to already-running fixtures; no reset
-make run                 # browse PostgreSQL; c switches to local_qdrant
+make run                 # choose local_pg or local_qdrant from the picker
 make verify              # build, formatting, Clippy, shell syntax, non-Docker tests
 make test-integration    # fresh databases -> readiness -> all fixture tests -> cleanup
 make workflow-lint       # workflow gate; requires Go to run pinned actionlint
