@@ -58,7 +58,7 @@ cd dist
 shasum -a 256 -c onetui-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
 ```
 
-Use the filename matching your native platform. Packaging derives the target from rustc, builds explicitly for it, smoke-checks `--version`, and bundles the binary, README and LICENSE. It refuses to overwrite existing archives/checksums. Move an old local artifact aside before rebuilding; `dist/` is ignored by Git.
+Use the filename matching your native platform. Packaging derives the target from rustc, builds explicitly for it, smoke-checks `--version`, and bundles the binary, README, LICENSE and THIRD_PARTY_NOTICES.md. Keep theme attribution notices with redistributed binaries. Packaging refuses to overwrite existing archives/checksums. Move an old local artifact aside before rebuilding; `dist/` is ignored by Git.
 
 Artifacts are initially unsigned/unnotarized. Linux binaries use the runner's GNU libc. Compatibility with older distributions or musl is unverified. Intel macOS, Linux arm64 and Windows binaries are not part of this initial workflow. Compatibility and signing remain release-readiness work.
 

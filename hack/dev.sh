@@ -29,6 +29,12 @@ up() {
     "${compose[@]}" up -d --wait --wait-timeout 60
     wait_for_connection local_pg
     wait_for_connection local_qdrant
+    seed
+}
+
+seed() {
+    "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
+    cargo run -p onetui-qdrant --example seed_demo --locked
 }
 
 cleanup() {
@@ -42,14 +48,14 @@ cleanup() {
 }
 
 case "${1:-}" in
-    up|check|test|run)
+    up|check|test|run|seed)
         if [[ ! -x target/debug/onetui ]]; then
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
         ;;
     down|logs) ;;
-    *) printf 'Usage: bash hack/dev.sh {up|check|test|run|down|logs}\n' >&2; exit 2 ;;
+    *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|down|logs}\n' >&2; exit 2 ;;
 esac
 
 if [[ "$1" == run ]]; then
@@ -70,6 +76,7 @@ docker info >/dev/null
 "${compose[@]}" version >/dev/null
 case "$1" in
     up) up ;;
+    seed) seed ;;
     check) check_connection local_pg; check_connection local_qdrant ;;
     down) "${compose[@]}" down --timeout 10 ;;
     logs) "${compose[@]}" logs --no-color --tail 100 ;;

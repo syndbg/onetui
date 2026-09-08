@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use crate::provider::{Provider, ProviderDescriptor, find_provider, validate_catalog};
 use anyhow::{Result, anyhow, bail, ensure};
+use onetui_theme::Theme;
 use serde::Deserialize;
 
 pub struct Config {
+    pub theme: Theme,
     connections: BTreeMap<String, Connection>,
 }
 
@@ -17,6 +19,8 @@ struct Connection {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
+    #[serde(default)]
+    theme: Theme,
     connections: BTreeMap<String, toml::Table>,
 }
 
@@ -66,7 +70,10 @@ impl Config {
                 },
             );
         }
-        Ok(Self { connections })
+        Ok(Self {
+            theme: raw.theme,
+            connections,
+        })
     }
 
     pub fn configure<P: Provider>(
@@ -130,6 +137,38 @@ fn default_path(
 mod tests {
     use super::*;
     use crate::test_provider::CATALOG;
+
+    #[test]
+    fn themes_default_parse_and_reject_invalid_values_without_echoing_them() {
+        assert_eq!(
+            Config::parse("[connections]", CATALOG).unwrap().theme,
+            Theme::Catppuccin
+        );
+        for theme in Theme::ALL {
+            let name = serde_json::to_string(&theme).unwrap();
+            let config = Config::parse(&format!("theme={name}\n[connections]"), CATALOG).unwrap();
+            assert_eq!(config.theme, theme);
+            assert!(config.aliases().is_empty());
+        }
+        for value in [
+            "''",
+            "'dark'",
+            "'light'",
+            "'Monokai'",
+            "'tokyo_night'",
+            "'fake-super-secret'",
+            "42",
+            "true",
+            "[]",
+            "{}",
+        ] {
+            let error = Config::parse(&format!("theme={value}\n[connections]"), CATALOG)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(!error.contains("fake-super-secret"));
+        }
+    }
 
     #[test]
     fn resolves_only_selected_connection_and_rejects_empty_secrets() {

@@ -11,11 +11,11 @@ Keep built-in color schemes in a separate `onetui-theme` workspace crate at `cra
 
 Themes supply palette data, not rendering behavior. One renderer uses the selected palette for every datasource and screen. No strategy trait, trait objects, boxing or theme-specific copies of widgets are needed.
 
-Include Catppuccin, Gruvbox, Solarized, Nord, Dracula, Tokyo Night, One Dark, Rosé Pine, Monokai and Flexoki. Default to `catppuccin`, preserving the current colors. Each name selects one fixed palette; additional light/dark flavors are outside this decision. This decision is accepted; theme selection is not implemented yet.
+Include Catppuccin, Gruvbox, Solarized, Nord, Dracula, Tokyo Night, One Dark, Rosé Pine, Monokai and Flexoki. Default to `catppuccin`, preserving the original colors. Each name selects one fixed dark palette; additional light/dark flavors are outside this decision. See [palette sources and variants](../../crates/theme/README.md#palettes).
 
 ## Current behavior and package boundary
 
-The colors are currently constants in [the TUI renderer](../../crates/tui/src/ui.rs). [Configuration](../../crates/core/src/config.rs) accepts connection definitions only. Moving the palette into a crate gives configuration and rendering one source for the supported names without making core depend on Ratatui.
+The [theme crate](../../crates/theme/src/lib.rs) gives [configuration](../../crates/core/src/config.rs) and [rendering](../../crates/tui/src/ui.rs) one source for the supported names without making core depend on Ratatui. It replaces the renderer's fixed color constants.
 
 `onetui-theme` owns the serializable selector, its default, supported names and immutable palettes. It uses Serde, already a workspace dependency, and plain RGB values. It has no Ratatui, Tokio or datasource dependencies. Core uses the selector when parsing configuration; TUI translates palette values into Ratatui colors and styles. Database connectors do not depend on themes.
 
@@ -62,7 +62,7 @@ Each palette is a complete struct value. Adding a role requires every palette to
 
 ## Configuration contract
 
-Add an optional top-level `theme` string to the existing configuration file:
+Use an optional top-level `theme` string in the existing configuration file:
 
 ```toml
 theme = "monokai"

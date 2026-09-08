@@ -27,3 +27,25 @@ fn help_version_and_nonterminal_error_work_without_configuration() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires a terminal"));
     assert!(!binary().arg("--check").output().unwrap().status.success());
 }
+
+#[test]
+fn headless_check_rejects_invalid_theme_before_resolving_connection() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), "theme='private-invalid-theme'\n[connections.local_pg]\nkind='postgres'\nurl_env='ONETUI_TEST_MISSING_SECRET'").unwrap();
+    let output = binary()
+        .args([
+            "--config",
+            file.path().to_str().unwrap(),
+            "--check",
+            "--connection",
+            "local_pg",
+        ])
+        .env_remove("ONETUI_TEST_MISSING_SECRET")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("invalid config"), "{error}");
+    assert!(!error.contains("private-invalid-theme"));
+    assert!(!error.contains("ONETUI_TEST_MISSING_SECRET"));
+}

@@ -32,6 +32,6 @@ fi
 cargo build --release --locked --target "$target"
 "target/$target/release/onetui" --version
 mkdir -p dist
-tar -czf "dist/$archive" -C "$repo_root/target/$target/release" onetui -C "$repo_root" README.md LICENSE
+tar -czf "dist/$archive" -C "$repo_root/target/$target/release" onetui -C "$repo_root" README.md LICENSE THIRD_PARTY_NOTICES.md
 (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
 printf 'Created dist/%s and its SHA-256 file.\n' "$archive"

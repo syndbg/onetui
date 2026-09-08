@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-down dev-logs check-local test-integration release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-seed dev-down dev-logs check-local test-integration release-check package
 
 help:
 	@printf '%s\n' \
@@ -15,6 +15,7 @@ help:
 	  'verify                 Build, lint and run non-Docker tests' \
 	  'workflow-lint          Validate GitHub workflows (requires Go; downloads pinned actionlint)' \
 	  'dev-up                 Build and start ready-to-use disposable local databases' \
+	  'dev-seed               Add demo data to running fixtures without resetting existing data' \
 	  'check-local            Check both local databases with fixture credentials' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
 	  'test-integration       Start fresh fixtures, test, then clean up (refuses existing fixtures)' \
@@ -49,6 +50,9 @@ workflow-lint:
 
 dev-up: build
 	bash hack/dev.sh up
+
+dev-seed: build
+	bash hack/dev.sh seed
 
 dev-down:
 	bash hack/dev.sh down

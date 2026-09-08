@@ -39,6 +39,13 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
         "qdrant.collections"
     );
     assert_eq!(schema["shell"]["keybindings_configurable"], false);
+    assert_eq!(
+        schema["configuration"]["theme"]["enum"],
+        serde_json::json!(onetui_theme::Theme::ALL)
+    );
+    assert_eq!(schema["configuration"]["theme"]["default"], "catppuccin");
+    assert_eq!(schema["configuration"]["theme"]["type"], "string");
+    assert_eq!(schema["configuration"]["theme"]["required"], false);
     assert!(
         !schema["shell"]["action_context"]
             .as_str()

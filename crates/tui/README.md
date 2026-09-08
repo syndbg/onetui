@@ -6,9 +6,9 @@ Navigation state, request identity/cancellation, terminal lifecycle and renderin
 
 The top bar shows OneTUI, the selected alias, read-only mode and version. At 60 columns and 20 rows or larger, a bordered context panel shows the datasource, resource path, loaded/shown item counts and transport state. These counts describe cached data, not a database-wide total. At 100 columns, the panel also shows primary keys for actions available in the current context, using the existing action descriptors. Text entry replaces those hints with input instructions. Smaller terminals use a compact breadcrumb header.
 
-The table has rounded borders, alternating dark rows, a lavender selected row and arrows for page-local sort direction. NULL cells are muted but retain their literal label. Loading, errors and ready states use yellow, red and green with text labels; a connected transport does not mean live data refresh. Paging, filter/sort state and command input remain in the footer. The context panel never reads or displays connection strings, URLs or secret values.
+The table has rounded borders, alternating dark rows, a contrasting selected row and arrows for page-local sort direction. NULL cells are muted but retain their literal label. Loading, errors and ready states use palette-specific status colors with text labels; a connected transport does not mean live data refresh. Paging, filter/sort state and command input remain in the footer. The context panel never reads or displays connection strings, URLs or secret values.
 
-Run `make run` from the workspace root with fixtures already running. `?` opens action descriptions. The palette is fixed; there are no new configuration keys or dependencies. Navigation and request lifecycles are unchanged.
+Run `make run` from the workspace root with fixtures already running. `?` opens action descriptions. Top-level `theme` selects one of ten built-in palettes, defaulting to Catppuccin; see [names, variants and configuration](../theme/README.md). The `onetui-theme` crate owns RGB roles; this renderer converts them to Ratatui colors. Every screen uses the same palette, with no per-theme renderer or provider branch. Restart to apply a configuration change; navigation and request lifecycles are unchanged.
 
 ## Validation
 

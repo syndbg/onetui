@@ -66,7 +66,7 @@ Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. Th
 
 ## Browsing and offline catalog
 
-The TUI puts connection and resource context above the data table, with available action keys alongside it on wide terminals. A dark palette, lavender selection, sort arrows and labeled status colors distinguish navigation, loading and errors. The footer keeps paging, local filter/sort state and command input visible. Smaller terminals use a compact header; `?` opens action help.
+The TUI puts connection and resource context above the data table, with available action keys alongside it on wide terminals. Ten built-in themes color the shared layout; Catppuccin is the default. Contrasting selection, sort arrows and labeled status colors distinguish navigation, loading and errors. The footer keeps paging, local filter/sort state and command input visible. Smaller terminals use a compact header; `?` opens action help.
 
 ```sh
 onetui --config "$HOME/onetui.toml"
@@ -96,6 +96,7 @@ Selected sessions connect lazily and retain healthy transports. PostgreSQL finis
 | [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, row/metadata queries, descriptors and PostgreSQL-only tests |
 | [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, collection/point/detail reads, descriptors and Qdrant-only tests |
 | [`onetui-tui`](crates/tui/README.md) | Navigation, request lifecycle, rendering and terminal tests |
+| [`onetui-theme`](crates/theme/README.md) | Built-in theme names and semantic RGB palettes; no terminal or datasource dependencies |
 
 Tests belong to their owning package; there is no shared PostgreSQL/Qdrant test loop. `make verify` builds and tests the whole workspace. For focused checks, build the CLI first, then use `cargo test -p onetui-postgres --locked` (or another package name). Connector CLI tests use `target/debug/onetui` by default; test-only `ONETUI_TEST_BIN` selects a prebuilt binary path when using a custom target directory (an absolute path is recommended). This variable is not application configuration.
 
@@ -135,7 +136,9 @@ onetui schema --datasource qdrant
 
 The commands print JSON offline without reading your config, resolving secrets or connecting to a datasource. This is OneTUI's configuration and capability catalog, not the schema of a live database or a dump of your current settings. Use it as the version-specific reference; the table below summarizes the connection settings.
 
-Currently, the only top-level setting is `[connections]`, containing named `[connections.<alias>]` entries. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
+Top-level settings are the optional `theme` string and required `[connections]` table, containing named `[connections.<alias>]` entries. Use an empty `[connections]` table when no aliases are configured. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
+
+`theme` colors every TUI screen. Accepted names are exactly `catppuccin`, `gruvbox`, `solarized`, `nord`, `dracula`, `tokyo-night`, `one-dark`, `rose-pine`, `monokai` and `flexoki`. Omission selects `catppuccin`; each name selects one fixed dark palette. Names are case-sensitive. Empty/unknown names and non-string values fail validation, including with `--check`, without echoing the supplied value. Theme names are not environment-expanded. There is no separate theme file, CLI override or live reload; restart to apply changes. Existing files without `theme` keep the original colors. See [palette variants and sources](crates/theme/README.md#palettes).
 
 | Field | Applies to | Required / default |
 | --- | --- | --- |
@@ -149,11 +152,14 @@ Connection aliases and environment-reference names must contain only ASCII lette
 
 Every connection entry is validated, including unselected aliases: unknown fields/kinds, invalid environment-reference names, relative PostgreSQL CA paths and invalid Qdrant URLs fail when loading the file. Only the selected connection resolves secrets or opens files/transports. Existing valid configuration needs no migration; fix invalid unused entries rather than relying on them being ignored.
 
-Keybindings, themes, views, plugins, heartbeats and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1-300 seconds**. Errors do not echo config contents or driver error chains.
+Keybindings, views, plugins, heartbeats and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1-300 seconds**. Errors do not echo config contents or driver error chains.
 
 Example config (save it at the default location or at the explicit path passed to `--config`):
 
 ```toml
+# Optional; put this before connection tables. Omitted uses "catppuccin".
+theme = "monokai"
+
 [connections.local_pg]
 kind = "postgres"
 url_env = "ONETUI_POSTGRES_URL"
@@ -201,4 +207,4 @@ See [performance checks](docs/performance.md) for reproducible timing samples an
 
 ## License
 
-OneTUI is licensed under [Apache-2.0](LICENSE). Release archives include the license text.
+OneTUI is licensed under [Apache-2.0](LICENSE). Release archives include the license text and [third-party theme notices](THIRD_PARTY_NOTICES.md).

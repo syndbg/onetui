@@ -2,6 +2,8 @@
 
 Configuration parsing, native async `Provider`/`Executor` contracts, request/shutdown deadlines, transport status and shared resource/page/action descriptors. No database SDK or terminal dependency. Catalog validation checks kinds, resource IDs and navigation targets; each provider validates its own options. Shared tests use a synthetic provider, not production connectors.
 
+Configuration uses `onetui-theme`'s selector for the optional top-level `theme` string. Omission preserves Catppuccin; invalid names/types fail before configuring a provider. Core does not convert RGB values or import Ratatui. See [theme configuration](../theme/README.md#usage).
+
 ## Validation
 
 ```sh

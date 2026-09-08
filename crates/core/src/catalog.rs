@@ -19,6 +19,7 @@ pub enum Action {
     Right,
     Filter,
     Sort,
+    Themes,
 }
 
 #[derive(Serialize)]
@@ -29,6 +30,11 @@ pub struct ActionDescriptor {
 }
 
 pub const ACTIONS: &[ActionDescriptor] = &[
+    ActionDescriptor {
+        id: Action::Themes,
+        keys: &["T"],
+        description: "Choose a theme: j/k previews, Enter keeps for this session, Esc restores; config is unchanged",
+    },
     ActionDescriptor {
         id: Action::Filter,
         keys: &["/"],

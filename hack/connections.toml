@@ -1,4 +1,7 @@
 # Environment references are populated with fixture-only values by hack/dev.sh.
+# Optional built-in palette; run `onetui schema` for accepted names.
+theme = "monokai"
+
 [connections.local_pg]
 kind = "postgres"
 url_env = "ONETUI_POSTGRES_URL"

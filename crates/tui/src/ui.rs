@@ -16,33 +16,29 @@ use onetui_core::Page;
 use onetui_core::catalog::Action;
 use onetui_core::{PAGE_SIZE, display};
 
-const BACKGROUND: Color = Color::Rgb(30, 30, 46);
-const SURFACE: Color = Color::Rgb(24, 24, 37);
-const TEXT: Color = Color::Rgb(205, 214, 244);
-const MUTED: Color = Color::Rgb(166, 173, 200);
-const ACCENT: Color = Color::Rgb(180, 190, 254);
-const CYAN: Color = Color::Rgb(137, 220, 235);
-const BLUE: Color = Color::Rgb(137, 180, 250);
-const GREEN: Color = Color::Rgb(166, 227, 161);
-const YELLOW: Color = Color::Rgb(249, 226, 175);
-const RED: Color = Color::Rgb(243, 139, 168);
+use onetui_theme::Palette;
 
-fn panel(title: impl Into<Line<'static>>) -> Block<'static> {
+fn color([r, g, b]: [u8; 3]) -> Color {
+    Color::Rgb(r, g, b)
+}
+
+fn panel(p: &Palette, title: impl Into<Line<'static>>) -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .title(title.into().style(Style::new().fg(CYAN).bold()))
+        .border_style(Style::new().fg(color(p.border)))
+        .title(title.into().style(Style::new().fg(color(p.title)).bold()))
 }
 
 fn context(frame: &mut Frame, area: Rect, app: &App) {
+    let p = app.config.theme.palette();
     if area.height < 8 {
         frame.render_widget(
-            Paragraph::new(app.view.resource.breadcrumb()).style(Style::new().fg(CYAN)),
+            Paragraph::new(app.view.resource.breadcrumb()).style(Style::new().fg(color(p.title))),
             area,
         );
         return;
     }
-    let block = panel(" Context ");
+    let block = panel(p, " Context ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [details, keys] = Layout::horizontal([
@@ -58,9 +54,9 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         .and_then(|alias| app.config.descriptor(alias))
         .map_or("none selected", |descriptor| descriptor.kind);
     let transport_color = match app.connection_status {
-        Some(onetui_core::provider::ConnectionStatus::Connected) => GREEN,
-        Some(onetui_core::provider::ConnectionStatus::Disconnected) => RED,
-        _ => YELLOW,
+        Some(onetui_core::provider::ConnectionStatus::Connected) => color(p.success),
+        Some(onetui_core::provider::ConnectionStatus::Disconnected) => color(p.error),
+        _ => color(p.warning),
     };
     let transport = app
         .connection_status
@@ -74,13 +70,17 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         .collect::<Vec<_>>()
         .join(" / ");
     let fields = [
-        ("Connection", display(alias), ACCENT),
-        ("Datasource", kind.to_owned(), BLUE),
-        ("Resource", app.view.resource.id.to_owned(), YELLOW),
+        ("Connection", display(alias), color(p.border)),
+        ("Datasource", kind.to_owned(), color(p.identifier)),
+        (
+            "Resource",
+            app.view.resource.id.to_owned(),
+            color(p.table_heading),
+        ),
         (
             "Path",
             if path.is_empty() { "/".into() } else { path },
-            CYAN,
+            color(p.title),
         ),
         (
             "Loaded",
@@ -89,7 +89,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
                 app.view.page.rows.len(),
                 app.view.visible.len()
             ),
-            TEXT,
+            color(p.text),
         ),
         ("Transport", transport, transport_color),
     ];
@@ -97,10 +97,10 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(
             fields
                 .into_iter()
-                .map(|(label, value, color)| {
+                .map(|(label, value, value_color)| {
                     Line::from(vec![
-                        Span::styled(format!("{label:<11}"), Style::new().fg(MUTED)),
-                        Span::styled(value, Style::new().fg(color)),
+                        Span::styled(format!("{label:<11}"), Style::new().fg(color(p.muted))),
+                        Span::styled(value, Style::new().fg(value_color)),
                     ])
                 })
                 .collect::<Vec<_>>(),
@@ -110,10 +110,18 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
     if keys.width == 0 {
         return;
     }
+    if app.theme_menu.is_some() {
+        frame.render_widget(
+            Paragraph::new("Theme preview\nj/k or arrows: preview\nEnter: keep for session\nEsc: restore previous\nConfig file is unchanged")
+                .style(Style::new().fg(color(p.key_hint))),
+            keys,
+        );
+        return;
+    }
     if app.command.is_some() || app.filter_input.is_some() {
         frame.render_widget(
             Paragraph::new("Text input active\nEnter apply | Esc discard")
-                .style(Style::new().fg(YELLOW)),
+                .style(Style::new().fg(color(p.warning))),
             keys,
         );
         return;
@@ -135,9 +143,9 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
                 Line::from(vec![
                     Span::styled(
                         format!("{:<7}", entry.keys[0]),
-                        Style::new().fg(CYAN).bold(),
+                        Style::new().fg(color(p.key_hint)).bold(),
                     ),
-                    Span::styled(name, Style::new().fg(MUTED)),
+                    Span::styled(name, Style::new().fg(color(p.muted))),
                 ])
             })
             .collect::<Vec<_>>();
@@ -261,9 +269,10 @@ where
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    let p = app.config.theme.palette();
     let area = frame.area();
     frame.render_widget(
-        Block::new().style(Style::new().fg(TEXT).bg(BACKGROUND)),
+        Block::new().style(Style::new().fg(color(p.text)).bg(color(p.background))),
         area,
     );
     let [header, info, body, status, command] = Layout::vertical([
@@ -291,23 +300,39 @@ pub fn draw(frame: &mut Frame, app: &App) {
     .areas(header);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("OneTUI", Style::new().fg(CYAN).bold()),
+            Span::styled("OneTUI", Style::new().fg(color(p.title)).bold()),
             Span::raw(" | "),
-            Span::styled(alias, Style::new().fg(ACCENT)),
+            Span::styled(alias, Style::new().fg(color(p.border))),
             Span::raw(" | "),
-            Span::styled("read-only", Style::new().fg(RED)),
+            Span::styled("read-only", Style::new().fg(color(p.error))),
         ]))
-        .style(Style::new().bg(SURFACE)),
+        .style(Style::new().bg(color(p.surface))),
         brand,
     );
     frame.render_widget(
         Paragraph::new(concat!("v", env!("CARGO_PKG_VERSION")))
             .right_aligned()
-            .style(Style::new().fg(MUTED).bg(SURFACE)),
+            .style(Style::new().fg(color(p.muted)).bg(color(p.surface))),
         version,
     );
     context(frame, info, app);
-    if app.help {
+    if app.theme_menu.is_some() {
+        let rows = onetui_theme::Theme::ALL.iter().map(|theme| {
+            let name = serde_json::to_value(theme).unwrap();
+            Row::new([name.as_str().unwrap().to_owned()])
+        });
+        let table = Table::new(rows, [Constraint::Fill(1)])
+            .block(panel(p, " Themes | preview "))
+            .row_highlight_style(
+                Style::new()
+                    .fg(color(p.selection_fg))
+                    .bg(color(p.selection_bg))
+                    .bold(),
+            )
+            .highlight_symbol("> ");
+        let mut state = TableState::default().with_selected(Some(app.theme_index()));
+        frame.render_stateful_widget(table, body, &mut state);
+    } else if app.help {
         let mut lines = vec!["Navigation actions (also available as :commands):".to_owned()];
         lines.extend(app.actions().map(|entry| {
             format!(
@@ -323,7 +348,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         frame.render_widget(
             Paragraph::new(lines.join("\n"))
                 .wrap(Wrap { trim: false })
-                .block(panel(" Help ")),
+                .block(panel(p, " Help ")),
             body,
         );
     } else if app.detail {
@@ -331,13 +356,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Paragraph::new(app.detail_text.as_str())
                 .wrap(Wrap { trim: false })
                 .scroll((app.detail_scroll, 0))
-                .block(panel(format!(
-                    "Field {}/{} | chunk {}/{} | h/l fields, j/k scroll, n/p chunks, Esc back",
-                    app.view.column + 1,
-                    app.column_count(),
-                    app.detail_chunk + 1,
-                    app.detail_chunks
-                ))),
+                .block(panel(
+                    p,
+                    format!(
+                        "Field {}/{} | chunk {}/{} | h/l fields, j/k scroll, n/p chunks, Esc back",
+                        app.view.column + 1,
+                        app.column_count(),
+                        app.detail_chunk + 1,
+                        app.detail_chunks
+                    ),
+                )),
             body,
         );
     } else {
@@ -359,15 +387,19 @@ pub fn draw(frame: &mut Frame, app: &App) {
                             preview.push('…');
                         }
                         Cell::from(preview).style(Style::new().fg(if cell.is_none() {
-                            MUTED
+                            color(p.muted)
                         } else if column == 0 {
-                            BLUE
+                            color(p.identifier)
                         } else {
-                            TEXT
+                            color(p.text)
                         }))
                     }),
             )
-            .style(Style::new().bg(if index % 2 == 0 { BACKGROUND } else { SURFACE }))
+            .style(Style::new().bg(if index % 2 == 0 {
+                color(p.background)
+            } else {
+                color(p.surface)
+            }))
         });
         let widths = vec![Constraint::Ratio(1, (end - start).max(1) as u32); end - start];
         let table = Table::new(rows, widths)
@@ -384,16 +416,28 @@ pub fn draw(frame: &mut Frame, app: &App) {
                         }
                     )
                 }))
-                .style(Style::new().fg(YELLOW).add_modifier(Modifier::BOLD)),
+                .style(
+                    Style::new()
+                        .fg(color(p.table_heading))
+                        .add_modifier(Modifier::BOLD),
+                ),
             )
-            .row_highlight_style(Style::new().fg(BACKGROUND).bg(ACCENT).bold())
+            .row_highlight_style(
+                Style::new()
+                    .fg(color(p.selection_fg))
+                    .bg(color(p.selection_bg))
+                    .bold(),
+            )
             .highlight_symbol("> ")
-            .block(panel(format!(
-                " {} [{} shown / {} loaded] ",
-                descriptor.id,
-                app.view.visible.len(),
-                app.view.page.rows.len()
-            )));
+            .block(panel(
+                p,
+                format!(
+                    " {} [{} shown / {} loaded] ",
+                    descriptor.id,
+                    app.view.visible.len(),
+                    app.view.page.rows.len()
+                ),
+            ));
         let mut state = TableState::default().with_selected(if app.view.visible.is_empty() {
             None
         } else {
@@ -435,11 +479,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Line::styled(
                 error,
                 Style::new().fg(if app.error.is_some() {
-                    RED
+                    color(p.error)
                 } else if app.loading {
-                    YELLOW
+                    color(p.warning)
                 } else {
-                    GREEN
+                    color(p.success)
                 }),
             ),
             Line::raw(format!(
@@ -455,15 +499,20 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 display(&app.view.filter)
             )),
         ])
-        .style(Style::new().fg(MUTED)),
+        .style(Style::new().fg(color(p.muted))),
         status,
     );
-    let prompt = app.filter_input.as_ref().map(|value| format!("Filter displayed page: /{}\nEnter apply (empty clears) | Esc discard | max 256 UTF-8 bytes", display(value)))
+    let prompt = if app.theme_menu.is_some() {
+        "j/k or arrows: preview | Enter: keep | Esc: revert\nSession only; config file is unchanged"
+            .into()
+    } else {
+        app.filter_input.as_ref().map(|value| format!("Filter displayed page: /{}\nEnter apply (empty clears) | Esc discard | max 256 UTF-8 bytes", display(value)))
         .or_else(|| app.command.as_ref().map(|value| format!(":{value}\nEnter execute | Esc cancel")))
-        .unwrap_or_else(|| ": commands | ? all actions | q quit\nEnter open/detail | Esc back | j/k move | h/l fields | / filter page | s sort | n/p pages/chunks | r refresh | c connections".into());
+        .unwrap_or_else(|| ": commands | T themes | ? all actions | q quit\nEnter open/detail | Esc back | j/k move | h/l fields | / filter page | s sort | n/p pages/chunks | r refresh | c connections".into())
+    };
     frame.render_widget(
         Paragraph::new(prompt)
-            .style(Style::new().fg(CYAN).bg(SURFACE))
+            .style(Style::new().fg(color(p.key_hint)).bg(color(p.surface)))
             .wrap(Wrap { trim: false }),
         command,
     );
@@ -476,7 +525,48 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn theme_menu_lists_all_names_and_tracks_preview_on_small_screens() {
+        let mut app = App::new(
+            onetui_core::config::Config::parse("[connections]", crate::test_provider::CATALOG)
+                .unwrap(),
+            None,
+        );
+        app.act(Action::Themes);
+        for (width, height) in [(1, 1), (20, 6), (80, 24), (120, 32)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            for _ in onetui_theme::Theme::ALL {
+                terminal.draw(|frame| draw(frame, &app)).unwrap();
+                if width == 120 {
+                    let buffer = terminal.backend().buffer();
+                    let text = buffer
+                        .content
+                        .iter()
+                        .map(|c| c.symbol())
+                        .collect::<String>();
+                    for theme in onetui_theme::Theme::ALL {
+                        let name = serde_json::to_value(theme).unwrap();
+                        assert!(text.contains(name.as_str().unwrap()));
+                    }
+                    assert!(text.contains("Config file is unchanged"));
+                    assert!(buffer.content.iter().any(|cell| cell.symbol() == ">"
+                        && cell.bg == color(app.config.theme.palette().selection_bg)));
+                }
+                app.act(Action::Down);
+            }
+        }
+        app.act(Action::Back);
+        assert_eq!(app.config.theme, onetui_theme::Theme::Catppuccin);
+    }
+
+    #[test]
     fn context_layout_colors_and_input_mode_match_visible_state() {
+        for theme in onetui_theme::Theme::ALL {
+            assert_context_layout(theme);
+        }
+    }
+
+    fn assert_context_layout(theme: onetui_theme::Theme) {
+        let p = theme.palette();
         let mut app = App::new(
             onetui_core::config::Config::parse(
                 "[connections.sample]\nkind='fake'\nurl_env='DO_NOT_RENDER'",
@@ -485,6 +575,7 @@ mod tests {
             .unwrap(),
             Some("sample"),
         );
+        app.config.theme = theme;
         let request = app.request.take().unwrap();
         app.view.resource =
             onetui_core::Resource::new("fake.rows", vec!["public".into(), "orders".into()]);
@@ -541,18 +632,17 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .find(|cell| cell.symbol() == "4" && cell.bg == ACCENT)
+            .find(|cell| cell.symbol() == "4" && cell.bg == color(p.selection_bg))
             .unwrap();
-        assert_eq!(selected.fg, BACKGROUND);
+        assert_eq!(selected.fg, color(p.selection_fg));
         assert!(
             terminal
                 .backend()
                 .buffer()
                 .content
                 .iter()
-                .any(|cell| cell.symbol() == "R" && cell.fg == GREEN)
+                .any(|cell| cell.symbol() == "R" && cell.fg == color(p.success))
         );
-        eprintln!("{text}");
 
         app.act(Action::Sort);
         app.loading = true;
@@ -568,7 +658,7 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .any(|cell| cell.symbol() == "L" && cell.fg == YELLOW)
+                .any(|cell| cell.symbol() == "L" && cell.fg == color(p.warning))
         );
 
         app.loading = false;
@@ -585,8 +675,30 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .any(|cell| cell.symbol() == "R" && cell.fg == RED)
+                .any(|cell| cell.symbol() == "R" && cell.fg == color(p.error))
         );
+
+        app.filter_input = None;
+        app.command = Some("connections".into());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(contents(&terminal).contains(":connections"));
+        assert_eq!(terminal.backend().buffer()[(0, 22)].fg, color(p.key_hint));
+        assert_eq!(terminal.backend().buffer()[(0, 22)].bg, color(p.surface));
+
+        app.command = None;
+        app.help = true;
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(contents(&terminal).contains("Navigation actions"));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.text));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
+
+        app.help = false;
+        app.detail = true;
+        app.detail_text = "Themed detail".into();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(contents(&terminal).contains("Themed detail"));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.text));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
     }
 
     #[test]
@@ -667,6 +779,12 @@ mod tests {
 
     #[test]
     fn empty_help_and_narrow_frames_render_without_panics() {
+        for theme in onetui_theme::Theme::ALL {
+            assert_empty_help_and_narrow_frames(theme);
+        }
+    }
+
+    fn assert_empty_help_and_narrow_frames(theme: onetui_theme::Theme) {
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(config, "[connections]").unwrap();
         let mut app = App::new(
@@ -674,6 +792,7 @@ mod tests {
                 .unwrap(),
             None,
         );
+        app.config.theme = theme;
         for (width, height) in [
             (1, 1),
             (20, 6),
@@ -692,6 +811,12 @@ mod tests {
 
     #[test]
     fn dynamic_row_columns_and_bounded_detail_render_on_narrow_frames() {
+        for theme in onetui_theme::Theme::ALL {
+            assert_dynamic_rows_and_detail(theme);
+        }
+    }
+
+    fn assert_dynamic_rows_and_detail(theme: onetui_theme::Theme) {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         write!(file, "[connections.pg]\nkind='fake'\nurl_env='UNUSED'").unwrap();
         let mut app = App::new(
@@ -724,6 +849,7 @@ mod tests {
                 ..Page::default()
             }),
         );
+        app.config.theme = theme;
         for (width, height) in [(1, 1), (20, 10), (100, 30)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             for _ in 0..6 {

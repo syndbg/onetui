@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use onetui_core::catalog::{ACTIONS, Action, ActionDescriptor, ResourceDescriptor};
 use onetui_core::config::Config;
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
+use onetui_theme::Theme;
 
 #[derive(Clone)]
 pub struct Request {
@@ -95,6 +96,7 @@ pub struct App {
     pub detail_scroll: u16,
     pub command: Option<String>,
     pub filter_input: Option<String>,
+    pub theme_menu: Option<Theme>,
     pub quit: bool,
 }
 
@@ -118,6 +120,7 @@ impl App {
             detail_scroll: 0,
             command: None,
             filter_input: None,
+            theme_menu: None,
             quit: false,
         };
         app.connections();
@@ -253,6 +256,12 @@ impl App {
     }
 
     pub fn available(&self, action: Action) -> bool {
+        if self.theme_menu.is_some() {
+            return matches!(
+                action,
+                Action::Up | Action::Down | Action::Open | Action::Back | Action::Cancel
+            );
+        }
         match action {
             Action::Filter => !self.detail,
             Action::Sort => !self.detail && self.column_count() > 0,
@@ -359,6 +368,26 @@ impl App {
         if !self.available(action) {
             return;
         }
+        if let Some(original) = self.theme_menu {
+            match action {
+                Action::Up | Action::Down => {
+                    let index = self.theme_index();
+                    let next = if action == Action::Up {
+                        (index + Theme::ALL.len() - 1) % Theme::ALL.len()
+                    } else {
+                        (index + 1) % Theme::ALL.len()
+                    };
+                    self.config.theme = Theme::ALL[next];
+                }
+                Action::Open => self.theme_menu = None,
+                Action::Back | Action::Cancel => {
+                    self.config.theme = original;
+                    self.theme_menu = None;
+                }
+                _ => {}
+            }
+            return;
+        }
         if self.detail {
             match action {
                 Action::Up => self.detail_scroll = self.detail_scroll.saturating_sub(1),
@@ -384,6 +413,7 @@ impl App {
             }
         }
         match action {
+            Action::Themes => self.theme_menu = Some(self.config.theme),
             Action::Filter => {
                 self.help = false;
                 self.filter_input = Some(self.view.filter.clone());
@@ -590,7 +620,7 @@ impl App {
         {
             return;
         }
-        if key.code == KeyCode::Char(':') {
+        if key.code == KeyCode::Char(':') && self.theme_menu.is_none() {
             self.command = Some(String::new());
             return;
         }
@@ -612,12 +642,76 @@ impl App {
             self.act(action);
         }
     }
+
+    pub fn theme_index(&self) -> usize {
+        Theme::ALL
+            .iter()
+            .position(|theme| *theme == self.config.theme)
+            .expect("built-in theme is listed")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn theme_picker_previews_accepts_and_reverts_without_touching_browsing_or_config() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let original = "theme='monokai'\n[connections.pg]\nkind='fake'";
+        write!(file, "{original}").unwrap();
+        let mut app = App::new(
+            Config::load(file.path(), crate::test_provider::CATALOG).unwrap(),
+            Some("pg"),
+        );
+        let request_id = app.request.as_ref().unwrap().id;
+        let session = app.session;
+        let resource = app.view.resource.clone();
+        app.key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT));
+        assert_eq!(app.theme_menu, Some(Theme::Monokai));
+        app.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.config.theme, Theme::Flexoki);
+        app.key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.config.theme, Theme::Catppuccin);
+        app.key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(app.config.theme, Theme::Flexoki);
+        for c in [':', 'q', 'c', 'r', '/', 's'] {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert!(app.command.is_none() && app.filter_input.is_none() && !app.quit);
+        assert_eq!(app.request.as_ref().unwrap().id, request_id);
+        assert_eq!(app.generation, request_id);
+        assert_eq!(app.session, session);
+        assert_eq!(app.view.resource, resource);
+        assert!(app.loading);
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.config.theme, Theme::Monokai);
+        assert!(app.theme_menu.is_none());
+
+        for c in ":themes".chars() {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.theme_menu.is_some());
+        app.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.config.theme, Theme::Flexoki);
+        assert!(app.theme_menu.is_none());
+        assert_eq!(std::fs::read_to_string(file.path()).unwrap(), original);
+
+        app.act(Action::Themes);
+        app.act(Action::Down);
+        app.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(app.config.theme, Theme::Flexoki);
+        assert!(app.theme_menu.is_none() && app.loading && !app.quit);
+        assert_eq!(app.request.as_ref().unwrap().id, request_id);
+
+        app.key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT));
+        assert_eq!(app.filter_input.as_deref(), Some("T"));
+        assert!(app.theme_menu.is_none());
+    }
 
     fn app() -> App {
         let mut file = tempfile::NamedTempFile::new().unwrap();
