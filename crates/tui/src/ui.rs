@@ -29,6 +29,29 @@ fn panel(p: &Palette, title: impl Into<Line<'static>>) -> Block<'static> {
         .title(title.into().style(Style::new().fg(color(p.title)).bold()))
 }
 
+fn key_hints(frame: &mut Frame, area: Rect, p: &Palette, hints: &[(&str, &str)]) {
+    let width = hints
+        .iter()
+        .map(|(key, _)| key.len())
+        .max()
+        .unwrap_or(0)
+        .max(5)
+        + 2;
+    let lines = hints
+        .iter()
+        .map(|(key, description)| {
+            Line::from(vec![
+                Span::styled(
+                    format!("{key:<width$}"),
+                    Style::new().fg(color(p.key_hint)).bold(),
+                ),
+                Span::styled(*description, Style::new().fg(color(p.muted))),
+            ])
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 fn context(frame: &mut Frame, area: Rect, app: &App) {
     let p = app.config.theme.palette();
     if area.height < 8 {
@@ -111,19 +134,38 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
     if app.theme_menu.is_some() {
-        frame.render_widget(
-            Paragraph::new("Theme preview\nj/k or arrows: preview\nEnter: keep for session\nEsc: restore previous\nConfig file is unchanged")
-                .style(Style::new().fg(color(p.key_hint))),
+        key_hints(
+            frame,
             keys,
+            p,
+            &[
+                ("j/k Up/Down", "Theme preview"),
+                ("Enter", "keep for session"),
+                ("Esc", "restore previous"),
+                ("Ctrl-c", "restore previous"),
+                ("", "Config file is unchanged"),
+            ],
         );
         return;
     }
     if app.command.is_some() || app.filter_input.is_some() {
-        frame.render_widget(
-            Paragraph::new("Text input active\nEnter apply | Esc discard")
-                .style(Style::new().fg(color(p.warning))),
-            keys,
-        );
+        let hints: &[(&str, &str)] = if app.filter_input.is_some() {
+            &[
+                ("/", "Filter displayed page"),
+                ("Enter", "apply (empty clears)"),
+                ("Esc", "discard"),
+                ("Backspace", "delete character"),
+                ("", "Max 256 UTF-8 bytes"),
+            ]
+        } else {
+            &[
+                (":", "Command input"),
+                ("Enter", "execute"),
+                ("Esc", "cancel"),
+                ("Backspace", "delete character"),
+            ]
+        };
+        key_hints(frame, keys, p, hints);
         return;
     }
     let columns = Layout::horizontal([Constraint::Fill(1); 3]).split(keys);
@@ -132,24 +174,22 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         let Some(area) = columns.get(column) else {
             break;
         };
-        let lines = chunk
+        let names = chunk
             .iter()
             .map(|entry| {
-                let name = serde_json::to_value(entry.id)
+                serde_json::to_value(entry.id)
                     .unwrap()
                     .as_str()
                     .unwrap()
-                    .to_owned();
-                Line::from(vec![
-                    Span::styled(
-                        format!("{:<7}", entry.keys[0]),
-                        Style::new().fg(color(p.key_hint)).bold(),
-                    ),
-                    Span::styled(name, Style::new().fg(color(p.muted))),
-                ])
+                    .to_owned()
             })
             .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(lines), *area);
+        let hints = chunk
+            .iter()
+            .zip(&names)
+            .map(|(entry, name)| (entry.keys[0], name.as_str()))
+            .collect::<Vec<_>>();
+        key_hints(frame, *area, p, &hints);
     }
 }
 
@@ -270,47 +310,16 @@ where
 
 fn command_bar(frame: &mut Frame, area: Rect, app: &App) {
     let p = app.config.theme.palette();
-    let (title, value, hint) = if app.theme_menu.is_some() {
-        (
-            " Themes ",
-            "j/k or arrows: preview | Enter: keep | Esc: revert".into(),
-            " Session only; config file is unchanged ",
-        )
-    } else if let Some(value) = &app.filter_input {
-        (
-            " Filter displayed page ",
-            format!("/{}", display(value)),
-            " Enter apply (empty clears) | Esc discard | max 256 UTF-8 bytes ",
-        )
+    let value = if let Some(value) = &app.filter_input {
+        format!("/{}", display(value))
     } else if let Some(value) = &app.command {
-        ("", format!(":{value}"), "")
+        format!(":{value}")
     } else {
-        let sort = app.view.sort.map_or_else(
-            || "source order".into(),
-            |(column, descending)| {
-                format!(
-                    "{} {}",
-                    app.column_name(column),
-                    if descending { "desc" } else { "asc" }
-                )
-            },
-        );
-        (
-            " Page-local filter / sort ",
-            format!(
-                "Page-local: {}/{} shown | filter: {:?} | lexical sort: {sort}",
-                app.view.visible.len(),
-                app.view.page.rows.len(),
-                display(&app.view.filter)
-            ),
-            " / edit filter | s cycle sort ",
-        )
+        return;
     };
     let style = Style::new().fg(color(p.key_hint)).bg(color(p.surface));
     let inner = if area.height >= 3 {
-        let block = panel(p, title)
-            .title_bottom(Line::styled(hint, style))
-            .style(style);
+        let block = panel(p, "").style(style);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         inner
@@ -319,13 +328,110 @@ fn command_bar(frame: &mut Frame, area: Rect, app: &App) {
     };
     let line = Line::raw(value);
     // Leave a cell for a wide glyph clipped at the left edge; keep the edited tail visible.
-    let scroll = if app.filter_input.is_some() || app.command.is_some() {
-        line.width()
-            .saturating_sub(usize::from(inner.width.saturating_sub(1))) as u16
-    } else {
-        0
-    };
+    let scroll = line
+        .width()
+        .saturating_sub(usize::from(inner.width.saturating_sub(1))) as u16;
     frame.render_widget(Paragraph::new(line).style(style).scroll((0, scroll)), inner);
+}
+
+fn help(frame: &mut Frame, area: Rect, app: &App) {
+    let p = app.config.theme.palette();
+    let block =
+        panel(p, " Help | :command | Esc close ").title_bottom(" Keybindings are currently fixed ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let entries = app
+        .actions()
+        .map(|entry| {
+            (
+                entry.keys.join(" / "),
+                serde_json::to_value(entry.id)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                entry.description,
+            )
+        })
+        .collect::<Vec<_>>();
+    if inner.width < 60 {
+        let lines = entries
+            .iter()
+            .flat_map(|(key, command, description)| {
+                [
+                    Line::from(vec![
+                        Span::styled(key, Style::new().fg(color(p.key_hint)).bold()),
+                        Span::styled(
+                            format!("  :{command}"),
+                            Style::new().fg(color(p.identifier)),
+                        ),
+                    ]),
+                    Line::raw(*description),
+                    Line::default(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+        return;
+    }
+    let key_width = entries
+        .iter()
+        .map(|(key, _, _)| key.len())
+        .max()
+        .unwrap_or(3)
+        .max(3) as u16;
+    let command_width = entries
+        .iter()
+        .map(|(_, command, _)| command.len())
+        .max()
+        .unwrap_or(7)
+        .max(7) as u16;
+    let description_width = usize::from(inner.width.saturating_sub(key_width + command_width + 4));
+    let rows = entries
+        .into_iter()
+        .enumerate()
+        .map(|(index, (key, command, description))| {
+            let mut lines = vec![String::new()];
+            for word in description.split_whitespace() {
+                let line = lines.last_mut().unwrap();
+                if !line.is_empty() && line.len() + 1 + word.len() > description_width {
+                    lines.push(word.to_owned());
+                } else {
+                    if !line.is_empty() {
+                        line.push(' ');
+                    }
+                    line.push_str(word);
+                }
+            }
+            Row::new([
+                Cell::from(key).style(Style::new().fg(color(p.key_hint)).bold()),
+                Cell::from(command).style(Style::new().fg(color(p.identifier))),
+                Cell::from(lines.join("\n")),
+            ])
+            .height(lines.len() as u16)
+            .style(Style::new().bg(color(if index % 2 == 0 {
+                p.background
+            } else {
+                p.surface
+            })))
+        });
+    frame.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Length(key_width),
+                Constraint::Length(command_width),
+                Constraint::Min(1),
+            ],
+        )
+        .column_spacing(2)
+        .header(
+            Row::new(["KEY", "COMMAND", "DESCRIPTION"])
+                .style(Style::new().fg(color(p.table_heading)).bold())
+                .bottom_margin(1),
+        ),
+        inner,
+    );
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -335,11 +441,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Block::new().style(Style::new().fg(color(p.text)).bg(color(p.background))),
         area,
     );
-    let show_command = app.command.is_some()
-        || app.filter_input.is_some()
-        || app.theme_menu.is_some()
-        || !app.view.filter.is_empty()
-        || app.view.sort.is_some();
+    let show_command = app.command.is_some() || app.filter_input.is_some();
     let [header, info, command, body, status] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(if area.height >= 20 && area.width >= 60 {
@@ -407,24 +509,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let mut state = TableState::default().with_selected(Some(app.theme_index()));
         frame.render_stateful_widget(table, body, &mut state);
     } else if app.help {
-        let mut lines = vec!["Navigation actions (also available as :commands):".to_owned()];
-        lines.extend(app.actions().map(|entry| {
-            format!(
-                "{}  {}  {}",
-                entry.keys.join("/"),
-                serde_json::to_value(entry.id).unwrap().as_str().unwrap(),
-                entry.description
-            )
-        }));
-        lines.push(
-            ": opens the command prompt; Esc closes it. Keybindings are currently fixed.".into(),
-        );
-        frame.render_widget(
-            Paragraph::new(lines.join("\n"))
-                .wrap(Wrap { trim: false })
-                .block(panel(p, " Help ")),
-            body,
-        );
+        help(frame, body, app);
     } else if app.detail {
         frame.render_widget(
             Paragraph::new(app.detail_text.as_str())
@@ -506,10 +591,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .block(panel(
                 p,
                 format!(
-                    " {} [{} shown / {} loaded] ",
+                    " {} [{} shown / {} loaded]{} ",
                     descriptor.id,
                     app.view.visible.len(),
-                    app.view.page.rows.len()
+                    app.view.page.rows.len(),
+                    if app.view.filter.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" | filter: {:?}", display(&app.view.filter))
+                    }
                 ),
             ));
         let mut state = TableState::default().with_selected(if app.view.visible.is_empty() {
@@ -569,6 +659,66 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn mode_key_hints_and_help_columns_are_aligned() {
+        let mut app = App::new(
+            onetui_core::config::Config::parse("[connections]", crate::test_provider::CATALOG)
+                .unwrap(),
+            None,
+        );
+        let p = app.config.theme.palette();
+        let mut terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
+        app.filter_input = Some(String::new());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut key_columns = Vec::new();
+        for key in ["Enter", "Esc", "Backspace"] {
+            let (y, x) = (1..8)
+                .find_map(|y| {
+                    let line = (0..180)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>();
+                    line.find(key).map(|x| (y, x as u16))
+                })
+                .unwrap();
+            key_columns.push(x);
+            assert_eq!(buffer[(x, y)].fg, color(p.key_hint));
+            assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
+            assert_eq!(buffer[(x + 11, y)].fg, color(p.muted));
+        }
+        assert!(key_columns.windows(2).all(|pair| pair[0] == pair[1]));
+        app.filter_input = None;
+        for width in [20, 60, 80, 180] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 60)).unwrap();
+            terminal
+                .draw(|frame| help(frame, frame.area(), &app))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let text = buffer
+                .content
+                .chunks(width as usize)
+                .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+                .collect::<Vec<_>>();
+            if width >= 80 {
+                let command = text[1].find("COMMAND").unwrap();
+                let description = text[1].find("DESCRIPTION").unwrap();
+                assert_eq!(text[3].find("themes"), Some(command));
+                assert_eq!(text[3].find("Choose"), Some(description));
+                assert!(text.iter().any(|line| line.contains("Ctrl-c")));
+                let theme_description = text[3..]
+                    .iter()
+                    .take_while(|line| !line.contains("filter  "))
+                    .map(|line| line[description..].trim_matches([' ', '│']))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                assert!(theme_description.contains("config is unchanged"));
+            } else if width == 60 {
+                assert!(text.join("").contains(":themes"));
+            }
+            assert!(text.join("").contains("themes"));
+        }
+    }
+
+    #[test]
     fn command_bar_stays_above_table_and_scrolls_long_input() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = App::new(
@@ -598,17 +748,18 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = lines(&terminal);
         assert!(text[1].contains("Context"));
-        assert!(text[9].contains("Filter displayed page"));
+        assert!(text[..9].join("").contains("Filter displayed page"));
+        assert_eq!(text[9], format!("╭{}╮", "─".repeat(118)));
         assert!(text[10].contains("/4b"));
-        assert!(text[11].contains("Enter apply (empty clears) | Esc discard"));
+        assert!(text[..9].join("").contains("apply (empty clears)"));
+        assert_eq!(text[11], format!("╰{}╯", "─".repeat(118)));
         assert!(text[12].contains("connections [2 shown / 2 loaded]"));
         assert!(text[22].contains("Ready"));
         assert!(text[23].contains("Page 1"));
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = lines(&terminal);
-        assert!(text[10].contains("Page-local: 1/2 shown | filter: \"4b\""));
-        assert!(text[12].contains("connections [1 shown / 2 loaded]"));
+        assert!(text[9].contains("connections [1 shown / 2 loaded] | filter: \"4b\""));
         assert!(!text[22..].join("").contains("filter:"));
         app.key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
         app.command = Some("refresh".into());
@@ -624,7 +775,8 @@ mod tests {
         assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
         app.act(Action::Sort);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(lines(&terminal)[9].contains("Page-local filter / sort"));
+        assert!(lines(&terminal)[9].contains("connections [2 shown / 2 loaded]"));
+        assert!(lines(&terminal)[10].contains("alias ↑"));
         app.act(Action::Sort);
         app.act(Action::Sort);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -675,6 +827,13 @@ mod tests {
                 terminal.draw(|frame| draw(frame, &app)).unwrap();
                 if width == 120 {
                     let buffer = terminal.backend().buffer();
+                    let row = |y: u16| {
+                        (0..width)
+                            .map(|x| buffer[(x, y)].symbol())
+                            .collect::<String>()
+                    };
+                    assert!(row(9).contains("Themes | preview"));
+                    assert!(row(10).contains("catppuccin"));
                     let text = buffer
                         .content
                         .iter()
@@ -804,7 +963,7 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = contents(&terminal);
         assert!(text.contains("Request cancelled"));
-        assert!(text.contains("Text input active"));
+        assert!(text.contains("Filter displayed page"));
         assert!(!text.contains("s      sort"));
         assert!(
             terminal
@@ -825,17 +984,20 @@ mod tests {
         app.command = None;
         app.help = true;
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(contents(&terminal).contains("Navigation actions"));
-        assert_eq!(terminal.backend().buffer()[(1, 13)].fg, color(p.text));
-        assert_eq!(terminal.backend().buffer()[(1, 13)].bg, color(p.background));
+        assert!(contents(&terminal).contains("DESCRIPTION"));
+        assert_eq!(
+            terminal.backend().buffer()[(1, 10)].fg,
+            color(p.table_heading)
+        );
+        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
 
         app.help = false;
         app.detail = true;
         app.detail_text = "Themed detail".into();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(contents(&terminal).contains("Themed detail"));
-        assert_eq!(terminal.backend().buffer()[(1, 13)].fg, color(p.text));
-        assert_eq!(terminal.backend().buffer()[(1, 13)].bg, color(p.background));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].fg, color(p.text));
+        assert_eq!(terminal.backend().buffer()[(1, 10)].bg, color(p.background));
     }
 
     #[test]

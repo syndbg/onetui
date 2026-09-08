@@ -66,7 +66,7 @@ Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. Th
 
 ## Browsing and offline catalog
 
-The TUI puts connection and resource context above the data table, with available action keys alongside it on wide terminals. A bar below context appears for `:` commands, `/` page-filter input, an applied filter/sort or theme-preview controls. It is hidden by default; general key hints stay in context/help. Ten built-in themes color the shared layout; Catppuccin is the default. Contrasting selection, sort arrows and labeled status colors distinguish navigation, loading and errors. The footer keeps status and paging visible. Smaller terminals use a compact header and single-line input bar; `?` opens action help.
+The TUI puts connection and resource context above the data table, with available action keys alongside it on wide terminals. Context controls change with the current mode. A plain bar below context appears only while typing `:` commands or `/` page filters. Applied filters appear in the table title; sorting uses column arrows, and theme controls stay in context. Ten built-in themes color the shared layout; Catppuccin is the default. Contrasting selection, sort arrows and labeled status colors distinguish navigation, loading and errors. The footer keeps status and paging visible. Smaller terminals use a compact header and single-line input bar; `?` opens action help.
 
 ```sh
 onetui --config "$HOME/onetui.toml"

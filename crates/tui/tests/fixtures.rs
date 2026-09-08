@@ -616,7 +616,7 @@ mod terminal {
         pty.open_filtered("browse_composite");
         pty.wait(&["postgres.rows", "Keyset", "София"]);
         pty.send(b"/value\r");
-        pty.wait(&["Page-local:100/100shown", "filter:\"value\""]);
+        pty.wait(&["postgres.rows[100shown/100loaded]", "filter:\"value\""]);
         pty.send(b"lss\r");
         pty.wait(&["Field2/3", "bigint", "non-nulltext", "lexicalsort:iddesc"]);
         pty.send(b":back\r");
