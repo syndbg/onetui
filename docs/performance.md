@@ -45,6 +45,8 @@ The Unicode fixture repeats 512 wave characters plus newline/escape characters i
 
 TestBackend timings exclude terminal I/O and display-server latency. The PTY check polls every 10 ms and can force a redraw after 150 ms, so its result is a coarse input-to-visible-output observation. It also checks that PostgreSQL removes the cancelled session. Connector timings cover the entire `fetch_page` call: server work, transport, SDK decoding and display formatting. They do not isolate SDK decode CPU time. Use phase tracing if that distinction becomes necessary.
 
+The context-panel layout was also sampled on the same host with Rust 1.98.1 and the same 822,440-byte, 120×40 fixture. Across 100 draws, unchanged frames measured 0.735 ms median / 1.121 ms max; key-to-TestBackend-draw measured 0.737 ms median / 1.130 ms max. Formatting took 0.992 ms and page installation 0.003 ms. The different compiler and separate run prevent attributing the difference solely to the layout; terminal I/O remains excluded.
+
 ## Bounds
 
 Oversized PostgreSQL cells/pages and Qdrant payloads fail explicitly. Fixture tests verify continuation preservation and successful reads after failures. TUI tests retain at most three pages per view, each with a 1 MiB string budget; delayed-worker tests verify cancellation and stale-result rejection. The worker has one active request and the app keeps one replaceable pending request, with bounded command/result channels.

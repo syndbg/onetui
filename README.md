@@ -66,6 +66,8 @@ Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. Th
 
 ## Browsing and offline catalog
 
+The TUI puts connection and resource context above the data table, with available action keys alongside it on wide terminals. A dark palette, lavender selection, sort arrows and labeled status colors distinguish navigation, loading and errors. The footer keeps paging, local filter/sort state and command input visible. Smaller terminals use a compact header; `?` opens action help.
+
 ```sh
 onetui --config "$HOME/onetui.toml"
 onetui --config "$HOME/onetui.toml" --connection local_pg

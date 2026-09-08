@@ -4,9 +4,10 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, ensure};
 use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
-use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::App;
@@ -14,6 +15,135 @@ use crate::app::App;
 use onetui_core::Page;
 use onetui_core::catalog::Action;
 use onetui_core::{PAGE_SIZE, display};
+
+const BACKGROUND: Color = Color::Rgb(30, 30, 46);
+const SURFACE: Color = Color::Rgb(24, 24, 37);
+const TEXT: Color = Color::Rgb(205, 214, 244);
+const MUTED: Color = Color::Rgb(166, 173, 200);
+const ACCENT: Color = Color::Rgb(180, 190, 254);
+const CYAN: Color = Color::Rgb(137, 220, 235);
+const BLUE: Color = Color::Rgb(137, 180, 250);
+const GREEN: Color = Color::Rgb(166, 227, 161);
+const YELLOW: Color = Color::Rgb(249, 226, 175);
+const RED: Color = Color::Rgb(243, 139, 168);
+
+fn panel(title: impl Into<Line<'static>>) -> Block<'static> {
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .title(title.into().style(Style::new().fg(CYAN).bold()))
+}
+
+fn context(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height < 8 {
+        frame.render_widget(
+            Paragraph::new(app.view.resource.breadcrumb()).style(Style::new().fg(CYAN)),
+            area,
+        );
+        return;
+    }
+    let block = panel(" Context ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [details, keys] = Layout::horizontal([
+        Constraint::Percentage(if area.width >= 100 { 45 } else { 100 }),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
+    let alias = app.view.alias.as_deref().unwrap_or("choose connection");
+    let kind = app
+        .view
+        .alias
+        .as_deref()
+        .and_then(|alias| app.config.descriptor(alias))
+        .map_or("none selected", |descriptor| descriptor.kind);
+    let transport_color = match app.connection_status {
+        Some(onetui_core::provider::ConnectionStatus::Connected) => GREEN,
+        Some(onetui_core::provider::ConnectionStatus::Disconnected) => RED,
+        _ => YELLOW,
+    };
+    let transport = app
+        .connection_status
+        .map_or_else(|| "Not connected".into(), |status| format!("{status:?}"));
+    let path = app
+        .view
+        .resource
+        .path
+        .iter()
+        .map(|part| display(part))
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let fields = [
+        ("Connection", display(alias), ACCENT),
+        ("Datasource", kind.to_owned(), BLUE),
+        ("Resource", app.view.resource.id.to_owned(), YELLOW),
+        (
+            "Path",
+            if path.is_empty() { "/".into() } else { path },
+            CYAN,
+        ),
+        (
+            "Loaded",
+            format!(
+                "{} items | {} shown",
+                app.view.page.rows.len(),
+                app.view.visible.len()
+            ),
+            TEXT,
+        ),
+        ("Transport", transport, transport_color),
+    ];
+    frame.render_widget(
+        Paragraph::new(
+            fields
+                .into_iter()
+                .map(|(label, value, color)| {
+                    Line::from(vec![
+                        Span::styled(format!("{label:<11}"), Style::new().fg(MUTED)),
+                        Span::styled(value, Style::new().fg(color)),
+                    ])
+                })
+                .collect::<Vec<_>>(),
+        ),
+        details,
+    );
+    if keys.width == 0 {
+        return;
+    }
+    if app.command.is_some() || app.filter_input.is_some() {
+        frame.render_widget(
+            Paragraph::new("Text input active\nEnter apply | Esc discard")
+                .style(Style::new().fg(YELLOW)),
+            keys,
+        );
+        return;
+    }
+    let columns = Layout::horizontal([Constraint::Fill(1); 3]).split(keys);
+    let actions: Vec<_> = app.actions().collect();
+    for (column, chunk) in actions.chunks(6).enumerate() {
+        let Some(area) = columns.get(column) else {
+            break;
+        };
+        let lines = chunk
+            .iter()
+            .map(|entry| {
+                let name = serde_json::to_value(entry.id)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                Line::from(vec![
+                    Span::styled(
+                        format!("{:<7}", entry.keys[0]),
+                        Style::new().fg(CYAN).bold(),
+                    ),
+                    Span::styled(name, Style::new().fg(MUTED)),
+                ])
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines), *area);
+    }
+}
 
 struct TerminalGuard;
 
@@ -131,27 +261,52 @@ where
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
-    let [header, body, status, command] = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(0),
-        Constraint::Length(3),
-        Constraint::Length(2),
+    let area = frame.area();
+    frame.render_widget(
+        Block::new().style(Style::new().fg(TEXT).bg(BACKGROUND)),
+        area,
+    );
+    let [header, info, body, status, command] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(if area.height >= 20 && area.width >= 60 {
+            8
+        } else {
+            1
+        }),
+        Constraint::Min(1),
+        Constraint::Length(if area.height >= 12 { 3 } else { 1 }),
+        Constraint::Length(if area.height >= 12 { 2 } else { 1 }),
     ])
-    .areas(frame.area());
+    .areas(area);
     let alias = app
         .view
         .alias
         .as_deref()
         .map(display)
         .unwrap_or_else(|| "choose connection".into());
+    let [brand, version] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(if area.width >= 60 { 15 } else { 0 }),
+    ])
+    .areas(header);
     frame.render_widget(
-        Paragraph::new(format!(
-            "OneTUI | {alias} | read-only | transport: {:?}\n{}",
-            app.connection_status,
-            app.view.resource.breadcrumb()
-        )),
-        header,
+        Paragraph::new(Line::from(vec![
+            Span::styled("OneTUI", Style::new().fg(CYAN).bold()),
+            Span::raw(" | "),
+            Span::styled(alias, Style::new().fg(ACCENT)),
+            Span::raw(" | "),
+            Span::styled("read-only", Style::new().fg(RED)),
+        ]))
+        .style(Style::new().bg(SURFACE)),
+        brand,
     );
+    frame.render_widget(
+        Paragraph::new(concat!("v", env!("CARGO_PKG_VERSION")))
+            .right_aligned()
+            .style(Style::new().fg(MUTED).bg(SURFACE)),
+        version,
+    );
+    context(frame, info, app);
     if app.help {
         let mut lines = vec!["Navigation actions (also available as :commands):".to_owned()];
         lines.extend(app.actions().map(|entry| {
@@ -168,7 +323,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         frame.render_widget(
             Paragraph::new(lines.join("\n"))
                 .wrap(Wrap { trim: false })
-                .block(Block::bordered().title("Help")),
+                .block(panel(" Help ")),
             body,
         );
     } else if app.detail {
@@ -176,7 +331,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Paragraph::new(app.detail_text.as_str())
                 .wrap(Wrap { trim: false })
                 .scroll((app.detail_scroll, 0))
-                .block(Block::bordered().title(format!(
+                .block(panel(format!(
                     "Field {}/{} | chunk {}/{} | h/l fields, j/k scroll, n/p chunks, Esc back",
                     app.view.column + 1,
                     app.column_count(),
@@ -191,30 +346,54 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let end = (start + 4).min(app.column_count());
         let rows = app.view.visible.iter().map(|&index| {
             let row = &app.view.page.rows[index];
-            Row::new(row.cells.iter().skip(start).take(end - start).map(|cell| {
-                let value = cell.as_deref().unwrap_or("NULL");
-                let mut preview: String = value.chars().take(128).collect();
-                if preview.len() < value.len() {
-                    preview.push('…');
-                }
-                preview
-            }))
+            Row::new(
+                row.cells
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(end - start)
+                    .map(|(column, cell)| {
+                        let value = cell.as_deref().unwrap_or("NULL");
+                        let mut preview: String = value.chars().take(128).collect();
+                        if preview.len() < value.len() {
+                            preview.push('…');
+                        }
+                        Cell::from(preview).style(Style::new().fg(if cell.is_none() {
+                            MUTED
+                        } else if column == 0 {
+                            BLUE
+                        } else {
+                            TEXT
+                        }))
+                    }),
+            )
+            .style(Style::new().bg(if index % 2 == 0 { BACKGROUND } else { SURFACE }))
         });
         let widths = vec![Constraint::Ratio(1, (end - start).max(1) as u32); end - start];
         let table = Table::new(rows, widths)
             .header(
                 Row::new((start..end).map(|i| {
                     format!(
-                        "{}{}",
+                        "{}{}{}",
                         if i == app.view.column { "> " } else { "" },
-                        app.column_name(i)
+                        app.column_name(i),
+                        match app.view.sort {
+                            Some((column, false)) if column == i => " ↑",
+                            Some((column, true)) if column == i => " ↓",
+                            _ => "",
+                        }
                     )
                 }))
-                .style(Style::new().add_modifier(Modifier::BOLD)),
+                .style(Style::new().fg(YELLOW).add_modifier(Modifier::BOLD)),
             )
-            .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+            .row_highlight_style(Style::new().fg(BACKGROUND).bg(ACCENT).bold())
             .highlight_symbol("> ")
-            .block(Block::bordered().title(descriptor.id));
+            .block(panel(format!(
+                " {} [{} shown / {} loaded] ",
+                descriptor.id,
+                app.view.visible.len(),
+                app.view.page.rows.len()
+            )));
         let mut state = TableState::default().with_selected(if app.view.visible.is_empty() {
             None
         } else {
@@ -252,19 +431,42 @@ pub fn draw(frame: &mut Frame, app: &App) {
         },
     );
     frame.render_widget(
-        Paragraph::new(format!(
-            "{error}\nPage {} | {} items | next: {} | {scope}\nPage-local: {}/{} shown | filter: {:?} | lexical sort: {local_sort}",
-            app.view.offset / PAGE_SIZE + 1,
-            app.view.page.rows.len(),
-            app.view.page.next,
-            app.view.visible.len(), app.view.page.rows.len(), display(&app.view.filter)
-        )),
+        Paragraph::new(vec![
+            Line::styled(
+                error,
+                Style::new().fg(if app.error.is_some() {
+                    RED
+                } else if app.loading {
+                    YELLOW
+                } else {
+                    GREEN
+                }),
+            ),
+            Line::raw(format!(
+                "Page {} | {} items | next: {} | {scope}",
+                app.view.offset / PAGE_SIZE + 1,
+                app.view.page.rows.len(),
+                app.view.page.next,
+            )),
+            Line::raw(format!(
+                "Page-local: {}/{} shown | filter: {:?} | lexical sort: {local_sort}",
+                app.view.visible.len(),
+                app.view.page.rows.len(),
+                display(&app.view.filter)
+            )),
+        ])
+        .style(Style::new().fg(MUTED)),
         status,
     );
     let prompt = app.filter_input.as_ref().map(|value| format!("Filter displayed page: /{}\nEnter apply (empty clears) | Esc discard | max 256 UTF-8 bytes", display(value)))
         .or_else(|| app.command.as_ref().map(|value| format!(":{value}\nEnter execute | Esc cancel")))
-        .unwrap_or_else(|| "Enter open/detail | / filter page | s sort field | m columns | h/l fields | Esc back | n/p pages/chunks | r refresh | c connections | : commands | ? help | q quit".into());
-    frame.render_widget(Paragraph::new(prompt).wrap(Wrap { trim: false }), command);
+        .unwrap_or_else(|| ": commands | ? all actions | q quit\nEnter open/detail | Esc back | j/k move | h/l fields | / filter page | s sort | n/p pages/chunks | r refresh | c connections".into());
+    frame.render_widget(
+        Paragraph::new(prompt)
+            .style(Style::new().fg(CYAN).bg(SURFACE))
+            .wrap(Wrap { trim: false }),
+        command,
+    );
 }
 
 #[cfg(test)]
@@ -272,6 +474,120 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use std::io::Write;
+
+    #[test]
+    fn context_layout_colors_and_input_mode_match_visible_state() {
+        let mut app = App::new(
+            onetui_core::config::Config::parse(
+                "[connections.sample]\nkind='fake'\nurl_env='DO_NOT_RENDER'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap(),
+            Some("sample"),
+        );
+        let request = app.request.take().unwrap();
+        app.view.resource =
+            onetui_core::Resource::new("fake.rows", vec!["public".into(), "orders".into()]);
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: ["id", "city", "note"]
+                    .into_iter()
+                    .map(|name| onetui_core::Column {
+                        name: name.into(),
+                        datatype: "text".into(),
+                    })
+                    .collect(),
+                rows: vec![onetui_core::Row {
+                    cells: vec![Some("42".into()), Some(display("София\u{001b}")), None],
+                    target: None,
+                }],
+                next: true,
+                ..Page::default()
+            }),
+        );
+        app.connection_status = Some(onetui_core::provider::ConnectionStatus::Connected);
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        let contents = |terminal: &Terminal<TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .chunks(120)
+                .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = contents(&terminal);
+        for expected in [
+            "Connection sample",
+            "Datasource fake",
+            "public / orders",
+            "Connected",
+            "1 shown / 1 loaded",
+            "m      columns",
+            "n      next",
+            ": commands",
+            "София\\u{1b}",
+        ] {
+            assert!(text.contains(expected), "missing {expected}:\n{text}");
+        }
+        assert!(!text.contains("p      previous"));
+        assert!(!text.contains("DO_NOT_RENDER"));
+        assert!(!text.contains('\u{001b}'));
+        let selected = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "4" && cell.bg == ACCENT)
+            .unwrap();
+        assert_eq!(selected.fg, BACKGROUND);
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == "R" && cell.fg == GREEN)
+        );
+        eprintln!("{text}");
+
+        app.act(Action::Sort);
+        app.loading = true;
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = contents(&terminal);
+        assert!(text.contains("id ↑"));
+        assert!(text.contains("Loading"));
+        assert!(!text.contains("m      columns"));
+        assert!(!text.contains("n      next"));
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == "L" && cell.fg == YELLOW)
+        );
+
+        app.loading = false;
+        app.error = Some("Request cancelled".into());
+        app.act(Action::Filter);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = contents(&terminal);
+        assert!(text.contains("Request cancelled"));
+        assert!(text.contains("Text input active"));
+        assert!(!text.contains("s      sort"));
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == "R" && cell.fg == RED)
+        );
+    }
 
     #[test]
     #[ignore = "timing sample; run with --release --nocapture"]
@@ -358,7 +674,15 @@ mod tests {
                 .unwrap(),
             None,
         );
-        for (width, height) in [(1, 1), (20, 6), (100, 30)] {
+        for (width, height) in [
+            (1, 1),
+            (20, 6),
+            (59, 24),
+            (60, 19),
+            (60, 20),
+            (99, 24),
+            (100, 30),
+        ] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
             app.act(Action::Help);

@@ -2,6 +2,14 @@
 
 Navigation state, request identity/cancellation, terminal lifecycle and rendering. Tests cover shell state, dynamic columns, chunked cached field detail and real PTYs. This package also owns keyboard/request-state and actual-CLI PTY journeys against PostgreSQL fixtures; connector contracts remain in their connector package. Local filter/sort reorder visible indices only, preserving native paging tokens and cached row identity.
 
+## Layout
+
+The top bar shows OneTUI, the selected alias, read-only mode and version. At 60 columns and 20 rows or larger, a bordered context panel shows the datasource, resource path, loaded/shown item counts and transport state. These counts describe cached data, not a database-wide total. At 100 columns, the panel also shows primary keys for actions available in the current context, using the existing action descriptors. Text entry replaces those hints with input instructions. Smaller terminals use a compact breadcrumb header.
+
+The table has rounded borders, alternating dark rows, a lavender selected row and arrows for page-local sort direction. NULL cells are muted but retain their literal label. Loading, errors and ready states use yellow, red and green with text labels; a connected transport does not mean live data refresh. Paging, filter/sort state and command input remain in the footer. The context panel never reads or displays connection strings, URLs or secret values.
+
+Run `make run` from the workspace root with fixtures already running. `?` opens action descriptions. The palette is fixed; there are no new configuration keys or dependencies. Navigation and request lifecycles are unchanged.
+
 ## Validation
 
 The worker owns a generic executor for one selected alias, with one active request and one replaceable pending request. Descriptors supply entry resources and navigation targets. Production code imports no connector or database SDK; PostgreSQL is a dev dependency for this package's live journey. Session/request identities reject stale pages, errors and transport status. Unix input uses Crossterm's polling backend; the PTY journey also checks repeated resize/input interleaving.
