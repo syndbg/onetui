@@ -63,3 +63,7 @@ See [PostgreSQL usage](postgres.md), [Qdrant usage](qdrant.md) and [configuratio
 - Below 62 columns: help stacks each key/command above its wrapped description.
 
 All panels use the selected theme. There are no panel-layout configuration keys. Resizing or opening an input bar changes layout without changing keybindings, connection lifetime or terminal cursor visibility.
+
+## Proposed value display controls
+
+[ADR-0004](adr/0004-preserve-values-and-select-display-formats.md) describes text, JSON, hex and binary views, with independent pretty-print, highlighting, Unicode and app-wide wrapping settings. These controls are not implemented. Current detail shows cached escaped text with wrapping; use `onetui schema` for the settings and actions the binary actually supports.
