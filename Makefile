@@ -16,7 +16,7 @@ help:
 	  'workflow-lint          Validate GitHub workflows (requires Go; downloads pinned actionlint)' \
 	  'dev-up                 Build and start ready-to-use disposable local databases' \
 	  'dev-seed               Add demo data to running fixtures without resetting existing data' \
-	  'check-local            Check both local databases with fixture credentials' \
+	  'check-local            Check local PostgreSQL, Qdrant and Kafka fixtures' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
 	  'test-integration       Start fresh fixtures, test, then clean up (refuses existing fixtures)' \
 	  'release-check TAG=v...  Verify the release tag matches Cargo version' \

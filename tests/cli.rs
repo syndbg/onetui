@@ -16,6 +16,10 @@ fn help_version_and_nonterminal_error_work_without_configuration() {
         } else {
             assert!(text.contains("Qdrant collections and points"), "{text}");
             assert!(
+                text.contains("Kafka topics, partitions and read-committed records"),
+                "{text}"
+            );
+            assert!(
                 text.contains("payloads and vectors loaded on demand"),
                 "{text}"
             );

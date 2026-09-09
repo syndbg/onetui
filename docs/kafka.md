@@ -1,6 +1,6 @@
 # Kafka browsing
 
-Kafka support is in development. Native mock-cluster tests cover metadata, paging and cleanup; real-broker, authenticated transport and release validation are still pending. The connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources.
+Kafka support is in development. Local Kafka 4.2.0 tests cover browsing, transactions, byte values, limits and unchanged application offsets. Authenticated transport, terminal journeys and release validation are still pending. The connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources.
 
 ## Configuration
 
@@ -53,9 +53,9 @@ Enter on a connection opens topics. Enter on a topic opens partitions; Enter on 
 
 Records include the partition offset, millisecond timestamp when available, key, value and headers. Keys and values remain bytes, even if valid UTF-8. Use `v` to choose text, JSON, hex or binary display. Text/JSON decoding failures do not replace invalid bytes. A tombstone has a null value; empty bytes remain an empty value. Headers use an ordered JSON list of names and nullable byte arrays, so duplicate names survive.
 
-Each page contains at most 100 records and 1 MiB of retained page data. The first page captures a finite upper offset; continuation tokens carry that end and the next partition offset. Refetching page 1 or refreshing captures a new window. Retention and compaction can remove records; offsets are not consecutive row numbers. A transaction can hold back read-committed data below the captured end. That condition or an expired request reports an error and keeps the displayed page/bookmark, rather than claiming the partition ended.
+Each page contains at most 100 records and 1 MiB of retained page data. The first page captures the native read-committed stable end; continuation tokens carry that end and the next partition offset. Open transactions and records beyond that boundary are excluded, even if committed later. Refetching page 1 or refreshing captures a new window. Retention and compaction can remove records; offsets are not consecutive row numbers. An unavailable position or expired request reports an error and keeps the displayed page/bookmark, rather than claiming the partition ended.
 
-Metadata has no native page API: OneTUI re-reads the bounded response, sorts topics/partitions and shows a page. No browsing mode promises a cross-page snapshot. Native receive/prefetch limits do not guarantee process RSS limits, particularly for compressed record batches.
+Metadata has no native page API: OneTUI re-reads the bounded response, sorts topics/partitions and shows a page. No browsing mode promises a cross-page snapshot. Native receiving is capped at 4 MiB, with 1 MiB of configured prefetch. The larger native cap allows Zstandard's stepped buffer growth to decode a near-1-MiB value; the retained page still must fit 1 MiB. These limits do not guarantee process RSS limits.
 
 `check` fetches metadata only. Record reads use manual assignment and explicit offsets, never a topic subscription. Auto-commit, automatic offset storage and topic auto-creation are disabled. OneTUI generates an internal session group ID for the client API; it does not use an application group or commit its offsets. No user override can enable these side effects.
 

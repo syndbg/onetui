@@ -7,9 +7,9 @@ fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "operations": ["check", "fetch_page"],
         "session": "One lazy native owner thread per process; client retained for the selected alias. Native cleanup retains its slot until complete, even after a foreground cancellation. No periodic metadata checks or consumer-group subscription.",
-        "limits": {"page_rows": 100, "display_page_bytes": 1048576, "native_receive_bytes": 2097152, "prefetch_kib": 1024, "rss_guarantee": false},
+        "limits": {"page_rows": 100, "display_page_bytes": 1048576, "native_receive_bytes": 4194304, "prefetch_kib": 1024, "rss_guarantee": false},
         "paths": {"kafka.topics": [], "kafka.partitions": ["topic"], "kafka.records": ["topic", "partition number"]},
-        "paging": "Metadata is re-read and locally paged; records read one partition from its earliest available offset into a finite high-watermark window. Continuations bind session, resource, partition, next offset and window end. Refresh or refetching the first page opens a new window. No retained snapshot. Transactions can prevent reaching the end; errors retain the displayed page and bookmark.",
+        "paging": "Metadata is re-read and locally paged; records read one partition from its earliest available offset to the native read-committed stable end. Open transactions and later records are outside that window. Continuations bind session, resource, partition, next offset and window end. Refresh or refetching the first page opens a new window. No retained snapshot; unavailable positions and request errors retain the displayed page and bookmark.",
         "values": "Key and value are nullable bytes; empty bytes differ from tombstones. Headers are ordered JSON entries with names and nullable byte arrays, preserving duplicates. No schema-registry decoding.",
         "configuration": {
             "kind": {"required": true, "values": ["kafka"], "purpose": "Select the Kafka connector"},

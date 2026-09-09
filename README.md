@@ -13,7 +13,7 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 | PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, SQL query editor, cached field detail, headless checks | Query parameters, writes |
 | Qdrant | Implemented, read-only | Collections and metadata, point ID paging, filtered Scroll JSON editor, on-demand payload and dense/sparse/multivector detail, headless checks | Advanced/nested filters, similarity search, writes |
 | DynamoDB | Planned | None | Connector and all datasource operations |
-| Kafka | [In development](docs/kafka.md) | Topic/partition metadata, bounded record paging and byte-value inspection implemented; real-broker validation pending | Live following, publishing, group administration, schema registry |
+| Kafka | [In development](docs/kafka.md) | Topic/partition metadata, bounded read-committed record paging, byte-value inspection and headless checks; local broker tested | Authenticated transport validation, live following, publishing, group administration, schema registry |
 | NATS | Planned | None | Connector and all datasource operations |
 | RabbitMQ | Planned | None | Connector and all datasource operations |
 

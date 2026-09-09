@@ -46,7 +46,9 @@ pub(crate) fn validate(request: &PageRequest, identity: u64) -> Result<Option<Po
         ("kafka.topics", []) => true,
         ("kafka.partitions", [topic]) => valid_topic(topic),
         ("kafka.records", [topic, partition]) => {
-            valid_topic(topic) && partition.parse::<i32>().is_ok_and(|n| n >= 0)
+            valid_topic(topic)
+                && partition.len() <= 10
+                && partition.parse::<i32>().is_ok_and(|n| n >= 0)
         }
         _ => false,
     };

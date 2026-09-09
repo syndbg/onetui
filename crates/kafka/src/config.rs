@@ -129,7 +129,9 @@ impl Config {
             .set("queued.max.messages.kbytes", "1024")
             .set("fetch.message.max.bytes", "1048576")
             .set("fetch.max.bytes", "1048576")
-            .set("receive.message.max.bytes", "2097152")
+            // Zstandard frames can omit their decoded size. Native allocation grows in steps;
+            // leave room to reach 1 MiB, then enforce the smaller retained-page limit ourselves.
+            .set("receive.message.max.bytes", "4194304")
             .set("socket.timeout.ms", "1000")
             .set("socket.connection.setup.timeout.ms", "1000")
             .set("enable.ssl.certificate.verification", "true")

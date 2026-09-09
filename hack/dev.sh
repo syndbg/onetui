@@ -29,12 +29,14 @@ up() {
     "${compose[@]}" up -d --wait --wait-timeout 60
     wait_for_connection local_pg
     wait_for_connection local_qdrant
+    wait_for_connection local_kafka
     seed
 }
 
 seed() {
     "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
     cargo run -p onetui-qdrant --example seed_demo --locked
+    cargo run -p onetui-kafka --example seed_demo --locked
 }
 
 cleanup() {
@@ -77,7 +79,7 @@ docker info >/dev/null
 case "$1" in
     up) up ;;
     seed) seed ;;
-    check) check_connection local_pg; check_connection local_qdrant ;;
+    check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka ;;
     down) "${compose[@]}" down --timeout 10 ;;
     logs) "${compose[@]}" logs --no-color --tail 100 ;;
     test)

@@ -1,27 +1,29 @@
 # Local development
 
-Run these commands from the repository root. Requirements: rustup, Make, Bash, Docker Engine/Desktop and Docker Compose with `up --wait` support. OpenSSL is also required for the Qdrant TLS test's unrelated test CA. macOS and Linux are the initial targets. No database installation, manual secret exports or RTK installation is required.
+Run these commands from the repository root. Requirements: rustup, Make, Bash, CMake, a C/C++ compiler, Perl, Docker Engine/Desktop and Docker Compose with `up --wait` support. Kafka's native libraries build through Cargo. The OpenSSL command is also required for TLS fixtures. macOS and Linux are the initial targets. No database installation, manual secret exports or RTK installation is required.
 
 ```sh
 make dev-up        # builds, starts databases, waits for reads, seeds demos
 make dev-seed      # adds demos to running fixtures without resetting them
-make check-local   # runs both headless checks with fake reader credentials
+make check-local   # checks PostgreSQL, Qdrant and Kafka with fixture settings
 make run           # connection picker; uses existing fixtures, q quits
 make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
 
-`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens the connection picker without contacting a datasource. Choose `local_pg` or `local_qdrant` and press Enter. PostgreSQL opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables, or a Qdrant `demo_*` collection. Press `c` to return to the picker. Only an explicit CLI `--connection <alias>` skips the picker. See [PostgreSQL usage](../docs/postgres.md) and [Qdrant usage](../docs/qdrant.md).
+`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens the connection picker without contacting a datasource. Choose `local_pg`, `local_qdrant` or `local_kafka` and press Enter. PostgreSQL opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables, a Qdrant `demo_*` collection, or a Kafka `demo_*` topic and partition. Press `c` to return to the picker. Only an explicit CLI `--connection <alias>` skips the picker. See [PostgreSQL usage](../docs/postgres.md), [Qdrant usage](../docs/qdrant.md) and [Kafka usage](../docs/kafka.md).
 
-`compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
+`compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`; Apache Kafka 4.2.0 listens on `127.0.0.1:19092`. Kafka runs one combined KRaft broker/controller with auto topic creation disabled and no authentication on the local development listener. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 
-A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` continues to check the two normal connection aliases.
+A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` checks the normal PostgreSQL, Qdrant and Kafka connection aliases.
 
 The scripts set fixture-only credentials in their own process and do not modify your shell/config. `connections.toml` contains the theme, connection aliases, endpoint and environment references. Press `T` or use `:themes` to preview all palettes with `j`/`k` or arrows; Enter keeps for this session, Esc or Ctrl-C restores the previous theme. To persist a startup preference, edit top-level `theme` in that file; the menu never writes it. `onetui schema` lists known settings and actions. A bare `onetui --check --config hack/connections.toml` still needs `--connection` and the referenced environment variables; use `make check-local` to supply them automatically.
 
 If you ran the previous `bpearl-fixtures` project, it remains untouched by this rename and may still occupy the same ports. When ready to discard its temporary data, run `docker compose --project-name bpearl-fixtures -f hack/compose.yaml down`, then `make dev-up` for the new `onetui-fixtures` project. Configuration now defaults to `~/.config/onetui/config.toml`; old configuration is not moved automatically. Environment references are explicit TOML values, so existing custom variable names still work when explicitly configured.
 
 ## Demo data
+
+Kafka includes `demo_events` (1,500 JSON records across three partitions), `demo_binary` (512 records across two partitions), `demo_tombstones` (64 null/empty/JSON values) and `demo_empty`. Records include exact timestamps, binary keys, duplicate headers, invalid UTF-8 and terminal-control bytes. Retention is disabled for this disposable broker so historical fixture timestamps do not expire. The seeder uses Zstandard compression and only connects to `127.0.0.1:19092`. Repeated seeding preserves topics with the expected partition/offset counts; a mismatch fails without replacing data. It never targets a user-supplied broker.
 
 Use `e` or `:query` after choosing a datasource to try [native query examples](../docs/queries.md). On PostgreSQL, query `demo.customers`; on Qdrant, select `demo_products` before opening the editor. Ctrl-U clears the draft, Enter or F5 executes, Shift+Enter adds a line and Esc returns. These queries need no additional setup or configuration. See the query guide for terminals that cannot distinguish Shift+Enter from Enter.
 

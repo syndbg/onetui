@@ -149,6 +149,9 @@ impl KafkaExecutor {
                             }
                             *last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
                             let result = run(client.as_ref().unwrap(), &job, identity);
+                            if result.is_err() {
+                                let _ = client.as_ref().unwrap().poll(Duration::ZERO);
+                            }
                             job.remaining()?;
                             result
                         })();
@@ -261,11 +264,11 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
     }
     let topic = &request.resource.path[0];
     let partition: i32 = request.resource.path[1].parse()?;
-    let (low, high) = client.fetch_watermarks(topic, partition, job.remaining()?)?;
-    let (start, end) = position.map_or((low, high), |p| (p.offset, p.end.unwrap()));
+    let (low, stable_end) = client.fetch_watermarks(topic, partition, job.remaining()?)?;
+    let (start, end) = position.map_or((low, stable_end), |p| (p.offset, p.end.unwrap()));
     ensure!(
-        start >= low && start <= end && end <= high,
-        "Kafka offsets unavailable: requested [{start}, {end}), available [{low}, {high}); refresh"
+        start >= low && start <= end && end <= stable_end,
+        "Kafka offsets unavailable: requested [{start}, {end}), available [{low}, {stable_end}); refresh"
     );
     let mut page = crate::browse::page(
         &request.resource,
@@ -317,8 +320,8 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                         next = end;
                         break;
                     }
-                    // A transaction can hold back read-committed visibility below the captured high watermark.
-                    // Return a visible failure instead of declaring EOF or silently moving past that transaction.
+                    // Log/leader changes can invalidate the captured stable end between lookup and fetch.
+                    // An earlier EOF must not silently move the bookmark past missing data.
                     anyhow::bail!(
                         "Kafka read-committed end is below the captured offset {end}; transaction or log state changed; refresh"
                     );
