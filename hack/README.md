@@ -23,7 +23,7 @@ If you ran the previous `bpearl-fixtures` project, it remains untouched by this 
 
 ## Demo data
 
-Use `e` or `:query` after choosing a datasource to try [native query examples](../docs/queries.md). On PostgreSQL, query `demo.customers`; on Qdrant, select `demo_products` before opening the editor. Ctrl-U clears the draft, Enter adds a line, F5 executes and Esc returns. These queries need no additional setup or configuration.
+Use `e` or `:query` after choosing a datasource to try [native query examples](../docs/queries.md). On PostgreSQL, query `demo.customers`; on Qdrant, select `demo_products` before opening the editor. Ctrl-U clears the draft, Enter or F5 executes, Shift+Enter adds a line and Esc returns. These queries need no additional setup or configuration. See the query guide for terminals that cannot distinguish Shift+Enter from Enter.
 
 `make dev-up` seeds these datasets after readiness; `make dev-seed` adds them to an already-running setup. The reserved demo names are separate from the small `public` edge-case fixtures and collections owned by tests.
 

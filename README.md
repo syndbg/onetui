@@ -13,7 +13,7 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 | PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, SQL query editor, cached field detail, headless checks | Query parameters, writes |
 | Qdrant | Implemented, read-only | Collections and metadata, point ID paging, filtered Scroll JSON editor, on-demand payload and dense/sparse/multivector detail, headless checks | Advanced/nested filters, similarity search, writes |
 | DynamoDB | Planned | None | Connector and all datasource operations |
-| Kafka | Planned | None | Connector and all datasource operations |
+| Kafka | [In development](docs/kafka.md) | Topic/partition metadata, bounded record paging and byte-value inspection implemented; real-broker validation pending | Live following, publishing, group administration, schema registry |
 | NATS | Planned | None | Connector and all datasource operations |
 | RabbitMQ | Planned | None | Connector and all datasource operations |
 
@@ -21,7 +21,7 @@ Qdrant browsing means opening a collection, paging through its point IDs, then o
 
 PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings are planned.
 
-Press `e` or use `:query` for native querying: SQL on PostgreSQL, filtered Scroll JSON on the selected Qdrant collection. The compact editor sits above retained rows. Ctrl-R or F5 executes; Enter adds a line; Ctrl-U clears the draft; Esc returns to rows. After execution, the query stays visible above its results; press `e` to edit again. Drafts stay in memory, and `/` stays page-local. See [query examples, supported syntax and safety limits](docs/queries.md).
+Press `e` or use `:query` for native querying: SQL on PostgreSQL, filtered Scroll JSON on the selected Qdrant collection. The compact editor sits above retained rows. Enter or F5 executes; Shift+Enter adds a line; Ctrl-U clears the draft; Esc returns to rows. Ctrl-R also executes. After execution, the query stays visible above its results; press `e` to edit again. Drafts stay in memory, and `/` stays page-local. See [query examples, supported syntax and terminal requirements](docs/queries.md).
 
 Use `n/p` to move between datasource pages. Previous pages come from the row cache or are refetched from in-memory bookmarks, so cache eviction does not prevent returning to page 1. Refetched data may have changed. [Navigation and bookmark limits](docs/ui.md#navigation) describe the behavior; `onetui schema` prints the limits.
 
@@ -33,6 +33,7 @@ Read and write support is the direction for OneTUI, not a capability of the init
 - Ratatui and Crossterm for terminal rendering, keyboard input and terminal lifecycle.
 - Tokio for asynchronous requests, cancellation and connection tasks.
 - `tokio-postgres` with Rustls for PostgreSQL; `qdrant-client` and Tonic for Qdrant gRPC.
+- `rdkafka` with native librdkafka/OpenSSL for Kafka.
 - Clap for CLI arguments; Serde, JSON and TOML for configuration and the offline catalog.
 
 Datasources are compiled into the binary using static enum dispatch. Adding one requires a connector package and a rebuild; runtime plugins are not planned.

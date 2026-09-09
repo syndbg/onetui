@@ -41,7 +41,7 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Query,
         keys: &["e"],
-        description: "Edit a native read-only query above retained rows; Ctrl-R/F5 executes, Enter inserts a line, Esc returns",
+        description: "Edit a native read-only query above retained rows; Enter/F5 executes, Shift-Enter inserts a line, Esc returns",
     },
     ActionDescriptor {
         id: Action::Themes,

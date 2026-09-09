@@ -46,16 +46,16 @@ While typing, this plain bar sits between context and content. Context replaces 
 
 The same bar shows `/4b` while editing a filter. Help, field detail and the theme picker replace the content panel, not the header or footer.
 
-`e` or `:query` opens a compact multiline editor above the retained rows. Context shows Ctrl-R/F5 to execute, Enter for a newline, Ctrl-U to clear and Esc to return to rows. The editor takes roughly one third of the content height, bounded to 3..8 rows including borders when space permits. Short terminals use a single input line or omit the query panel when fewer than four content rows remain. Its text scrolls to keep the cursor visible. The command/filter bar stays hidden.
+`e` or `:query` opens a compact multiline editor above the retained rows. Context shows Enter/F5 to execute, Shift+Enter for a newline, Ctrl-U to clear and Esc to return to rows. Ctrl-R also executes. The editor takes roughly one third of the content height, bounded to 3..8 rows including borders when space permits. Short terminals use a single input line or omit the query panel when fewer than four content rows remain. Its text scrolls to keep the cursor visible. The command/filter bar stays hidden. [Terminal requirements](queries.md) explain how Shift+Enter is distinguished from Enter.
 
 After execution, the table has keyboard focus and the executed query stays above it. Press `e` to edit again. Help, menus and row/value detail use the full content area. PostgreSQL uses SQL; Qdrant uses filtered Scroll JSON scoped to a collection. [Native queries](queries.md) documents syntax, paging, draft lifetime and safety limits.
 
 ```text
 + Context | read-only -------------------------------------------------------+
-| Connection local_pg                   Ctrl-r/F5 execute read-only query    |
-| ...                                  Enter     new line                   |
+| Connection local_pg                   Enter/F5    execute read-only query  |
+| ...                                  Shift-Enter new line                 |
 +----------------------------------------------------------------------------+
-+ SQL query | Ctrl-r/F5 run | Esc rows --------------------------------------+
++ SQL query | Enter/F5 run | Esc rows ---------------------------------------+
 | SELECT id, name FROM demo.customers ORDER BY id                            |
 +----------------------------------------------------------------------------+
 + postgres.query [100 shown / 100 loaded] | retained data -------------------+

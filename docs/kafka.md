@@ -1,0 +1,64 @@
+# Kafka browsing
+
+Kafka support is in development. Native mock-cluster tests cover metadata, paging and cleanup; real-broker, authenticated transport and release validation are still pending. The connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources.
+
+## Configuration
+
+Use `onetui schema --datasource kafka` to dump the current supported settings, resources and limits. No file or broker connection is needed for this command.
+
+Configuration uses the normal `onetui.toml` discovery rules described in the [README](../README.md#configuration). To select a file explicitly:
+
+```sh
+onetui --config "$HOME/onetui.toml"
+onetui --config "$HOME/onetui.toml" --check --connection local_kafka
+```
+
+Example for a local plaintext broker (this does not start a broker):
+
+```toml
+[connections.local_kafka]
+kind = "kafka"
+bootstrap_servers = ["127.0.0.1:19092"]
+security_protocol = "PLAINTEXT"
+```
+
+Example for SASL over TLS:
+
+```toml
+[connections.kafka_tls]
+kind = "kafka"
+bootstrap_servers = ["broker.example:9093"]
+security_protocol = "SASL_SSL"
+sasl_mechanism = "SCRAM-SHA-256"
+username_env = "ONETUI_KAFKA_USER"
+password_env = "ONETUI_KAFKA_PASSWORD"
+# Optional private CA bundle; use an absolute path.
+ca_file = "/absolute/path/to/kafka-ca.pem"
+```
+
+| Setting | Purpose, values and default |
+| --- | --- |
+| `kind` | Required string, exactly `kafka`. |
+| `bootstrap_servers` | Required array of 1..32 `host:port` strings, each at most 255 bytes. IPv6 addresses use brackets. No URL scheme, credentials, path, query or fragment. Empty arrays and zero/missing ports are rejected. |
+| `security_protocol` | `SSL` (default), `SASL_SSL`, or `PLAINTEXT`. TLS verifies certificates and hostnames. Plaintext is restricted to loopback bootstrap addresses for local development. |
+| `ca_file` | Optional absolute path, at most 4096 bytes, to a CA bundle. No `~` or environment expansion; relative and empty paths are rejected. Omission uses librdkafka/OpenSSL trust discovery, which is not the same as the other connectors' Rustls trust lookup. Not allowed with `PLAINTEXT`. File access occurs on the first native request, not during offline schema/config validation. |
+| `sasl_mechanism` | Required for `SASL_SSL`: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`. Must be omitted otherwise. |
+| `username_env`, `password_env` | Required for `SASL_SSL`. Nonempty environment-variable references containing ASCII letters, digits, underscores or hyphens. Both must be omitted otherwise. Only the selected alias resolves secrets. Missing, empty or NUL-containing credentials fail; values are never saved to the config file. |
+
+Unknown settings are rejected. Broker metadata can advertise endpoints other than the bootstrap addresses; those addresses must be reachable from the machine running OneTUI. The plaintext bootstrap restriction is not an outbound network allowlist. Prefer TLS for all non-disposable environments. Broker ACLs remain the authorization boundary.
+
+## Navigation and values
+
+Enter on a connection opens topics. Enter on a topic opens partitions; Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
+
+Records include the partition offset, millisecond timestamp when available, key, value and headers. Keys and values remain bytes, even if valid UTF-8. Use `v` to choose text, JSON, hex or binary display. Text/JSON decoding failures do not replace invalid bytes. A tombstone has a null value; empty bytes remain an empty value. Headers use an ordered JSON list of names and nullable byte arrays, so duplicate names survive.
+
+Each page contains at most 100 records and 1 MiB of retained page data. The first page captures a finite upper offset; continuation tokens carry that end and the next partition offset. Refetching page 1 or refreshing captures a new window. Retention and compaction can remove records; offsets are not consecutive row numbers. A transaction can hold back read-committed data below the captured end. That condition or an expired request reports an error and keeps the displayed page/bookmark, rather than claiming the partition ended.
+
+Metadata has no native page API: OneTUI re-reads the bounded response, sorts topics/partitions and shows a page. No browsing mode promises a cross-page snapshot. Native receive/prefetch limits do not guarantee process RSS limits, particularly for compressed record batches.
+
+`check` fetches metadata only. Record reads use manual assignment and explicit offsets, never a topic subscription. Auto-commit, automatic offset storage and topic auto-creation are disabled. OneTUI generates an internal session group ID for the client API; it does not use an application group or commit its offsets. No user override can enable these side effects.
+
+Native work stays outside the UI and Tokio async worker threads. Cancellation stops waiting; a native call or destructor may still be finishing. One process permits only one native owner, including cleanup, so repeated switches cannot accumulate blocked workers. A replacement waits within its request deadline. The native client is reused within the selected session and released on disconnect, switch or quit.
+
+SQL, live following, publishing, consumer-group administration, schema-registry decoding, mutual TLS, OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.

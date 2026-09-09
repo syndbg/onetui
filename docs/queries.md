@@ -4,8 +4,8 @@ Press `e` or type `:query` on a connected datasource to open its query editor. P
 
 | Editor key | Purpose |
 | --- | --- |
-| Ctrl-R or F5 | Execute the draft from page 1 |
-| Enter | Insert a newline |
+| Enter, F5 or Ctrl-R | Execute the draft from page 1 |
+| Shift+Enter | Insert a newline |
 | Arrows, Home/End | Move the cursor within the draft |
 | Ctrl-Home/Ctrl-End | Move to the start/end of the draft |
 | Backspace/Delete | Remove the previous/next character |
@@ -15,7 +15,9 @@ Press `e` or type `:query` on a connected datasource to open its query editor. P
 
 The editor accepts bracketed paste and at most 16 KiB of UTF-8 text. It normalizes pasted line endings and tabs and rejects other control characters. While a request runs, editing and execution keys are disabled; Esc/Ctrl-C still cancel. A compact, full-width editor sits above the retained rows, which remain visible during editing, loading and errors. It follows the session's wrapping setting, wrapping long input at grapheme boundaries and scrolling to keep the cursor visible. With wrapping off it scrolls horizontally. Query text uses plain styling; value highlighting applies to results.
 
-Successful requests focus the result table, including one-cell results. The executed query remains visible above it, labeled `executed`; press `e` to edit again. While editing, the table is labeled `retained data`, since its rows do not yet reflect the draft. `Enter` opens row fields or point details; `v` controls value formatting. `n/p` pages through the result, and `r` reruns from the beginning. A query error keeps the draft and the previous results. Esc closes the editor first; from results, Esc returns to the browsing view that opened the query. Enter in the editor never executes SQL: use Ctrl-R if your terminal or keyboard intercepts F5.
+Successful requests focus the result table, including one-cell results. The executed query remains visible above it, labeled `executed`; press `e` to edit again. While editing, the table is labeled `retained data`, since its rows do not yet reflect the draft. With results focused, `Enter` opens row fields or point details; `v` controls value formatting. `n/p` pages through the result, and `r` reruns from the beginning. A query error keeps the draft and the previous results. Esc closes the editor first; from results, Esc returns to the browsing view that opened the query. Use Enter or Ctrl-R to execute from the editor if your terminal or keyboard intercepts F5.
+
+Shift+Enter requires the terminal to send a distinct modified key event. OneTUI enables [Crossterm's enhanced keyboard protocol](https://docs.rs/crossterm/0.29.0/crossterm/event/struct.PushKeyboardEnhancementFlags.html) and restores the previous mode on exit. If your terminal sends the same carriage return for Enter and Shift+Enter, OneTUI cannot distinguish them: both execute. Configure Shift+Enter to send `ESC [ 13 ; 2 u` (bytes `\x1b[13;2u`) or use a compatible terminal. Bracketed multiline paste preserves newlines without executing the draft.
 
 Drafts and paging tokens stay in memory. OneTUI does not save them in `onetui.toml`, a history file or application logs; the database may log received queries. Drafts belong to retained views and disappear when those views or the connection session are discarded. Executing an edited query replaces its previous results and clears its filter, sort and bookmarks. Tokens are bound to the executor, resource and exact query text. Bookmark limits also apply to query tokens, which include that text; long queries can reach the 1 MiB token budget before the 4,096-bookmark limit.
 
@@ -30,7 +32,7 @@ WHERE active AND balance > 0
 ORDER BY id
 ```
 
-Ctrl-R or F5 executes one `SELECT`, `VALUES` or read-only `WITH` statement. An optional semicolon must be the last non-whitespace character; omit it before a trailing comment. Parameters such as `$1`, multiple statements, utility commands such as `EXPLAIN` and writes are unsupported. Result columns come from PostgreSQL, including duplicate names. Values retain server text and exact numeric precision; native `bytea` remains bytes for hex/binary inspection.
+Enter, F5 or Ctrl-R executes one `SELECT`, `VALUES` or read-only `WITH` statement. An optional semicolon must be the last non-whitespace character; omit it before a trailing comment. Parameters such as `$1`, multiple statements, utility commands such as `EXPLAIN` and writes are unsupported. Result columns come from PostgreSQL, including duplicate names. Values retain server text and exact numeric precision; native `bytea` remains bytes for hex/binary inspection.
 
 Each page runs in a server-enforced read-only transaction. PostgreSQL parses the statement; OneTUI does not decide whether it is safe by checking its first word. The query must fit a derived table. OneTUI bounds its result to 100 rows, guards oversized rows on the server, and rejects pages over 1 MiB or results outside 1..256 columns. Failed or cancelled requests retire the connection. Successful reads roll back and run `DISCARD ALL` to clear session settings and advisory locks before the connection is reused. No transaction or cursor remains open while you inspect results.
 

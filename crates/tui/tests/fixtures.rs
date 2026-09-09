@@ -686,6 +686,7 @@ mod terminal {
             .args(["--connection", "pg"])
             .env("ONETUI_LIVE_PTY_DSN", PG_READER);
         let (mut pty, slave) = Pty::spawn(command);
+        pty.wait_token("\x1b[>1u", Duration::from_secs(3));
         pty.wait(&["postgres.schemas", "public"]);
         assert!(
             !tcgetattr(&slave)
@@ -697,16 +698,26 @@ mod terminal {
         pty.send(b":query\r");
         pty.wait(&[
             "SQLquery",
-            "Ctrl-r/F5",
+            "Enter/F5",
+            "Shift-Enter",
             "executeread-onlyquery",
             "postgres.schemas",
             "public",
         ]);
-        pty.send(b"\x15\x1b[200~SELECT n, n * 2 AS doubled\nFROM generate_series(1, 350) n ORDER BY n\x1b[201~");
+        pty.send(b"\x15\x1b[200~SELECT n, n * 2 AS doubled\x1b[201~\x1b[13;2u\x1b[200~FROM generate_series(1, 350) n ORDER BY n\x1b[201~");
         pty.wait(&["generate_series(1,350)"]);
-        pty.send(b"\x12");
+        pty.send(b"\r");
         pty.wait(&[
             "SQLquery",
+            "executed|eedit",
+            "postgres.query[100shown/100loaded]",
+            "doubled",
+            "Page1",
+        ]);
+        pty.send(b"e");
+        pty.wait(&["SQLquery", "Shift-Enter", "generate_series(1,350)"]);
+        pty.send(b"\x1b[15~");
+        pty.wait(&[
             "executed|eedit",
             "postgres.query[100shown/100loaded]",
             "doubled",

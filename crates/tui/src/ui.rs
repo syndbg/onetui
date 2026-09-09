@@ -161,8 +161,8 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             keys,
             p,
             &[
-                ("Ctrl-r/F5", "execute read-only query"),
-                ("Enter", "new line"),
+                ("Enter/F5", "execute read-only query"),
+                ("Shift-Enter", "new line"),
                 ("Esc", "return / cancel request"),
                 ("Ctrl-u", "clear draft"),
                 ("arrows", "move cursor"),
@@ -256,9 +256,18 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
 
 struct TerminalGuard;
 
+static ENHANCED_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn restore_input_modes() {
+    if ENHANCED_KEYS.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        let _ = crossterm::execute!(stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+    }
+    let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
+}
+
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
+        restore_input_modes();
         ratatui::restore();
     }
 }
@@ -271,7 +280,20 @@ fn terminal() -> Result<(TerminalGuard, DefaultTerminal)> {
     // Restore terminal modes even if initialization fails halfway through.
     let guard = TerminalGuard;
     let terminal = ratatui::try_init().map_err(|_| anyhow!("cannot initialize terminal"))?;
-    crossterm::execute!(stdout(), crossterm::event::EnableBracketedPaste)?;
+    // Pop the alternate-screen keyboard mode before Ratatui's panic hook leaves that screen.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_input_modes();
+        hook(info);
+    }));
+    ENHANCED_KEYS.store(true, std::sync::atomic::Ordering::SeqCst);
+    crossterm::execute!(
+        stdout(),
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        ),
+        crossterm::event::EnableBracketedPaste
+    )?;
     Ok((guard, terminal))
 }
 
@@ -771,7 +793,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let hint = if app.loading {
             "Loading | Esc cancel"
         } else if app.query_editor.is_some() {
-            "Ctrl-r/F5 run | Esc rows"
+            "Enter/F5 run | Esc rows"
         } else {
             "executed | e edit"
         };
@@ -1322,7 +1344,7 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = contents(&terminal);
         assert!(text.contains("SELECT result_value") && text.contains("retained_one"));
-        assert!(text.contains("Ctrl-r"));
+        assert!(text.contains("Enter/F5") && text.contains("Shift-Enter"));
         let [editor_area, rows_area] =
             query_panels(panels(terminal.backend().buffer().area, &app)[2], &app);
         assert!(editor_area.height < rows_area.height);
@@ -2209,6 +2231,21 @@ mod tests {
             assert_eq!(after.control_chars, before.control_chars, "{mode}");
             let text = String::from_utf8_lossy(&output);
             assert!(text.contains("\x1b[?1049h"), "{mode}: no alternate screen");
+            assert!(
+                text.contains("\x1b[>1u"),
+                "{mode}: enhanced keys not enabled"
+            );
+            let pop = text.find("\x1b[<1u").expect("keyboard flags restored");
+            let leave = text.find("\x1b[?1049l").expect("alternate screen restored");
+            assert!(
+                pop < leave,
+                "{mode}: restore keyboard before leaving alternate screen"
+            );
+            assert_eq!(
+                text.matches("\x1b[<1u").count(),
+                1,
+                "{mode}: pop exactly once"
+            );
             assert!(
                 text.contains("\x1b[?1049l"),
                 "{mode}: alternate screen not restored"

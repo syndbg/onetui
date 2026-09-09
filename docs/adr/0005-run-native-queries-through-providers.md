@@ -9,7 +9,7 @@ date: 2026-09-09
 
 Use one query editor and result-viewing flow, with each provider owning its query syntax, validation, execution and continuation. PostgreSQL accepts read-only SQL; Qdrant accepts filtered Scroll JSON scoped to a collection. Do not translate between them or introduce a universal query language.
 
-`e` and `:query` open a compact editor above the retained rows, so editing or a failed request does not hide the data. Ctrl-R or F5 explicitly executes a draft; Enter inserts a newline. Successful execution focuses the result table and keeps the executed query visible above it. Context hints follow the active editor or results. The command bar remains for `:` commands and `/` page-local filtering. Typing a query never sends a datasource request.
+`e` and `:query` open a compact editor above the retained rows, so editing or a failed request does not hide the data. Enter or F5 explicitly executes a draft; Shift+Enter inserts a newline. Ctrl-R also executes. Successful execution focuses the result table and keeps the executed query visible above it. Context hints follow the active editor or results. The command bar remains for `:` commands and `/` page-local filtering. Editing text never sends a datasource request until an execution key is pressed.
 
 [Query usage](../queries.md) documents the supported syntax, examples and current limits.
 

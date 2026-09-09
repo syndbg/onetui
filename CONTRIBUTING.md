@@ -4,7 +4,7 @@ OneTUI is working toward v0.1.0. Check [architecture decisions](docs/adr/0002-us
 
 ## Local setup
 
-Install rustup, Make, Bash and Docker with Compose. The repository pins the Rust toolchain. OpenSSL is needed for the Qdrant TLS tests; Go is needed for workflow linting.
+Install rustup, Make, Bash and Docker with Compose. The repository pins the Rust toolchain. Kafka's native build also needs CMake, a C/C++ compiler and Perl; Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source. An OpenSSL command is needed for TLS fixtures; Go is needed for workflow linting. On macOS, install Xcode Command Line Tools and CMake (`brew install cmake`); on Debian/Ubuntu, install `build-essential cmake perl pkg-config`.
 
 Run from the repository root:
 
@@ -18,7 +18,7 @@ The local databases contain disposable test data. `make dev-down` removes their 
 
 ## Changes and pull requests
 
-Keep each change focused. Implement connector behavior and tests in its owning package; core and TUI code must not gain backend-specific branches. PostgreSQL and Qdrant have separate test suites, not a shared test loop.
+Keep each change focused. Implement connector behavior and tests in its owning package; core and TUI code must not gain backend-specific branches. PostgreSQL, Qdrant and Kafka have separate test suites, not a shared backend test loop.
 
 Add regression coverage for bugs and relevant boundary/error tests for features. Update documentation and configuration examples with the code. Describe each setting's purpose, supported values, default and usage; distinguish implemented behavior from planned support.
 

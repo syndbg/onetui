@@ -122,7 +122,7 @@ The TUI worker calls `executor.fetch_page(request, context).await`; it never cal
 
 Future following requires explicit start/stop, finite buffers, backpressure where supported and visible gaps/drop counts where it is not. A quiet stream is not end-of-data or an expired page. Define stream-start/read deadlines separately from the deliberate lifetime of a live view. Do not force an infinite subscription into repeated page calls.
 
-Resource descriptors list read modes: Kafka topic metadata can page while records follow; NATS Core and JetStream expose different resources. Credentials may deny a supported action. `check` and ordinary browsing must not consume messages or change data.
+Resource descriptors list read modes: Kafka metadata and historical records can page, while live records follow; NATS Core and JetStream expose different resources. Credentials may deny a supported action. `check` reads metadata only. Explicit Kafka record browsing reads the log without committing offsets or joining an application's consumer group; it does not remove records. Browsing must not acknowledge messages or change application consumer state.
 
 ## Connection lifetime and cancellation
 

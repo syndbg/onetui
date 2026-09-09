@@ -1025,6 +1025,7 @@ impl App {
                     self.close_query()
                 }
                 KeyCode::F(5) if !self.loading => self.execute_query(),
+                KeyCode::Enter if !self.loading && key.modifiers.is_empty() => self.execute_query(),
                 KeyCode::Char('r')
                     if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
                 {
@@ -1237,6 +1238,37 @@ mod tests {
             app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn query_enter_executes_and_shift_enter_only_inserts_newline() {
+        let mut app = app();
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new("SELECT 1".into()));
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1\n");
+        assert!(app.request.is_none());
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let request = app.request.take().expect("Enter executes");
+        assert_eq!(request.query.as_deref(), Some("SELECT 1\n"));
+        for key in [
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE),
+        ] {
+            app.key(key);
+            assert!(
+                app.request.is_none(),
+                "loading must not submit another request"
+            );
+            assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1\n");
+        }
+        app.complete(&request, Err(anyhow::anyhow!("native query error")));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        let retry = app.request.take().expect("F5 executes");
+        assert_eq!(retry.query, request.query);
     }
 
     #[test]

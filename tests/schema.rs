@@ -181,3 +181,21 @@ fn qdrant_catalog_filter() {
     );
     assert_eq!(schema["datasources"][0]["query_max_bytes"], 16384);
 }
+
+#[test]
+fn kafka_catalog_filter_is_offline_and_does_not_advertise_queries() {
+    let output = dump(&["--datasource", "kafka"]);
+    assert!(output.status.success());
+    let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
+    let kafka = &schema["datasources"][0];
+    assert_eq!(kafka["id"], "kafka");
+    assert_eq!(kafka["entry_resource"], "kafka.topics");
+    assert!(kafka["query"].is_null());
+    assert_eq!(kafka["resources"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        kafka["configuration"]["security_protocol"]["default"],
+        "SSL"
+    );
+    assert_eq!(kafka["limits"]["page_rows"], 100);
+}
