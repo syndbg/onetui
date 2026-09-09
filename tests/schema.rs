@@ -51,6 +51,11 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
         "qdrant.collections"
     );
     assert_eq!(schema["shell"]["keybindings_configurable"], false);
+    assert_eq!(schema["browsing_limits"]["page_bookmarks_per_view"], 4096);
+    assert_eq!(
+        schema["browsing_limits"]["page_bookmark_token_bytes_per_view"],
+        1048576
+    );
     assert_eq!(
         schema["configuration"]["theme"]["enum"],
         serde_json::json!(onetui_theme::Theme::ALL)

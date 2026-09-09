@@ -105,7 +105,7 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Previous,
         keys: &["p"],
-        description: "Return to a retained previous page; previous text chunk in detail",
+        description: "Return to the previous page from cache or refetch its bookmark; previous text chunk in detail",
     },
     ActionDescriptor {
         id: Action::Refresh,

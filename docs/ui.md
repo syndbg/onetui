@@ -60,6 +60,10 @@ Use PageUp/PageDown to move one screen, or Ctrl-U/Ctrl-D for half a screen, with
 
 A complete one-row, one-column data result opens directly in the value viewer. Qdrant payloads therefore use the content panel for JSON instead of a three-line table preview. Use `j/k` to scroll, `n/p` for chunks and `v` for formatting; Esc returns to the parent resource.
 
+In resource tables, `n` reads the next page and `p` returns to the previous page. The three-page row cache is separate from navigation history: each visited page has an in-memory bookmark containing its incoming provider token. `p` restores a cached page immediately or refetches an evicted page from that bookmark. For example, browse to page 100 with `n`, then press `p` repeatedly to return to page 1. An evicted page requires a working connection, and its rows may have changed since the first read. PostgreSQL views such as `active_customers` use best-effort OFFSET paging without a guaranteed row order.
+
+Bookmarks retain the current path back to page 1, up to 4,096 previous-page bookmarks and 1 MiB of bookmark token text per view. Forward paging stops with an error at either limit instead of discarding history. `p` remains usable; `r` starts a new traversal and clears history after a successful read. Failed or cancelled reads preserve the current page and bookmark for another explicit attempt. Returning to a parent keeps its bookmarks; switching connections or quitting discards them. These are fixed limits, not configuration settings. `onetui schema` lists them.
+
 Filtering updates on each character or Backspace, including held-key repeats. Enter closes the input and keeps the filter; Esc restores the filter and selected row from before editing. Empty input immediately shows all loaded rows. Filtering remains case-sensitive and page-local, searches all cached fields, and neither reformats values nor sends a datasource request. Input still has a 256-byte UTF-8 limit.
 
 See [PostgreSQL usage](postgres.md), [Qdrant usage](qdrant.md) and [configuration](../README.md#configuration) for data navigation and connection settings.

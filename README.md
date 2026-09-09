@@ -21,6 +21,8 @@ Qdrant browsing means opening a collection, paging through its point IDs, then o
 
 PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings and backend-specific querying are planned.
 
+Use `n/p` to move between datasource pages. Previous pages come from the row cache or are refetched from in-memory bookmarks, so cache eviction does not prevent returning to page 1. Refetched data may have changed. [Navigation and bookmark limits](docs/ui.md#navigation) describe the behavior; `onetui schema` prints the limits.
+
 Read and write support is the direction for OneTUI, not a capability of the initial release. Write behavior and permissions will be defined per datasource; broker administration is outside v0.1.
 
 ## Tech stack

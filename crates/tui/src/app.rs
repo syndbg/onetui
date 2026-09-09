@@ -9,6 +9,15 @@ use onetui_core::value::{DisplayOptions, FORMATS, UnicodeDisplay, ValueFormat};
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
 use onetui_theme::Theme;
 
+const BOOKMARK_LIMIT: usize = 4096;
+
+struct PageBookmark {
+    offset: i64,
+    position: Option<String>,
+    selected: Option<usize>,
+    page: Option<Page>,
+}
+
 #[derive(Clone)]
 pub struct Request {
     pub id: u64,
@@ -33,7 +42,8 @@ pub struct View {
     pub projections: Vec<Vec<Option<String>>>,
     pub previews: Vec<Vec<String>>,
     pub previews_limited: bool,
-    previous: VecDeque<(i64, Page, Option<usize>)>,
+    position: Option<String>,
+    previous: VecDeque<PageBookmark>,
 }
 
 impl View {
@@ -51,6 +61,7 @@ impl View {
             projections: Vec::new(),
             previews: Vec::new(),
             previews_limited: false,
+            position: None,
             previous: VecDeque::new(),
         }
     }
@@ -296,6 +307,13 @@ impl App {
             offset,
             continuation: if reset {
                 None
+            } else if offset < self.view.offset {
+                self.view
+                    .previous
+                    .back()
+                    .expect("previous page bookmark")
+                    .position
+                    .clone()
             } else {
                 self.view.page.continuation.clone()
             },
@@ -325,19 +343,29 @@ impl App {
                 }) {
                     self.view.sort = None;
                 }
+                let mut selected = None;
                 if request.reset {
                     self.view.previous.clear();
+                } else if request.offset < self.view.offset {
+                    selected = self
+                        .view
+                        .previous
+                        .pop_back()
+                        .expect("previous page bookmark")
+                        .selected;
                 } else {
-                    let selected = self.view.selected_index();
-                    self.view.previous.push_back((
-                        self.view.offset,
-                        std::mem::take(&mut self.view.page),
-                        selected,
-                    ));
-                    while self.view.previous.len() > 2 {
-                        self.view.previous.pop_front();
+                    self.view.previous.push_back(PageBookmark {
+                        offset: self.view.offset,
+                        position: self.view.position.take(),
+                        selected: self.view.selected_index(),
+                        page: Some(std::mem::take(&mut self.view.page)),
+                    });
+                    let count = self.view.previous.len();
+                    if count > 2 {
+                        self.view.previous[count - 3].page = None;
                     }
                 }
+                self.view.position = request.continuation.clone();
                 self.view.page = page;
                 self.view.offset = request.offset;
                 self.view.selected = 0;
@@ -349,7 +377,7 @@ impl App {
                 {
                     self.view.sort = None;
                 }
-                self.view.rebuild(None, self.config.display);
+                self.view.rebuild(selected, self.config.display);
                 self.error = None;
                 if self.single_value() && self.filter_input.is_none() {
                     self.detail = true;
@@ -829,17 +857,37 @@ impl App {
             Action::Connections => self.connections(),
             Action::Next => {
                 self.detail = false;
+                let bookmark_bytes = self
+                    .view
+                    .previous
+                    .iter()
+                    .map(|bookmark| bookmark.position.as_ref().map_or(0, String::len))
+                    .sum::<usize>()
+                    + self.view.position.as_ref().map_or(0, String::len);
+                if self.view.previous.len() >= BOOKMARK_LIMIT || bookmark_bytes > PAGE_BYTES {
+                    self.error = Some("Page bookmark limit reached (4096 bookmarks / 1 MiB tokens); go back or refresh to restart".into());
+                    return;
+                }
                 if let Some(offset) = self.view.offset.checked_add(PAGE_SIZE) {
                     self.load(offset, false);
                 }
             }
             Action::Previous => {
                 self.detail = false;
-                if let Some((offset, page, selected)) = self.view.previous.pop_back() {
+                if self
+                    .view
+                    .previous
+                    .back()
+                    .is_some_and(|bookmark| bookmark.page.is_some())
+                {
+                    let bookmark = self.view.previous.pop_back().expect("cached previous page");
                     self.invalidate();
-                    self.view.offset = offset;
-                    self.view.page = page;
-                    self.view.rebuild(selected, self.config.display);
+                    self.view.offset = bookmark.offset;
+                    self.view.position = bookmark.position;
+                    self.view.page = bookmark.page.expect("cached previous page");
+                    self.view.rebuild(bookmark.selected, self.config.display);
+                } else if let Some(bookmark) = self.view.previous.back() {
+                    self.load(bookmark.offset, false);
                 }
             }
             Action::Refresh => {
@@ -1636,6 +1684,153 @@ mod tests {
     }
 
     #[test]
+    fn page_bookmarks_return_from_page_100_to_the_first_page() {
+        let mut app = app();
+        let numbered = |index: i64| {
+            let mut result = page(true);
+            result.rows[0].cells[0] = Some(format!("row {}", index * PAGE_SIZE + 1).into());
+            let mut second = result.rows[0].clone();
+            second.cells[0] = Some(format!("row {}", index * PAGE_SIZE + 2).into());
+            result.rows.push(second);
+            result.continuation = Some(format!("opaque:{index}:\"София\""));
+            result
+        };
+        let first = app.request.take().unwrap();
+        app.complete(&first, Ok(numbered(0)));
+        filter(&mut app, "row");
+        app.act(Action::Sort);
+        for index in 1..100 {
+            app.view.selected = 1;
+            app.act(Action::Next);
+            let request = app.request.take().unwrap();
+            app.complete(&request, Ok(numbered(index)));
+            assert!(
+                app.view
+                    .previous
+                    .iter()
+                    .filter(|bookmark| bookmark.page.is_some())
+                    .count()
+                    <= 2
+            );
+        }
+        for index in (0..99).rev() {
+            assert!(
+                app.available(Action::Previous),
+                "cannot return to page {}",
+                index + 1
+            );
+            app.act(Action::Previous);
+            if let Some(request) = app.request.take() {
+                assert_eq!(request.offset, index * PAGE_SIZE);
+                assert_eq!(
+                    request.continuation,
+                    (index > 0).then(|| format!("opaque:{}:\"София\"", index - 1))
+                );
+                app.complete(&request, Ok(numbered(index)));
+            }
+            assert_eq!(app.view.offset, index * PAGE_SIZE);
+            assert_eq!(app.view.selected, 1);
+            assert_eq!(app.view.filter, "row");
+            assert_eq!(app.view.sort, Some((0, false)));
+            assert_eq!(
+                app.view.page.rows[0].cells[0],
+                Some(format!("row {}", index * PAGE_SIZE + 1).into())
+            );
+        }
+        assert!(!app.available(Action::Previous));
+        assert!(app.request.is_none());
+    }
+
+    #[test]
+    fn failed_cancelled_and_oversized_backward_reads_keep_the_bookmark() {
+        let mut app = app();
+        for index in 0..5 {
+            if index > 0 {
+                app.act(Action::Next);
+            }
+            let request = app.request.take().unwrap();
+            let mut result = page(true);
+            result.continuation = Some(format!("token-{index}"));
+            app.complete(&request, Ok(result));
+        }
+        app.act(Action::Previous);
+        app.act(Action::Previous);
+        assert_eq!(app.view.offset, 200);
+        app.act(Action::Previous);
+        let failed = app.request.take().unwrap();
+        assert_eq!(failed.continuation.as_deref(), Some("token-0"));
+        app.complete(&failed, Err(anyhow::anyhow!("connection lost")));
+        assert_eq!(app.view.offset, 200);
+        assert_eq!(app.view.previous.len(), 2);
+        app.act(Action::Previous);
+        let cancelled = app.request.take().unwrap();
+        app.act(Action::Cancel);
+        app.complete(&cancelled, Ok(page(false)));
+        assert_eq!(app.view.offset, 200);
+        assert_eq!(app.view.previous.len(), 2);
+        app.act(Action::Previous);
+        let oversized = app.request.take().unwrap();
+        let mut large = page(true);
+        large.rows[0].cells[0] = Some("x".repeat(PAGE_BYTES + 1).into());
+        app.complete(&oversized, Ok(large));
+        assert_eq!(app.view.offset, 200);
+        assert_eq!(app.view.previous.len(), 2);
+        app.act(Action::Previous);
+        let retry = app.request.take().unwrap();
+        assert_eq!(retry.continuation, failed.continuation);
+        let mut fresh = page(true);
+        fresh.continuation = Some("new-forward-token".into());
+        app.complete(&retry, Ok(fresh));
+        assert_eq!(app.view.offset, 100);
+        assert_eq!(app.view.previous.len(), 1);
+        app.act(Action::Next);
+        let next = app.request.take().unwrap();
+        assert_eq!(next.continuation.as_deref(), Some("new-forward-token"));
+        app.complete(&next, Ok(page(true)));
+        app.act(Action::Refresh);
+        let refresh = app.request.take().unwrap();
+        assert!(refresh.continuation.is_none());
+        app.complete(&refresh, Ok(page(true)));
+        assert!(app.view.position.is_none());
+        assert!(app.view.previous.is_empty());
+        app.act(Action::Connections);
+        app.complete(&retry, Ok(page(true)));
+        assert!(app.view.previous.is_empty());
+        assert_eq!(app.view.resource.id, "connections");
+    }
+
+    #[test]
+    fn bookmark_budgets_stop_forward_reads_without_erasing_history() {
+        let mut app = app();
+        let first = app.request.take().unwrap();
+        app.complete(&first, Ok(page(true)));
+        app.view.previous = (0..BOOKMARK_LIMIT)
+            .map(|index| PageBookmark {
+                offset: index as i64 * PAGE_SIZE,
+                position: None,
+                selected: None,
+                page: None,
+            })
+            .collect();
+        app.act(Action::Next);
+        assert!(app.request.is_none());
+        assert_eq!(app.view.previous.len(), BOOKMARK_LIMIT);
+        assert!(app.error.as_deref().unwrap().contains("bookmark limit"));
+        app.view.previous.clear();
+        app.view.previous.push_back(PageBookmark {
+            offset: 0,
+            position: Some("x".repeat(PAGE_BYTES)),
+            selected: None,
+            page: None,
+        });
+        app.view.position = Some("x".into());
+        app.act(Action::Next);
+        assert!(app.request.is_none());
+        assert_eq!(app.view.previous.len(), 1);
+        assert!(app.error.as_deref().unwrap().contains("bookmark limit"));
+    }
+
+    #[test]
     fn pagination_preserves_failed_page_and_retains_only_three_pages() {
         let mut app = app();
         let request = app.request.take().unwrap();
@@ -1645,7 +1840,15 @@ mod tests {
             let request = app.request.take().unwrap();
             app.complete(&request, Ok(page(true)));
         }
-        assert_eq!(app.view.previous.len(), 2);
+        assert_eq!(app.view.previous.len(), 4);
+        assert_eq!(
+            app.view
+                .previous
+                .iter()
+                .filter(|bookmark| bookmark.page.is_some())
+                .count(),
+            2
+        );
         app.act(Action::Next);
         let request = app.request.take().unwrap();
         app.complete(&request, Err(anyhow::anyhow!("limit exceeded")));

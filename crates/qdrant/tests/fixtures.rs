@@ -29,8 +29,18 @@ async fn demo_data_browses_all_points_and_vector_shapes() {
         let resource = Resource::new("qdrant.points", vec![name.into()]);
         let mut token = None;
         let mut seen = std::collections::HashSet::new();
+        let mut bookmarks = Vec::new();
         loop {
-            let page = fetch(&executor, resource.clone(), token).await.unwrap();
+            let page = fetch(&executor, resource.clone(), token.clone())
+                .await
+                .unwrap();
+            bookmarks.push((
+                token.clone(),
+                page.rows
+                    .iter()
+                    .map(|row| row.cells[0].clone())
+                    .collect::<Vec<_>>(),
+            ));
             assert!(page.rows.len() <= 100);
             for row in page.rows {
                 assert!(seen.insert(row.cells[0].clone()), "duplicate in {name}");
@@ -41,6 +51,17 @@ async fn demo_data_browses_all_points_and_vector_shapes() {
             token = Some(page.continuation.expect("next page needs a token"));
         }
         assert_eq!(seen.len(), count, "{name}");
+        for (position, ids) in bookmarks.into_iter().rev() {
+            let replay = fetch(&executor, resource.clone(), position).await.unwrap();
+            assert_eq!(
+                replay
+                    .rows
+                    .iter()
+                    .map(|row| row.cells[0].clone())
+                    .collect::<Vec<_>>(),
+                ids
+            );
+        }
     }
     let client = Qdrant::from_url(QDRANT)
         .api_key("fixture-reader-only")

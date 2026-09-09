@@ -45,6 +45,69 @@ fn select(app: &mut App, name: &str) {
 }
 
 #[tokio::test]
+#[ignore = "requires the seeded PostgreSQL fixture"]
+async fn keyboard_bookmarks_return_through_evicted_active_customer_pages() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        file,
+        "[connections.pg]\nkind='postgres'\nurl_env='FIXTURE_DSN'"
+    )
+    .unwrap();
+    let catalog = &[onetui_postgres::PostgresProvider];
+    let config = Config::load(file.path(), catalog).unwrap();
+    let mut executor = config.configure("pg", catalog, &|_| Some("host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable".into())).unwrap();
+    let mut app = App::new(config, Some("pg"));
+    complete(&mut app, &executor).await;
+    select(&mut app, "demo");
+    key(&mut app, KeyCode::Enter);
+    complete(&mut app, &executor).await;
+    select(&mut app, "active_customers");
+    key(&mut app, KeyCode::Enter);
+    complete(&mut app, &executor).await;
+    assert!(app.error.is_none(), "{:?}", app.error);
+    let mut visited = vec![app.view.page.clone()];
+    while app.view.page.next {
+        assert!(visited.len() < 30, "unexpected fixture page count");
+        key(&mut app, KeyCode::Char('n'));
+        complete(&mut app, &executor).await;
+        assert!(app.error.is_none(), "{:?}", app.error);
+        visited.push(app.view.page.clone());
+    }
+    assert!(visited.len() > 3);
+    let mut reads = 0;
+    for index in (0..visited.len() - 1).rev() {
+        key(&mut app, KeyCode::Char('p'));
+        if app.request.is_some() {
+            reads += 1;
+            complete(&mut app, &executor).await;
+        }
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(app.view.offset, index as i64 * onetui_core::PAGE_SIZE);
+        assert_eq!(
+            app.view
+                .page
+                .rows
+                .iter()
+                .map(|row| &row.cells)
+                .collect::<Vec<_>>(),
+            visited[index]
+                .rows
+                .iter()
+                .map(|row| &row.cells)
+                .collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(reads, visited.len() - 3);
+    assert_eq!(app.view.offset, 0);
+    key(&mut app, KeyCode::Char('p'));
+    assert!(app.request.is_none());
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires the disposable PostgreSQL fixture"]
 async fn keyboard_to_postgres_rows_detail_paging_metadata_and_failure() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
