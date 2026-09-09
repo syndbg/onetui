@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow, ensure};
 mod browse;
 mod config;
 mod provider;
+mod query;
 pub use provider::{QdrantExecutor, QdrantProvider};
 use std::net::IpAddr;
 
@@ -55,7 +56,13 @@ fn rpc_error(status: tonic::Status) -> anyhow::Error {
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "id": "qdrant", "operations": ["check", "fetch_page"],
+        "id": "qdrant", "operations": ["check", "fetch_page", "query_page"],
+        "query_syntax": {
+            "operation": "Filtered Scroll on the current or selected collection; IDs only, payload and vectors fetched on demand",
+            "fields": {"filter": "optional object: must, should, must_not arrays of field conditions", "limit": "optional integer 1..100; default 100"},
+            "condition": "Nonempty key plus exactly one of match: {value: string|boolean|i64} or range: {gt?, gte?, lt?, lte?}; range requires a numeric bound",
+            "unsupported": "Unknown fields, nested conditions, match any/except/text, geo/datetime filters, order_by, user offsets, payload/vector selectors and similarity queries are rejected"
+        },
         "session": "Lazy reusable size-capped gRPC channel; failed/cancelled operations discard it. Shutdown drops the channel. HTTP/2 keepalive interval unset, idle pings disabled; no periodic metadata check or heartbeat TOML setting.",
         "limits": {"page_rows": 100, "rpc_bytes": 1048576, "display_page_bytes": 1048576, "retained_pages_per_view": 3},
         "navigation": "Enter: collections -> collection -> points or metadata; points -> point -> payload or vectors. Payload and vectors are separate reads. Enter on a data row inspects cached fields; h/l selects fields.",

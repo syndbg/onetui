@@ -7,6 +7,7 @@ use tokio::sync::watch;
 pub struct FakeProvider;
 pub const CATALOG: &[FakeProvider] = &[FakeProvider];
 static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    query: None,
     kind: "fake",
     entry_resource: None,
     browsing: "check only",

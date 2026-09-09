@@ -7,7 +7,7 @@ OneTUI has one context header, an input bar that appears only while typing, a co
 | Context | `read-only` in the title; connection alias, datasource, resource, path, loaded/shown counts and transport state | The alias appears here once. Counts describe cached data, not database totals. Connected means transport state, not automatic data refresh. |
 | Context actions | Colored keys beside their descriptions | Browsing hints come from the action catalog. `n/p` stay visible at page/chunk boundaries, and loading does not rearrange the shortcuts. Unavailable keys are muted and remain inactive. Command/filter entry and theme selection replace browsing hints with their own controls. |
 | Input | `:` command or `/` filter text inside a plain border | Visible only while typing. Filters update live; Enter keeps a filter or executes a command. Esc restores/discards. Long input scrolls to show its end. Closing it returns the space to the content panel. |
-| Content | Connection picker, resource table, field detail, help or theme picker | Tables show loaded/shown counts and any applied filter in the title. Column arrows indicate page-local lexical sort. Selection and errors use text as well as color. |
+| Content | Connection picker, resource table, field detail, query editor, help or theme picker | Tables show loaded/shown counts and any applied filter in the title. Column arrows indicate page-local lexical sort. Selection and errors use text as well as color. |
 | Footer | Status/error on the first line; paging and read-scope information on the second; version at bottom-right | The version has reserved space and does not overwrite status or paging text. |
 
 ## Layout sketch
@@ -45,6 +45,27 @@ While typing, this plain bar sits between context and content. Context replaces 
 ```
 
 The same bar shows `/4b` while editing a filter. Help, field detail and the theme picker replace the content panel, not the header or footer.
+
+`e` or `:query` opens a compact multiline editor above the retained rows. Context shows Ctrl-R/F5 to execute, Enter for a newline, Ctrl-U to clear and Esc to return to rows. The editor takes roughly one third of the content height, bounded to 3..8 rows including borders when space permits. Short terminals use a single input line or omit the query panel when fewer than four content rows remain. Its text scrolls to keep the cursor visible. The command/filter bar stays hidden.
+
+After execution, the table has keyboard focus and the executed query stays above it. Press `e` to edit again. Help, menus and row/value detail use the full content area. PostgreSQL uses SQL; Qdrant uses filtered Scroll JSON scoped to a collection. [Native queries](queries.md) documents syntax, paging, draft lifetime and safety limits.
+
+```text
++ Context | read-only -------------------------------------------------------+
+| Connection local_pg                   Ctrl-r/F5 execute read-only query    |
+| ...                                  Enter     new line                   |
++----------------------------------------------------------------------------+
++ SQL query | Ctrl-r/F5 run | Esc rows --------------------------------------+
+| SELECT id, name FROM demo.customers ORDER BY id                            |
++----------------------------------------------------------------------------+
++ postgres.query [100 shown / 100 loaded] | retained data -------------------+
+|   id                 name                                                  |
+| > 1                  Mina 1                                                |
+|   2                  Jose 2                                                |
+| ...                                                                        |
++----------------------------------------------------------------------------+
+Ready                                                                 v0.1.0
+```
 
 ## Navigation
 

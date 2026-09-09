@@ -2,7 +2,7 @@ use crate::app::Request;
 use anyhow::{Result, anyhow};
 use onetui_core::Page;
 use onetui_core::provider::{
-    ConnectionStatus, Executor, PageRequest, RequestContext, ShutdownContext,
+    ConnectionStatus, Executor, PageRequest, QueryRequest, RequestContext, ShutdownContext,
 };
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -67,15 +67,17 @@ impl Worker {
                     _ = &mut stopped => break,
                     next = input.recv() => match next { Some(next) => next, None => break },
                 };
-                let result = executor
-                    .fetch_page(
-                        PageRequest {
-                            resource: request.resource.clone(),
-                            continuation: request.continuation.clone(),
-                        },
-                        context,
-                    )
-                    .await;
+                let page = PageRequest {
+                    resource: request.resource.clone(),
+                    continuation: request.continuation.clone(),
+                };
+                let result = if let Some(text) = request.query.clone() {
+                    executor
+                        .query_page(QueryRequest { page, text }, context)
+                        .await
+                } else {
+                    executor.fetch_page(page, context).await
+                };
                 tokio::select! {
                     biased;
                     _ = &mut stopped => break,
@@ -181,6 +183,10 @@ mod tests {
             }
             Ok(Page::default())
         }
+        async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
+            assert_eq!(request.text, "probe query");
+            self.fetch_page(request.page, context).await
+        }
         async fn shutdown(&mut self, _: ShutdownContext) -> Result<()> {
             self.stopped.store(true, Ordering::SeqCst);
             self.status.send_replace(ConnectionStatus::Closed);
@@ -226,6 +232,7 @@ mod tests {
             status: watch::channel(ConnectionStatus::Configured).0,
         };
         let mut worker = Worker::new("a".into(), app.session, executor);
+        app.request.as_mut().unwrap().query = Some("probe query".into());
         worker
             .submit(app.request.take().unwrap(), Duration::from_secs(5))
             .unwrap();

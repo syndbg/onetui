@@ -10,6 +10,7 @@ use crate::catalog::ResourceDescriptor;
 use crate::{Page, Resource};
 
 pub struct ProviderDescriptor {
+    pub query: Option<QueryDescriptor>,
     pub kind: &'static str,
     pub entry_resource: Option<&'static str>,
     pub browsing: &'static str,
@@ -24,6 +25,10 @@ impl ProviderDescriptor {
 
     pub fn capabilities(&self) -> serde_json::Value {
         let mut value = (self.documentation)();
+        value["query"] = serde_json::to_value(self.query).expect("query descriptor");
+        if self.query.is_some() {
+            value["query_max_bytes"] = QUERY_BYTES.into();
+        }
         value["id"] = self.kind.into();
         value["entry_resource"] = serde_json::json!(self.entry_resource);
         value["resources"] = serde_json::to_value(self.resources).expect("static descriptors");
@@ -46,6 +51,13 @@ pub trait Provider: Send + Sync {
 /// Native failures retain backend codes/messages and underlying transport causes.
 /// Executors redact known connection secrets and escape controls before returning diagnostics.
 pub trait Executor: Send + Sync {
+    fn query_page(
+        &self,
+        _request: QueryRequest,
+        _context: RequestContext,
+    ) -> impl Future<Output = Result<Page>> + Send {
+        async { anyhow::bail!("Queries are unavailable for this provider") }
+    }
     fn status(&self) -> watch::Receiver<ConnectionStatus>;
     fn check(&self, context: RequestContext) -> impl Future<Output = Result<CheckResult>> + Send;
     fn fetch_page(
@@ -73,6 +85,30 @@ pub struct CheckResult {
 pub struct PageRequest {
     pub resource: Resource,
     pub continuation: Option<String>,
+}
+
+pub const QUERY_BYTES: usize = 16 * 1024;
+
+#[derive(Clone, Copy, serde::Serialize)]
+pub struct QueryDescriptor {
+    pub resource: &'static str,
+    pub language: &'static str,
+    pub example: &'static str,
+    /// Number of current resource path components needed to scope a query.
+    pub path_depth: usize,
+}
+
+pub struct QueryRequest {
+    pub page: PageRequest,
+    pub text: String,
+}
+
+impl QueryRequest {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(!self.text.trim().is_empty(), "Query is empty");
+        ensure!(self.text.len() <= QUERY_BYTES, "Query exceeds 16 KiB");
+        Ok(())
+    }
 }
 
 pub struct RequestContext {
@@ -156,6 +192,14 @@ pub fn validate_catalog<P: Provider>(catalog: &[P]) -> Result<()> {
                 .is_none_or(|id| descriptor.resource(id).is_some_and(|r| r.paging)),
             "invalid provider entry resource"
         );
+        ensure!(
+            descriptor.query.is_none_or(|q| descriptor
+                .resource(q.resource)
+                .is_some_and(|r| r.paging)
+                && !q.example.is_empty()
+                && q.example.len() <= QUERY_BYTES),
+            "invalid provider query descriptor"
+        );
     }
     Ok(())
 }
@@ -196,6 +240,7 @@ mod tests {
             actions: &[],
         };
         static DUPLICATE: ProviderDescriptor = ProviderDescriptor {
+            query: None,
             kind: "fake",
             entry_resource: None,
             browsing: "",
@@ -203,6 +248,7 @@ mod tests {
             documentation: || serde_json::json!({}),
         };
         static MISSING: ProviderDescriptor = ProviderDescriptor {
+            query: None,
             kind: "fake",
             entry_resource: Some("fake.missing"),
             browsing: "",

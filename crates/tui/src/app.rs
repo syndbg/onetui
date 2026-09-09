@@ -20,6 +20,7 @@ struct PageBookmark {
 
 #[derive(Clone)]
 pub struct Request {
+    pub query: Option<String>,
     pub id: u64,
     pub alias: String,
     pub resource: Resource,
@@ -30,6 +31,8 @@ pub struct Request {
 }
 
 pub struct View {
+    pub query: Option<String>,
+    query_draft: Option<String>,
     pub alias: Option<String>,
     pub resource: Resource,
     pub page: Page,
@@ -49,6 +52,8 @@ pub struct View {
 impl View {
     fn new(alias: Option<String>, resource: Resource) -> Self {
         Self {
+            query: None,
+            query_draft: None,
             alias,
             resource,
             page: Page::default(),
@@ -171,6 +176,7 @@ fn projections(page: &Page) -> Result<Vec<Vec<Option<String>>>, &'static str> {
 }
 
 pub struct App {
+    pub query_editor: Option<crate::query::Editor>,
     pub config: Config,
     pub view: View,
     parents: Vec<View>,
@@ -206,6 +212,7 @@ pub struct App {
 impl App {
     pub fn new(config: Config, alias: Option<&str>) -> Self {
         let mut app = Self {
+            query_editor: None,
             config,
             view: View::new(None, Resource::new("connections", vec![])),
             parents: Vec::new(),
@@ -262,6 +269,7 @@ impl App {
     }
 
     fn connections(&mut self) {
+        self.query_editor = None;
         self.invalidate();
         self.session += 1;
         self.connection_status = None;
@@ -301,6 +309,7 @@ impl App {
         self.row_detail = false;
         self.loading = true;
         self.request = Some(Request {
+            query: self.view.query.clone(),
             id: self.generation,
             alias: self.view.alias.clone().expect("datasource view has alias"),
             resource: self.view.resource.clone(),
@@ -337,6 +346,16 @@ impl App {
         });
         match result {
             Ok(page) if page.bytes() <= PAGE_BYTES => {
+                if request.query != self.view.query {
+                    let mut view = View::new(Some(request.alias.clone()), request.resource.clone());
+                    view.query = request.query.clone();
+                    view.query_draft = request.query.clone();
+                    let parent = std::mem::replace(&mut self.view, view);
+                    if parent.query.is_none() {
+                        self.parents.push(parent);
+                    }
+                }
+                self.query_editor = None;
                 if self.view.sort.is_some_and(|(column, _)| {
                     self.view.page.columns.get(column).map(|c| &c.name)
                         != page.columns.get(column).map(|c| &c.name)
@@ -379,7 +398,7 @@ impl App {
                 }
                 self.view.rebuild(selected, self.config.display);
                 self.error = None;
-                if self.single_value() && self.filter_input.is_none() {
+                if self.single_value() && self.view.query.is_none() && self.filter_input.is_none() {
                     self.detail = true;
                     self.prepare_detail();
                 }
@@ -408,6 +427,9 @@ impl App {
     }
 
     fn available_while_loading(&self, action: Action, loading: bool) -> bool {
+        if self.query_editor.is_some() {
+            return matches!(action, Action::Back | Action::Cancel);
+        }
         if self.display_menu.is_some() {
             return matches!(
                 action,
@@ -426,6 +448,7 @@ impl App {
             );
         }
         match action {
+            Action::Query => !loading && self.query_target().is_some(),
             Action::ScrollLeft | Action::ScrollRight => !self.config.display.word_wrap,
             Action::Filter => !self.detail && !self.row_detail,
             Action::Sort => !self.detail && !self.row_detail && self.column_count() > 0,
@@ -481,6 +504,56 @@ impl App {
                     .selected_index()
                     .and_then(|i| self.view.page.rows.get(i)),
             )
+    }
+
+    pub fn query_descriptor(&self) -> Option<onetui_core::provider::QueryDescriptor> {
+        self.config.descriptor(self.view.alias.as_deref()?)?.query
+    }
+
+    fn query_target(&self) -> Option<Resource> {
+        let descriptor = self.query_descriptor()?;
+        let path = if self.view.resource.path.len() >= descriptor.path_depth {
+            &self.view.resource.path
+        } else {
+            &self
+                .view
+                .page
+                .rows
+                .get(self.view.selected_index()?)?
+                .target
+                .as_ref()?
+                .path
+        };
+        Some(Resource::new(
+            descriptor.resource,
+            path.get(..descriptor.path_depth)?.to_vec(),
+        ))
+    }
+
+    fn close_query(&mut self) {
+        if let Some(editor) = self.query_editor.take() {
+            self.view.query_draft = Some(editor.text);
+        }
+        self.invalidate();
+    }
+
+    fn execute_query(&mut self) {
+        let text = self
+            .query_editor
+            .as_ref()
+            .expect("query editor")
+            .text
+            .clone();
+        if text.trim().is_empty() {
+            self.error = Some("Query is empty".into());
+            return;
+        }
+        let resource = self.query_target().expect("query scope");
+        self.view.query_draft = Some(text.clone());
+        self.load(0, true);
+        let request = self.request.as_mut().expect("queued query");
+        request.query = Some(text);
+        request.resource = resource;
     }
 
     pub fn column_count(&self) -> usize {
@@ -591,6 +664,10 @@ impl App {
     }
 
     pub fn act(&mut self, action: Action) {
+        if self.query_editor.is_some() && matches!(action, Action::Back | Action::Cancel) {
+            self.close_query();
+            return;
+        }
         if !self.available(action) {
             return;
         }
@@ -708,6 +785,19 @@ impl App {
             return;
         }
         match action {
+            Action::Query => {
+                let descriptor = self.query_descriptor().expect("query provider");
+                let text = self
+                    .view
+                    .query_draft
+                    .clone()
+                    .or_else(|| self.view.query.clone())
+                    .unwrap_or_else(|| descriptor.example.into());
+                self.query_editor = Some(crate::query::Editor::new(text));
+                self.help = false;
+                self.detail = false;
+                self.row_detail = false;
+            }
             Action::Display => {
                 self.help = false;
                 self.display_menu = Some(0);
@@ -928,6 +1018,27 @@ impl App {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return;
         }
+        if self.query_editor.is_some() {
+            match key.code {
+                KeyCode::Esc => self.close_query(),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.close_query()
+                }
+                KeyCode::F(5) if !self.loading => self.execute_query(),
+                KeyCode::Char('r')
+                    if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    self.execute_query()
+                }
+                _ if self.loading => {}
+                _ => {
+                    if let Err(error) = self.query_editor.as_mut().unwrap().key(key) {
+                        self.error = Some(error.into());
+                    }
+                }
+            }
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.command = None;
             self.restore_filter();
@@ -1126,6 +1237,80 @@ mod tests {
             app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn queries_preserve_browsing_and_isolate_paging_errors_and_drafts() {
+        let mut app = app();
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        let parent_resource = app.view.resource.clone();
+        command(&mut app, "query");
+        assert!(app.query_editor.is_some());
+        app.query_editor = Some(crate::query::Editor::new("select value".into()));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        let request = app.request.take().unwrap();
+        assert_eq!(request.query.as_deref(), Some("select value"));
+        assert_eq!(request.continuation, None);
+        app.complete(&request, Err(anyhow::anyhow!("native syntax error")));
+        assert_eq!(app.view.resource, parent_resource);
+        assert!(app.query_editor.is_some());
+        assert!(
+            app.error
+                .as_deref()
+                .unwrap()
+                .contains("native syntax error")
+        );
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        let request = app.request.take().unwrap();
+        let result = || Page {
+            rows: vec![Row {
+                cells: vec![Some("1".into()), Some("value".into())],
+                target: None,
+            }],
+            columns: vec![
+                onetui_core::Column {
+                    name: "id".into(),
+                    datatype: "int".into(),
+                },
+                onetui_core::Column {
+                    name: "text".into(),
+                    datatype: "text".into(),
+                },
+            ],
+            continuation: Some("query-token".into()),
+            next: true,
+            ..Page::default()
+        };
+        app.complete(&request, Ok(result()));
+        assert!(app.query_editor.is_none());
+        assert_eq!(app.view.query.as_deref(), Some("select value"));
+        app.act(Action::Next);
+        let request = app.request.take().unwrap();
+        assert_eq!(request.query, app.view.query);
+        assert_eq!(request.continuation.as_deref(), Some("query-token"));
+        app.complete(&request, Ok(result()));
+        assert_eq!(app.view.previous.len(), 1);
+        command(&mut app, "query");
+        app.query_editor = Some(crate::query::Editor::new("select changed".into()));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        let request = app.request.take().unwrap();
+        assert!(request.continuation.is_none());
+        app.complete(&request, Ok(result()));
+        assert!(app.view.previous.is_empty());
+        assert_eq!(app.view.offset, 0);
+        app.act(Action::Query);
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        let cancelled = app.request.take().unwrap();
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.complete(&cancelled, Err(anyhow::anyhow!("late error")));
+        assert!(app.error.is_none());
+        assert!(!app.quit);
+        app.act(Action::Back);
+        assert_eq!(app.view.resource, parent_resource);
+        assert!(app.view.query.is_none());
+        app.act(Action::Connections);
+        assert!(!app.available(Action::Query));
     }
 
     #[test]

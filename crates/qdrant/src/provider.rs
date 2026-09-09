@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    RequestContext, ShutdownContext,
+    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
 };
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
 use qdrant_client::qdrant::{
@@ -18,6 +18,12 @@ pub struct QdrantProvider;
 static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    query: Some(QueryDescriptor {
+        resource: "qdrant.query",
+        language: "Scroll JSON",
+        example: "{\n  \"filter\": {\"must\": []},\n  \"limit\": 100\n}",
+        path_depth: 1,
+    }),
     kind: "qdrant",
     entry_resource: Some("qdrant.collections"),
     browsing: "collections / points / payload / vectors",
@@ -153,6 +159,29 @@ impl QdrantExecutor {
 }
 
 impl Executor for QdrantExecutor {
+    async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
+        let scroll = crate::query::prepare(&request, self.identity)?;
+        self.execute(context, |channel, deadline| async move {
+            let result = PointsClient::new(channel)
+                .max_decoding_message_size(PAGE_BYTES)
+                .scroll(self.request(scroll, deadline))
+                .await
+                .map_err(crate::rpc_error)?
+                .into_inner();
+            let mut page = crate::browse::points(
+                &request.page.resource,
+                result.result,
+                result.next_page_offset,
+                self.identity,
+            )?;
+            page.continuation = page
+                .continuation
+                .map(|inner| crate::query::continuation(request.text, inner))
+                .transpose()?;
+            crate::browse::bounded(page)
+        })
+        .await
+    }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status.subscribe()
     }
@@ -178,6 +207,10 @@ impl Executor for QdrantExecutor {
 
     async fn fetch_page(&self, request: PageRequest, mut context: RequestContext) -> Result<Page> {
         ensure!(!self.closed, "Qdrant session is closed");
+        ensure!(
+            request.resource.id != "qdrant.query",
+            "Use the provider query operation"
+        );
         let offset = crate::browse::validate(&request, self.identity)?;
         if let Some(page) = crate::browse::menu(&request.resource) {
             return context

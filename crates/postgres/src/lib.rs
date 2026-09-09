@@ -2,6 +2,7 @@ mod browse;
 mod check;
 mod config;
 mod provider;
+mod query;
 mod rows;
 use onetui_core::catalog::{Action, ActionSource, ResourceAction, ResourceDescriptor};
 pub use provider::{PostgresExecutor, PostgresProvider};
@@ -46,7 +47,8 @@ pub const ROWS: ResourceDescriptor = ResourceDescriptor {
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "id": "postgres", "operations": ["check", "metadata_browse", "row_browse"],
+        "id": "postgres", "operations": ["check", "metadata_browse", "row_browse", "query_page"],
+        "query_syntax": "One SELECT, VALUES or read-only WITH statement, optionally ending in a semicolon. No parameters, utility statements or writes. 1..256 result columns, 100 rows per page, 1 MiB page cap. Independent OFFSET reads; specify a unique ORDER BY. Server read-only transaction plus rollback and DISCARD ALL; use least-privilege credentials because SQL functions may have external effects.",
         "resources": [&SCHEMAS, &RELATIONS, &COLUMNS, &ROWS],
         "row_paging": "100 rows; non-null unique default-B-tree bigint/text keysets (all composite components), otherwise best-effort OFFSET. No cross-page snapshot.",
         "session": "Lazy reusable connection; no idle transaction/cursor. Failed or cancelled reads retire transport; the next explicit read reconnects. Shutdown/cancel cleanup: 1 second. Native TCP keepalive enabled with 7200-second idle threshold and OS interval/retry defaults; no SQL heartbeat or heartbeat TOML setting.",

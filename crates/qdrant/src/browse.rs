@@ -58,6 +58,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
         paging: true,
         actions: &[],
     },
+    &crate::query::RESOURCE,
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,7 +130,9 @@ struct Position {
 pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Offset>> {
     let valid = match (request.resource.id, request.resource.path.as_slice()) {
         ("qdrant.collections", []) => true,
-        ("qdrant.collection" | "qdrant.metadata" | "qdrant.points", [name]) => !name.is_empty(),
+        ("qdrant.collection" | "qdrant.metadata" | "qdrant.points" | "qdrant.query", [name]) => {
+            !name.is_empty()
+        }
         ("qdrant.point" | "qdrant.payload" | "qdrant.vectors", [name, id]) => {
             !name.is_empty() && Id::parse(id).is_ok()
         }
@@ -155,7 +158,8 @@ pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Of
     ensure!(
         matches!(
             (&position.offset, request.resource.id),
-            (Offset::Collections(_), "qdrant.collections") | (Offset::Point(_), "qdrant.points")
+            (Offset::Collections(_), "qdrant.collections")
+                | (Offset::Point(_), "qdrant.points" | "qdrant.query")
         ),
         "Invalid Qdrant continuation kind"
     );

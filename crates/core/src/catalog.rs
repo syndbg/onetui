@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    Query,
     Up,
     Down,
     Open,
@@ -37,6 +38,11 @@ pub struct ActionDescriptor {
 }
 
 pub const ACTIONS: &[ActionDescriptor] = &[
+    ActionDescriptor {
+        id: Action::Query,
+        keys: &["e"],
+        description: "Edit a native read-only query above retained rows; Ctrl-R/F5 executes, Enter inserts a line, Esc returns",
+    },
     ActionDescriptor {
         id: Action::Themes,
         keys: &["T"],

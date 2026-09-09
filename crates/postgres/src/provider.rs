@@ -7,7 +7,7 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    RequestContext, ShutdownContext,
+    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
 };
 use onetui_core::{PAGE_BYTES, Page, Resource};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,12 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 pub struct PostgresProvider;
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    query: Some(QueryDescriptor {
+        resource: "postgres.query",
+        language: "SQL",
+        example: "SELECT 1 AS value",
+        path_depth: 0,
+    }),
     kind: "postgres",
     entry_resource: Some("postgres.schemas"),
     browsing: "rows + metadata",
@@ -26,6 +32,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         &crate::RELATIONS,
         &crate::COLUMNS,
         &crate::ROWS,
+        &crate::query::RESOURCE,
     ],
     documentation: crate::capabilities,
 };
@@ -100,6 +107,8 @@ struct Position {
     path: Vec<String>,
     offset: i64,
     inner: Option<String>,
+    #[serde(default)]
+    query: Option<String>,
 }
 
 enum ReadResult {
@@ -122,6 +131,7 @@ impl PostgresExecutor {
     async fn read(
         &self,
         request: Option<PageRequest>,
+        query: Option<String>,
         mut context: RequestContext,
     ) -> Result<ReadResult> {
         ensure!(!self.closed, "PostgreSQL session is closed");
@@ -168,7 +178,10 @@ impl PostgresExecutor {
                 }
                 Some(request) => {
                     let position = decode(self.identity, &request.resource, request.continuation.as_deref())?;
-                    let mut page = if request.resource.id == "postgres.rows" {
+                    ensure!(position.offset == 0 || position.query == query, "Continuation belongs to another query; run from the beginning");
+                    let mut page = if let Some(text) = &query {
+                        crate::query::fetch(client, text, position.offset).await?
+                    } else if request.resource.id == "postgres.rows" {
                         crate::rows::fetch(client, &request.resource, position.offset, position.inner.as_deref()).await?
                     } else {
                         crate::browse::metadata(client, &request.resource, position.offset).await?
@@ -179,6 +192,7 @@ impl PostgresExecutor {
                             resource: request.resource.id.into(), path: request.resource.path,
                             offset: position.offset.checked_add(onetui_core::PAGE_SIZE).ok_or_else(|| anyhow!("Page offset exhausted; refresh"))?,
                             inner: page.continuation.take(),
+                            query,
                         })?)
                     } else { None };
                     ensure!(page.bytes() <= PAGE_BYTES, "Page exceeds the 1 MiB display limit; current page retained");
@@ -220,6 +234,7 @@ fn decode(session: u64, resource: &Resource, token: Option<&str>) -> Result<Posi
             path: resource.path.clone(),
             offset: 0,
             inner: None,
+            query: None,
         }),
         Some(token) => {
             ensure!(token.len() <= PAGE_BYTES, "Invalid continuation; refresh");
@@ -268,14 +283,18 @@ impl Executor for PostgresExecutor {
     }
 
     async fn check(&self, context: RequestContext) -> Result<CheckResult> {
-        match self.read(None, context).await? {
+        match self.read(None, None, context).await? {
             ReadResult::Check(result) => Ok(result),
             ReadResult::Page(_) => unreachable!(),
         }
     }
 
     async fn fetch_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
-        match self.read(Some(request), context).await? {
+        ensure!(
+            request.resource.id != "postgres.query",
+            "Use the provider query operation"
+        );
+        match self.read(Some(request), None, context).await? {
             ReadResult::Page(page) => Ok(page),
             ReadResult::Check(_) => unreachable!(),
         }
@@ -287,6 +306,21 @@ impl Executor for PostgresExecutor {
         let result = close(self.session.get_mut().take(), context, false).await;
         self.status.send_replace(ConnectionStatus::Closed);
         result
+    }
+
+    async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
+        request.validate()?;
+        ensure!(
+            request.page.resource.id == "postgres.query" && request.page.resource.path.is_empty(),
+            "Invalid SQL query resource"
+        );
+        match self
+            .read(Some(request.page), Some(request.text), context)
+            .await?
+        {
+            ReadResult::Page(page) => Ok(page),
+            ReadResult::Check(_) => unreachable!(),
+        }
     }
 }
 
@@ -322,6 +356,7 @@ mod tests {
     fn continuation_is_bound_to_executor_and_resource() {
         let resource = Resource::new("postgres.relations", vec!["public".into()]);
         let token = serde_json::to_string(&Position {
+            query: None,
             session: 7,
             resource: resource.id.into(),
             path: resource.path.clone(),

@@ -155,7 +155,23 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
     if keys.width == 0 {
         return;
     }
-    if app.display_menu.is_some() {
+    if app.query_editor.is_some() {
+        key_hints(
+            frame,
+            keys,
+            p,
+            &[
+                ("Ctrl-r/F5", "execute read-only query"),
+                ("Enter", "new line"),
+                ("Esc", "return / cancel request"),
+                ("Ctrl-u", "clear draft"),
+                ("arrows", "move cursor"),
+                ("", "16 KiB; draft kept in memory"),
+            ],
+            &[],
+        );
+        return;
+    } else if app.display_menu.is_some() {
         key_hints(
             frame,
             keys,
@@ -242,6 +258,7 @@ struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
         ratatui::restore();
     }
 }
@@ -254,6 +271,7 @@ fn terminal() -> Result<(TerminalGuard, DefaultTerminal)> {
     // Restore terminal modes even if initialization fails halfway through.
     let guard = TerminalGuard;
     let terminal = ratatui::try_init().map_err(|_| anyhow!("cannot initialize terminal"))?;
+    crossterm::execute!(stdout(), crossterm::event::EnableBracketedPaste)?;
     Ok((guard, terminal))
 }
 
@@ -301,6 +319,11 @@ where
             tokio::select! {
                 event = events.next() => match event {
                     Some(Ok(Event::Key(key))) => app.key(key),
+                    Some(Ok(Event::Paste(text))) => {
+                        if !app.loading && let Some(editor) = app.query_editor.as_mut() && let Err(error) = editor.insert(&text) {
+                            app.error = Some(error.into());
+                        }
+                    },
                     Some(Ok(_)) => {},
                     Some(Err(_)) | None => return Err(anyhow!("terminal input closed or failed")),
                 },
@@ -651,8 +674,26 @@ fn panels(area: Rect, app: &App) -> [Rect; 4] {
     .areas(area)
 }
 
+fn query_panels(body: Rect, app: &App) -> [Rect; 2] {
+    let visible = app.query_editor.is_some()
+        || (app.view.query.is_some()
+            && !app.help
+            && !app.detail
+            && !app.row_detail
+            && app.theme_menu.is_none()
+            && app.display_menu.is_none());
+    let height = if !visible || body.height < 4 {
+        0
+    } else if body.height < 7 {
+        1
+    } else {
+        (body.height / 3).clamp(3, 8)
+    };
+    Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(body)
+}
+
 pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
-    let body = panels(app.viewport, app)[2];
+    let body = query_panels(panels(app.viewport, app)[2], app)[1];
     let mut budget = usize::from(body.height.saturating_sub(if app.detail { 2 } else { 3 }));
     if half {
         budget /= 2;
@@ -723,6 +764,46 @@ pub fn draw(frame: &mut Frame, app: &App) {
     context(frame, info, app);
     if app.command.is_some() || app.filter_input.is_some() {
         command_bar(frame, command, app);
+    }
+    let [query, body] = query_panels(body, app);
+    if query.height > 0 {
+        let language = app.query_descriptor().map_or("Query", |d| d.language);
+        let hint = if app.loading {
+            "Loading | Esc cancel"
+        } else if app.query_editor.is_some() {
+            "Ctrl-r/F5 run | Esc rows"
+        } else {
+            "executed | e edit"
+        };
+        let block = panel(p, format!(" {language} query | {hint} "));
+        let inner = if query.height > 2 {
+            block.inner(query)
+        } else {
+            query
+        };
+        if query.height > 2 {
+            frame.render_widget(block, query);
+        }
+        if let Some(editor) = &app.query_editor {
+            let (lines, row, column) =
+                editor.lines(inner.width as usize, app.config.display.word_wrap);
+            let top = row.saturating_sub(inner.height.saturating_sub(1) as usize);
+            let left = if app.config.display.word_wrap {
+                0
+            } else {
+                column.saturating_sub(inner.width.saturating_sub(1) as usize)
+            };
+            frame.render_widget(
+                Paragraph::new(lines).scroll((top as u16, left as u16)),
+                inner,
+            );
+        } else if let Some(text) = &app.view.query {
+            let lines = text
+                .split('\n')
+                .map(|line| Line::raw(display(line)))
+                .collect::<Vec<_>>();
+            frame.render_widget(wrapping(Paragraph::new(lines), app), inner);
+        }
     }
     if app.display_menu.is_some() && !app.help {
         let options = app.config.display;
@@ -933,7 +1014,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .block(panel(
                 p,
                 format!(
-                    " {} [{} shown / {} loaded]{}{} ",
+                    " {} [{} shown / {} loaded]{}{}{} ",
                     descriptor.id,
                     app.view.visible.len(),
                     app.view.page.rows.len(),
@@ -946,6 +1027,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
                         String::new()
                     } else {
                         format!(" | filter: {:?}", display(&app.view.filter))
+                    },
+                    if app.query_editor.is_some() {
+                        " | retained data"
+                    } else {
+                        ""
                     }
                 ),
             ));
@@ -1194,6 +1280,159 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use std::io::Write;
+
+    #[test]
+    fn query_draft_and_results_remain_visible_through_execution_and_errors() {
+        let contents = |terminal: &Terminal<TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+        let mut app = App::new(
+            onetui_core::config::Config::parse(
+                "[connections.sample]\nkind='fake'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap(),
+            Some("sample"),
+        );
+        let page = || Page {
+            columns: vec![onetui_core::Column {
+                name: "result_value".into(),
+                datatype: "text".into(),
+            }],
+            rows: ["retained_one", "retained_two"]
+                .into_iter()
+                .map(|v| onetui_core::Row {
+                    cells: vec![Some(v.into())],
+                    target: None,
+                })
+                .collect(),
+            ..Page::default()
+        };
+        let request = app.request.take().unwrap();
+        app.complete(&request, Ok(page()));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new("SELECT result_value".into()));
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = contents(&terminal);
+        assert!(text.contains("SELECT result_value") && text.contains("retained_one"));
+        assert!(text.contains("Ctrl-r"));
+        let [editor_area, rows_area] =
+            query_panels(panels(terminal.backend().buffer().area, &app)[2], &app);
+        assert!(editor_area.height < rows_area.height);
+        assert_eq!(editor_area.bottom(), rows_area.y);
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('r'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        let request = app.request.take().expect("Ctrl-r executes the query");
+        assert_eq!(request.query.as_deref(), Some("SELECT result_value"));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = contents(&terminal);
+        assert!(text.contains("Loading") && text.contains("retained_one"));
+        app.complete(&request, Err(anyhow!("native query error")));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = contents(&terminal);
+        assert!(text.contains("native query error") && text.contains("retained_one"));
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::F(5),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let request = app.request.take().unwrap();
+        app.complete(&request, Ok(page()));
+        assert!(app.query_editor.is_none());
+        for (width, height) in [(120, 30), (40, 12)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let text = contents(&terminal);
+            assert!(text.contains("SELECT result_value") && text.contains("retained_two"));
+            assert!(
+                !terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .any(|c| c.modifier.contains(Modifier::REVERSED))
+            );
+        }
+        app.act(Action::Query);
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::F(5),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let request = app.request.take().unwrap();
+        let mut single = page();
+        single.rows.truncate(1);
+        app.complete(&request, Ok(single));
+        assert!(
+            !app.detail,
+            "one-cell queries still show the query and result table"
+        );
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = contents(&terminal);
+        assert!(text.contains("SELECT result_value") && text.contains("retained_one"));
+        app.act(Action::Refresh);
+        let request = app.request.take().unwrap();
+        let mut many = page();
+        many.rows.resize(100, many.rows[0].clone());
+        app.complete(&request, Ok(many));
+        app.viewport = Rect::new(0, 0, 120, 30);
+        let rows_area = query_panels(panels(app.viewport, &app)[2], &app)[1];
+        let step = usize::from(rows_area.height - 3);
+        assert_eq!(page_step(&app, true, false), step);
+        app.act(Action::PageDown);
+        assert_eq!(app.view.selected, step);
+    }
+
+    #[test]
+    fn query_editor_uses_content_panel_and_keeps_caret_visible() {
+        let mut app = App::new(
+            onetui_core::config::Config::parse(
+                "[connections.sample]\nkind='fake'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap(),
+            Some("sample"),
+        );
+        let request = app.request.take().unwrap();
+        app.complete(&request, Ok(Page::default()));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new(format!(
+            "{}\nlast_line_София",
+            "long query ".repeat(40)
+        )));
+        for (width, height) in [(120, 24), (40, 12), (10, 4)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let [_, command, body, _] = panels(buffer.area, &app);
+            assert_eq!(command.height, 0);
+            if body.height > 2 {
+                assert!(
+                    buffer
+                        .content
+                        .iter()
+                        .any(|cell| cell.modifier.contains(Modifier::REVERSED))
+                );
+            }
+            let text = buffer
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            assert!(!text.contains("Filter displayed page"));
+            if width == 120 {
+                assert!(text.contains("F5") && text.contains("execute read-only query"));
+                assert!(text.contains("last_line_София"));
+            }
+        }
+    }
 
     #[test]
     fn mode_key_hints_and_help_columns_are_aligned() {
@@ -1532,7 +1771,7 @@ mod tests {
             "Connected",
             "1 shown / 1 loaded",
             "m      columns",
-            "n       next",
+            "n      next",
             "София\\u{1b}",
         ] {
             assert!(text.contains(expected), "missing {expected}:\n{text}");

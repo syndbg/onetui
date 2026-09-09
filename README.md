@@ -10,8 +10,8 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 
 | Datasource | Status | Supported | Not supported yet |
 | --- | --- | --- | --- |
-| PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, cached field detail, headless checks | SQL editor, server-side query/filter controls, writes |
-| Qdrant | Implemented, read-only | Collections and metadata, point ID paging, on-demand payload and dense/sparse/multivector detail, headless checks | Server-side payload filtering, similarity search, writes |
+| PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, SQL query editor, cached field detail, headless checks | Query parameters, writes |
+| Qdrant | Implemented, read-only | Collections and metadata, point ID paging, filtered Scroll JSON editor, on-demand payload and dense/sparse/multivector detail, headless checks | Advanced/nested filters, similarity search, writes |
 | DynamoDB | Planned | None | Connector and all datasource operations |
 | Kafka | Planned | None | Connector and all datasource operations |
 | NATS | Planned | None | Connector and all datasource operations |
@@ -19,7 +19,9 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 
 Qdrant browsing means opening a collection, paging through its point IDs, then opening a point's payload or vectors. Those are existing reads, not a similarity search. See [Qdrant usage](docs/qdrant.md) for navigation and limits.
 
-PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings and backend-specific querying are planned.
+PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings are planned.
+
+Press `e` or use `:query` for native querying: SQL on PostgreSQL, filtered Scroll JSON on the selected Qdrant collection. The compact editor sits above retained rows. Ctrl-R or F5 executes; Enter adds a line; Ctrl-U clears the draft; Esc returns to rows. After execution, the query stays visible above its results; press `e` to edit again. Drafts stay in memory, and `/` stays page-local. See [query examples, supported syntax and safety limits](docs/queries.md).
 
 Use `n/p` to move between datasource pages. Previous pages come from the row cache or are refetched from in-memory bookmarks, so cache eviction does not prevent returning to page 1. Refetched data may have changed. [Navigation and bookmark limits](docs/ui.md#navigation) describe the behavior; `onetui schema` prints the limits.
 

@@ -136,6 +136,11 @@ fn postgres_catalog_filter() {
     assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
     assert_eq!(schema["datasources"][0]["id"], "postgres");
     assert_eq!(
+        schema["datasources"][0]["query"]["resource"],
+        "postgres.query"
+    );
+    assert_eq!(schema["datasources"][0]["query_max_bytes"], 16384);
+    assert_eq!(
         schema["datasources"][0]["entry_resource"],
         "postgres.schemas"
     );
@@ -166,8 +171,13 @@ fn qdrant_catalog_filter() {
             .as_array()
             .unwrap()
             .len(),
-        7
+        8
     );
     assert_eq!(schema["datasources"][0]["limits"]["rpc_bytes"], 1048576);
     assert!(schema["datasources"][0]["session"].is_string());
+    assert_eq!(
+        schema["datasources"][0]["query"]["resource"],
+        "qdrant.query"
+    );
+    assert_eq!(schema["datasources"][0]["query_max_bytes"], 16384);
 }

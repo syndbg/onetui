@@ -44,6 +44,12 @@ const COLUMNS: ResourceDescriptor = ResourceDescriptor {
     actions: &[],
 };
 static BROWSE: ProviderDescriptor = ProviderDescriptor {
+    query: Some(QueryDescriptor {
+        resource: "fake.rows",
+        language: "Test query",
+        example: "select 1",
+        path_depth: 0,
+    }),
     kind: "fake",
     entry_resource: Some("fake.schemas"),
     browsing: "fake rows",
@@ -51,6 +57,7 @@ static BROWSE: ProviderDescriptor = ProviderDescriptor {
     documentation: || serde_json::json!({}),
 };
 static CHECK: ProviderDescriptor = ProviderDescriptor {
+    query: None,
     kind: "checkonly",
     entry_resource: None,
     browsing: "check only",

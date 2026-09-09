@@ -14,15 +14,17 @@ fn key(app: &mut App, code: KeyCode) {
 async fn complete(app: &mut App, executor: &onetui_postgres::PostgresExecutor) {
     let request = app.request.take().expect("keyboard action queued a read");
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-    let result = executor
-        .fetch_page(
-            PageRequest {
-                resource: request.resource.clone(),
-                continuation: request.continuation.clone(),
-            },
-            context,
-        )
-        .await;
+    let page = PageRequest {
+        resource: request.resource.clone(),
+        continuation: request.continuation.clone(),
+    };
+    let result = if let Some(text) = request.query.clone() {
+        executor
+            .query_page(onetui_core::provider::QueryRequest { page, text }, context)
+            .await
+    } else {
+        executor.fetch_page(page, context).await
+    };
     app.complete(&request, result);
 }
 
@@ -42,6 +44,51 @@ fn select(app: &mut App, name: &str) {
         key(app, KeyCode::Char('j'));
     }
     panic!("fixture resource missing: {name}");
+}
+
+#[tokio::test]
+#[ignore = "requires the PostgreSQL fixture; read-only"]
+async fn keyboard_sql_editor_results_and_browsing_return() {
+    let catalog = &[onetui_postgres::PostgresProvider];
+    let config = Config::parse(
+        "[connections.pg]\nkind='postgres'\nurl_env='FIXTURE_DSN'",
+        catalog,
+    )
+    .unwrap();
+    let mut executor = config.configure("pg", catalog, &|_| Some("host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable".into())).unwrap();
+    let mut app = App::new(config, Some("pg"));
+    complete(&mut app, &executor).await;
+    key(&mut app, KeyCode::Char('e'));
+    app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+    app.query_editor
+        .as_mut()
+        .unwrap()
+        .insert("SELECT n, n * 2 AS doubled\nFROM generate_series(1, 350) n ORDER BY n")
+        .unwrap();
+    key(&mut app, KeyCode::F(5));
+    complete(&mut app, &executor).await;
+    assert!(app.error.is_none(), "{:?}", app.error);
+    assert_eq!(app.view.resource.id, "postgres.query");
+    assert_eq!(app.view.page.rows.len(), 100);
+    key(&mut app, KeyCode::Char('n'));
+    complete(&mut app, &executor).await;
+    assert_eq!(
+        app.view.page.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("101")
+    );
+    key(&mut app, KeyCode::Char('p'));
+    assert!(app.request.is_none());
+    key(&mut app, KeyCode::Enter);
+    assert!(app.row_detail);
+    key(&mut app, KeyCode::Esc);
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.view.resource.id, "postgres.schemas");
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -619,6 +666,99 @@ mod terminal {
     }
 
     #[tokio::test]
+    #[ignore = "requires PostgreSQL and the built CLI; read-only, child-owned PTY"]
+    async fn actual_cli_sql_editor_paste_execute_and_restore() {
+        let mut config = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            config,
+            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'"
+        )
+        .unwrap();
+        let binary = std::env::var_os("ONETUI_TEST_BIN")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
+            });
+        let mut command = Command::new(binary);
+        command
+            .arg("--config")
+            .arg(config.path())
+            .args(["--connection", "pg"])
+            .env("ONETUI_LIVE_PTY_DSN", PG_READER);
+        let (mut pty, slave) = Pty::spawn(command);
+        pty.wait(&["postgres.schemas", "public"]);
+        assert!(
+            !tcgetattr(&slave)
+                .unwrap()
+                .local_flags
+                .contains(LocalFlags::ICANON)
+        );
+        drop(slave);
+        pty.send(b":query\r");
+        pty.wait(&[
+            "SQLquery",
+            "Ctrl-r/F5",
+            "executeread-onlyquery",
+            "postgres.schemas",
+            "public",
+        ]);
+        pty.send(b"\x15\x1b[200~SELECT n, n * 2 AS doubled\nFROM generate_series(1, 350) n ORDER BY n\x1b[201~");
+        pty.wait(&["generate_series(1,350)"]);
+        pty.send(b"\x12");
+        pty.wait(&[
+            "SQLquery",
+            "executed|eedit",
+            "postgres.query[100shown/100loaded]",
+            "doubled",
+            "Page1",
+        ]);
+        pty.send(b"n");
+        pty.wait(&["Page2", "101"]);
+        pty.send(b"p");
+        pty.wait(&["Page1", "doubled"]);
+        pty.send(b"e");
+        pty.wait(&["SQLquery", "postgres.query[100shown/100loaded]", "doubled"]);
+        pty.send(b"\x15\x1b[200~SELECT 1/0\x1b[201~\x1b[15~");
+        pty.wait(&[
+            "22012",
+            "divisionbyzero",
+            "SQLquery",
+            "postgres.query[100shown/100loaded]",
+            "doubled",
+        ]);
+        pty.send(b"\x03");
+        pty.wait(&["postgres.query[100shown/100loaded]", "doubled"]);
+        pty.send(b"\x1b");
+        pty.wait(&["postgres.schemas", "public"]);
+        pty.send(b"q");
+        let until = Instant::now() + Duration::from_secs(3);
+        loop {
+            pty.read();
+            if let Some(status) = pty.child.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "CLI failed to exit: {}",
+                String::from_utf8_lossy(&pty.output)
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        pty.read();
+        let output = String::from_utf8_lossy(&pty.output);
+        assert!(
+            output.contains("\x1b[?1049l"),
+            "alternate screen not restored"
+        );
+        assert!(output.contains("\x1b[?25h"), "cursor not restored");
+        assert!(
+            String::from_utf8_lossy(&pty.output).contains("\x1b[?2004l"),
+            "bracketed paste mode not restored"
+        );
+    }
+
+    #[tokio::test]
     #[ignore = "requires disposable PostgreSQL/Qdrant fixtures and built CLI for connection switching"]
     async fn actual_cli_terminal_worker_and_datasource_switching() {
         use futures_util::FutureExt;
@@ -758,14 +898,14 @@ mod terminal {
             pty.send(b"c");
             pty.wait(&["connections", "pg_other"]);
             pty.open_filtered(alias);
-            pty.wait(&[&format!("Connection{alias}Tthemes"), "postgres.schemas", "public"]);
+            pty.wait(&[&format!("Connection{alias}equery"), "postgres.schemas", "public"]);
             observer.wait_gone(old_pid).await;
             observer.wait_count(1).await;
             pty.open_filtered("public");
             pty.wait(&["postgres.relations", "keyed_rows"]);
             pty.open_filtered("keyed_rows");
             pty.wait(&[
-                &format!("Connection{alias}Tthemes"),
+                &format!("Connection{alias}equery"),
                 "postgres.rows",
                 "Keyset",
                 "9007199254740993",
@@ -779,17 +919,17 @@ mod terminal {
         pty.send(b"c");
         pty.wait(&["connections", "qd"]);
         pty.open_filtered("qd");
-        pty.wait(&["ConnectionqdTthemes", "read-only", "qdrant.collections", "Connected"]);
+        pty.wait(&["Connectionqdequery", "read-only", "qdrant.collections", "Connected"]);
         observer.wait_gone(old_pid).await;
         observer.wait_count(0).await;
         // Allow cancelled PostgreSQL completion to reach the worker before another draw.
         tokio::time::sleep(Duration::from_millis(250)).await;
         pty.send(b"r");
-        pty.wait(&["ConnectionqdTthemes", "read-only", "qdrant.collections", "Connected"]);
+        pty.wait(&["Connectionqdequery", "read-only", "qdrant.collections", "Connected"]);
         assert!(!String::from_utf8_lossy(&pty.output).contains("9007199254740993"));
         assert!(!String::from_utf8_lossy(&pty.output).contains("Request cancelled"));
         pty.open_filtered(&collection);
-        pty.wait(&["ConnectionqdTthemes", "qdrant.collection", "metadata", "points"]);
+        pty.wait(&["Connectionqdequery", "qdrant.collection", "metadata", "points"]);
         pty.send(b"\r");
         pty.wait(&["qdrant.points", "100items", "numeric"]);
         pty.send(b"n");
@@ -835,11 +975,11 @@ mod terminal {
         pty.send(b"c");
         pty.wait(&["connections", "pg"]);
         pty.open_filtered("pg");
-        pty.wait(&["ConnectionpgTthemes", "postgres.schemas", "public"]);
+        pty.wait(&["Connectionpgequery", "postgres.schemas", "public"]);
         pty.open_filtered("public");
         pty.wait(&["postgres.relations", "keyed_rows"]);
         pty.open_filtered("keyed_rows");
-        pty.wait(&["ConnectionpgTthemes", "postgres.rows", "9007199254740993"]);
+        pty.wait(&["Connectionpgequery", "postgres.rows", "9007199254740993"]);
         observer.wait_count(1).await;
         assert!(!String::from_utf8_lossy(&pty.output).contains("onetui-tui-point-1"));
         pty.output.clear();

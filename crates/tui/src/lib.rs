@@ -1,4 +1,5 @@
 mod app;
+mod query;
 #[cfg(test)]
 mod test_provider;
 mod ui;

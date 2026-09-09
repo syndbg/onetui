@@ -10,6 +10,145 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 const PG: &str = "host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable";
 const PG_ADMIN: &str = "host=127.0.0.1 port=15432 user=onetui_fixture_admin password=fixture-admin-only dbname=onetui_fixture sslmode=disable";
 
+async fn sql_query(
+    reader: &onetui_postgres::PostgresExecutor,
+    text: &str,
+    continuation: Option<String>,
+) -> anyhow::Result<onetui_core::Page> {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    reader
+        .query_page(
+            onetui_core::provider::QueryRequest {
+                page: PageRequest {
+                    resource: onetui_core::Resource::new("postgres.query", vec![]),
+                    continuation,
+                },
+                text: text.into(),
+            },
+            context,
+        )
+        .await
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL fixture; read-only"]
+async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
+    use onetui_core::Value;
+    let mut reader = provider();
+    let sql = "WITH numbers AS (SELECT generate_series(1, 350) AS n) SELECT n, n AS n, NULL::text AS missing, decode('00ff', 'hex') AS bytes, '{\"ok\":true}'::jsonb AS json, 12345678901234567890.123456789::numeric AS exact FROM numbers ORDER BY n;";
+    let mut incoming = None;
+    let mut bookmarks = Vec::new();
+    let mut count = 0;
+    loop {
+        let page = sql_query(&reader, sql, incoming.clone()).await.unwrap();
+        assert_eq!(page.columns[0].name, page.columns[1].name);
+        assert_eq!(page.rows[0].cells[2], None);
+        assert_eq!(page.rows[0].cells[3], Some(Value::Bytes(vec![0, 255])));
+        assert_eq!(
+            page.rows[0].cells[5].as_ref().and_then(Value::text),
+            Some("12345678901234567890.123456789")
+        );
+        bookmarks.push((incoming, page.rows[0].cells[0].clone()));
+        count += page.rows.len();
+        if !page.next {
+            break;
+        }
+        incoming = page.continuation;
+    }
+    assert_eq!(count, 350);
+    let old_token = bookmarks[1].0.clone();
+    for (token, first) in bookmarks.into_iter().rev() {
+        let page = sql_query(&reader, sql, token).await.unwrap();
+        assert_eq!(page.rows[0].cells[0], first);
+    }
+    assert!(
+        sql_query(&reader, "SELECT 2", old_token)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("another query")
+    );
+    for text in [
+        "SELECT 1; SELECT 2",
+        "SET transaction_read_only = off",
+        "DELETE FROM demo.customers RETURNING id",
+        "WITH changed AS (DELETE FROM demo.customers RETURNING id) SELECT * FROM changed",
+        "SELECT repeat('x', 1048577)",
+        "SELECT repeat('x', 20000) FROM generate_series(1, 100)",
+        "SELECT $1::text",
+    ] {
+        assert!(sql_query(&reader, text, None).await.is_err(), "{text}");
+    }
+    let error = sql_query(&reader, "SELECT 1/0", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("22012") && error.contains("division by zero"),
+        "{error}"
+    );
+    let page = sql_query(
+        &reader,
+        "SELECT current_setting('transaction_read_only') AS mode",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.rows[0].cells[0].as_ref().and_then(Value::text),
+        Some("on")
+    );
+    sql_query(
+        &reader,
+        "SELECT set_config('search_path', 'pg_catalog', false)",
+        None,
+    )
+    .await
+    .unwrap();
+    let page = sql_query(
+        &reader,
+        "SELECT current_setting('search_path') AS path",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_ne!(
+        page.rows[0].cells[0].as_ref().and_then(Value::text),
+        Some("pg_catalog")
+    );
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let slow = reader.query_page(
+        onetui_core::provider::QueryRequest {
+            page: PageRequest {
+                resource: onetui_core::Resource::new("postgres.query", vec![]),
+                continuation: None,
+            },
+            text: "SELECT pg_sleep(30)".into(),
+        },
+        context,
+    );
+    let (_, result) = tokio::join!(
+        async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel.send(()).unwrap();
+        },
+        slow
+    );
+    assert!(result.unwrap_err().to_string().contains("cancelled"));
+    assert_eq!(
+        sql_query(&reader, "SELECT 1 WHERE false", None)
+            .await
+            .unwrap()
+            .rows
+            .len(),
+        0
+    );
+    reader
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires make dev-seed in the local PostgreSQL fixture"]
 async fn demo_data_browses_wide_typed_and_paged_rows() {

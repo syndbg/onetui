@@ -15,6 +15,103 @@ use std::time::Duration;
 
 const QDRANT: &str = "http://127.0.0.1:16334";
 
+async fn filtered_scroll(
+    executor: &onetui_qdrant::QdrantExecutor,
+    text: &str,
+    continuation: Option<String>,
+) -> anyhow::Result<Page> {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor
+        .query_page(
+            onetui_core::provider::QueryRequest {
+                page: PageRequest {
+                    resource: Resource::new("qdrant.query", vec!["demo_products".into()]),
+                    continuation,
+                },
+                text: text.into(),
+            },
+            context,
+        )
+        .await
+}
+
+#[tokio::test]
+#[ignore = "requires make dev-seed in the local Qdrant fixture; read-only"]
+async fn filtered_scroll_pages_replay_and_reject_changed_query() {
+    let mut executor = browser();
+    let text = r#"{"filter":{"must":[{"key":"active","match":{"value":true}},{"key":"stock","range":{"gte":1}}]},"limit":25}"#;
+    let first = filtered_scroll(&executor, text, None).await.unwrap();
+    assert_eq!(first.rows.len(), 25);
+    let token = first.continuation.unwrap();
+    let second = filtered_scroll(&executor, text, Some(token.clone()))
+        .await
+        .unwrap();
+    let replay = filtered_scroll(&executor, text, Some(token.clone()))
+        .await
+        .unwrap();
+    assert_eq!(second.rows[0].cells, replay.rows[0].cells);
+    assert_ne!(second.rows[0].cells, first.rows[0].cells);
+    assert!(
+        filtered_scroll(&executor, "{}", Some(token))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("another query")
+    );
+    let client = Qdrant::from_url(QDRANT)
+        .api_key("fixture-reader-only")
+        .skip_compatibility_check()
+        .build()
+        .unwrap();
+    let ids = second
+        .rows
+        .iter()
+        .map(|row| {
+            row.target.as_ref().unwrap().path[1]
+                .parse::<u64>()
+                .unwrap()
+                .into()
+        })
+        .collect::<Vec<_>>();
+    let points = client
+        .get_points(GetPointsBuilder::new("demo_products", ids).with_payload(true))
+        .await
+        .unwrap();
+    for point in points.result {
+        let payload = serde_json::to_value(point.payload).unwrap();
+        assert_eq!(payload["active"], true);
+        assert!(payload["stock"].as_f64().unwrap() >= 1.0);
+    }
+    let none = filtered_scroll(
+        &executor,
+        r#"{"filter":{"must":[{"key":"sku","match":{"value":"absent-test-value"}}]}}"#,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(none.rows.is_empty() && !none.next);
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    cancel.send(()).unwrap();
+    let error = executor
+        .query_page(
+            onetui_core::provider::QueryRequest {
+                page: PageRequest {
+                    resource: Resource::new("qdrant.query", vec!["demo_products".into()]),
+                    continuation: None,
+                },
+                text: "{}".into(),
+            },
+            context,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cancelled"));
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires make dev-seed in the local Qdrant fixture"]
 async fn demo_data_browses_all_points_and_vector_shapes() {

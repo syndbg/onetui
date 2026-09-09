@@ -2,7 +2,7 @@ use anyhow::Result;
 use onetui_core::Page;
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    RequestContext, ShutdownContext,
+    QueryRequest, RequestContext, ShutdownContext,
 };
 use onetui_postgres::{PostgresExecutor, PostgresProvider};
 use onetui_qdrant::{QdrantExecutor, QdrantProvider};
@@ -53,6 +53,12 @@ impl Provider for BuiltinProvider {
 }
 
 impl Executor for BuiltinExecutor {
+    async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
+        match self {
+            Self::Postgres(e) => e.query_page(request, context).await,
+            Self::Qdrant(e) => e.query_page(request, context).await,
+        }
+    }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         match self {
             Self::Postgres(e) => e.status(),
