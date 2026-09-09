@@ -1,6 +1,8 @@
 pub mod catalog;
 pub mod config;
 pub mod provider;
+pub mod value;
+pub use value::Value;
 #[cfg(test)]
 mod test_provider;
 
@@ -29,7 +31,7 @@ impl Resource {
 
 #[derive(Clone, Debug)]
 pub struct Row {
-    pub cells: Vec<Option<String>>,
+    pub cells: Vec<Option<Value>>,
     pub target: Option<Resource>,
 }
 
@@ -53,7 +55,11 @@ impl Page {
         self.rows
             .iter()
             .map(|row| {
-                row.cells.iter().flatten().map(String::len).sum::<usize>()
+                row.cells
+                    .iter()
+                    .flatten()
+                    .map(|v| v.bytes().len())
+                    .sum::<usize>()
                     + row
                         .target
                         .as_ref()
@@ -85,9 +91,28 @@ pub fn display(value: &str) -> String {
     text
 }
 
+/// Preserve native error wording and causes without echoing configured secrets or controls.
+pub fn diagnostic(error: anyhow::Error, secrets: &[&str]) -> anyhow::Error {
+    let mut message = format!("{error:#}");
+    for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
+        message = message.replace(secret, "[REDACTED]");
+    }
+    anyhow::anyhow!(display(&message))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostics_preserve_causes_and_escape_after_redaction() {
+        let error = anyhow::anyhow!("certificate rejected: secret\nvalue\x1b[31m")
+            .context("transport error");
+        assert_eq!(
+            diagnostic(error, &["", "secret\nvalue"]).to_string(),
+            "transport error: certificate rejected: [REDACTED]\\u{1b}[31m"
+        );
+    }
 
     #[test]
     fn terminal_text_is_escaped_without_losing_unicode() {

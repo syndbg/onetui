@@ -144,7 +144,7 @@ async fn production_browser_pages_metadata_payload_and_removed_points() {
         let collection = list
             .rows
             .iter()
-            .find(|r| r.cells[0].as_deref() == Some(&name))
+            .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some(&name))
             .unwrap()
             .target
             .clone()
@@ -158,9 +158,11 @@ async fn production_browser_pages_metadata_payload_and_removed_points() {
                 .is_empty()
         );
         let metadata = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
-        assert!(metadata.rows.iter().any(|r| r.cells[0].as_deref()
-            == Some("points_count (approximate)")
-            && r.cells[1].as_deref() == Some("0")));
+        assert!(metadata.rows.iter().any(
+            |r| r.cells[0].as_ref().and_then(onetui_core::Value::text)
+                == Some("points_count (approximate)")
+                && r.cells[1].as_ref().and_then(onetui_core::Value::text) == Some("0")
+        ));
         let mut records: Vec<_> = (1_u64..=105)
             .map(|id| {
                 PointStruct::new(
@@ -189,33 +191,76 @@ async fn production_browser_pages_metadata_payload_and_removed_points() {
             .await?;
         let first = fetch(&executor, points.clone(), None).await?;
         assert_eq!(first.rows.len(), 100);
-        assert_eq!(first.rows[0].cells[0].as_deref(), Some("1"));
+        assert_eq!(
+            first.rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("1")
+        );
         assert!(first.rows.iter().all(|r| r.cells.len() == 2));
         let token = first.continuation.clone();
         let last = fetch(&executor, points.clone(), token.clone()).await?;
         assert_eq!(last.rows.len(), 7);
-        assert_eq!(last.rows[0].cells[0].as_deref(), Some("101"));
+        assert_eq!(
+            last.rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("101")
+        );
         assert!(!last.next);
         assert!(last.continuation.is_none());
         let uuid_row = last
             .rows
             .iter()
-            .find(|r| r.cells[0].as_deref() == Some(uuid))
+            .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some(uuid))
             .unwrap();
         let menu = fetch(&executor, uuid_row.target.clone().unwrap(), None).await?;
         let payload = fetch(&executor, menu.rows[0].target.clone().unwrap(), None).await?;
-        assert!(payload.rows[0].cells[0].as_ref().unwrap().contains("София"));
-        assert!(!payload.rows[0].cells[0].as_ref().unwrap().contains('\x1b'));
+        assert!(matches!(
+            &payload.rows[0].cells[0],
+            Some(onetui_core::Value::Json(_))
+        ));
+        assert!(
+            payload.rows[0].cells[0]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("София")
+        );
+        assert!(
+            !payload.rows[0].cells[0]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains('\x1b')
+        );
         let vectors = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
-        assert_eq!(vectors.rows[0].cells[1].as_deref(), Some("dense"));
-        assert_eq!(vectors.rows[0].cells[3].as_deref(), Some("[1.0,2.0,3.0]"));
+        assert_eq!(
+            vectors.rows[0].cells[1]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("dense")
+        );
+        assert_eq!(
+            vectors.rows[0].cells[3]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("[1.0,2.0,3.0]")
+        );
         let empty_payload = fetch(
             &executor,
             Resource::new("qdrant.payload", vec![name.clone(), u64::MAX.to_string()]),
             None,
         )
         .await?;
-        assert_eq!(empty_payload.rows[0].cells[0].as_deref(), Some("{}"));
+        assert_eq!(
+            empty_payload.rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("{}")
+        );
         assert!(
             fetch(&browser(), points.clone(), token.clone())
                 .await
@@ -439,12 +484,13 @@ async fn qdrant_large_payload_and_vector_variants() {
         let first = fetch(&executor, points.clone(), None).await?;
         let menu = fetch(&executor, first.rows[0].target.clone().unwrap(), None).await?;
         let error = fetch(&executor, menu.rows[0].target.clone().unwrap(), None).await.unwrap_err();
-        assert!(error.to_string().contains("1 MiB"));
+        assert!(error.to_string().contains("OutOfRange (11)"));
+        assert!(error.to_string().contains("1048576"));
         let vectors = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
-        assert_eq!(vectors.rows.iter().map(|r| r.cells[0].as_deref().unwrap()).collect::<Vec<_>>(), ["dense", "multi", "sparse"]);
-        assert_eq!(vectors.rows[0].cells[3].as_deref(), Some("[1.0,2.0,3.0]"));
-        assert_eq!(vectors.rows[1].cells[2].as_deref(), Some("2 x 3"));
-        assert_eq!(vectors.rows[2].cells[3].as_deref(), Some("{\"indices\":[3,1000],\"values\":[0.5,1.5]}"));
+        assert_eq!(vectors.rows.iter().map(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text).unwrap()).collect::<Vec<_>>(), ["dense", "multi", "sparse"]);
+        assert_eq!(vectors.rows[0].cells[3].as_ref().and_then(onetui_core::Value::text), Some("[1.0,2.0,3.0]"));
+        assert_eq!(vectors.rows[1].cells[2].as_ref().and_then(onetui_core::Value::text), Some("2 x 3"));
+        assert_eq!(vectors.rows[2].cells[3].as_ref().and_then(onetui_core::Value::text), Some("{\"indices\":[3,1000],\"values\":[0.5,1.5]}"));
         assert_eq!(fetch(&executor, points, None).await?.rows[0].cells[0], first.rows[0].cells[0]);
         executor.shutdown(ShutdownContext::new(Duration::from_secs(1))).await?;
         Ok::<_, anyhow::Error>(())
@@ -545,19 +591,19 @@ fn qdrant_https_verifies_trust_hostname_and_authentication() {
             "https://127.0.0.1:16335",
             ca.path(),
             "fixture-reader-only",
-            Some("TLS certificate trust"),
+            Some("certificate not valid for name"),
         ),
         (
             "https://localhost:16335",
             unrelated_ca.as_path(),
             "fixture-reader-only",
-            Some("TLS certificate trust"),
+            Some("UnknownIssuer"),
         ),
         (
             "https://localhost:16335",
             ca.path(),
             "fake-wrong-secret",
-            Some("authentication failed"),
+            Some("Unauthenticated"),
         ),
         (
             "http://localhost:16335",
@@ -569,7 +615,7 @@ fn qdrant_https_verifies_trust_hostname_and_authentication() {
             "https://localhost:16334",
             ca.path(),
             "fixture-reader-only",
-            Some("TLS certificate trust"),
+            Some("Qdrant connection: transport error:"),
         ),
         (
             "https://localhost:16335",

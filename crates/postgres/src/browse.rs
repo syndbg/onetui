@@ -1,18 +1,17 @@
 use anyhow::{Result, anyhow, bail, ensure};
 use tokio_postgres::{Client, types::ToSql};
 
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
+use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
 
 pub(crate) fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
-    match error.code().map(|code| code.code()) {
-        Some("42501") => anyhow!("PostgreSQL access denied"),
-        Some("57014") => anyhow!("PostgreSQL request timed out or was cancelled"),
-        Some(code) if code.starts_with("28") => {
-            anyhow!("PostgreSQL authentication failed; check credentials")
+    if let Some(db) = error.as_db_error() {
+        let mut message = format!("PostgreSQL [{}] {db}", db.code().code());
+        if let Some(context) = db.where_() {
+            message.push_str(&format!("\nCONTEXT: {context}"));
         }
-        _ => {
-            anyhow!("PostgreSQL request failed; check permissions, endpoint and TLS trust")
-        }
+        anyhow!(message)
+    } else {
+        anyhow::Error::new(error).context("PostgreSQL")
     }
 }
 
@@ -60,11 +59,15 @@ pub(crate) async fn metadata(client: &Client, resource: &Resource, offset: i64) 
         let cells = (0..row.len())
             .map(|i| {
                 row.try_get::<_, String>(i)
-                    .map(|v| Some(display(&v)))
+                    .map(|v| Some(v.into()))
                     .map_err(pg_error)
             })
             .collect::<Result<Vec<_>>>()?;
-        bytes += cells.iter().flatten().map(String::len).sum::<usize>();
+        bytes += cells
+            .iter()
+            .flatten()
+            .map(|v: &Value| v.bytes().len())
+            .sum::<usize>();
         ensure!(
             bytes <= PAGE_BYTES,
             "Metadata page exceeds the 1 MiB display limit; current page retained"

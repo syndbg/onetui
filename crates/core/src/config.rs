@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 pub struct Config {
     pub theme: Theme,
+    pub display: crate::value::DisplayOptions,
     connections: BTreeMap<String, Connection>,
 }
 
@@ -21,6 +22,8 @@ struct Connection {
 struct RawConfig {
     #[serde(default)]
     theme: Theme,
+    #[serde(default)]
+    display: crate::value::DisplayOptions,
     connections: BTreeMap<String, toml::Table>,
 }
 
@@ -72,6 +75,7 @@ impl Config {
         }
         Ok(Self {
             theme: raw.theme,
+            display: raw.display,
             connections,
         })
     }
@@ -137,6 +141,33 @@ fn default_path(
 mod tests {
     use super::*;
     use crate::test_provider::CATALOG;
+
+    #[test]
+    fn display_configuration_is_optional_strict_and_offline() {
+        let defaults = Config::parse("[connections]", CATALOG).unwrap();
+        assert!(
+            defaults.display.word_wrap
+                && defaults.display.pretty_print
+                && defaults.display.highlight
+        );
+        let config = Config::parse(
+            "[display]\nformat='binary'\nword_wrap=false\nunicode='escaped'\n[connections]",
+            CATALOG,
+        )
+        .unwrap();
+        assert_eq!(config.display.format, crate::value::ValueFormat::Binary);
+        assert!(!config.display.word_wrap);
+        for bad in [
+            "format='bad'",
+            "word_wrap='off'",
+            "pretty_print=0",
+            "highlight=[]",
+            "unicode=''",
+            "unknown=true",
+        ] {
+            assert!(Config::parse(&format!("[display]\n{bad}\n[connections]"), CATALOG).is_err());
+        }
+    }
 
     #[test]
     fn themes_default_parse_and_reject_invalid_values_without_echoing_them() {

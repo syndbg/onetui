@@ -2,6 +2,14 @@
 # Optional built-in palette; run `onetui schema` for accepted names.
 theme = "monokai"
 
+# Session overrides: v or :display. Run `onetui schema` for values and defaults.
+[display]
+format = "auto"
+pretty_print = true
+highlight = true
+word_wrap = true
+unicode = "literal"
+
 [connections.local_pg]
 kind = "postgres"
 url_env = "ONETUI_POSTGRES_URL"

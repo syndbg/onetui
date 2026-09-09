@@ -5,8 +5,8 @@ OneTUI has one context header, an input bar that appears only while typing, a co
 | Panel | Contents | Behavior |
 | --- | --- | --- |
 | Context | `read-only` in the title; connection alias, datasource, resource, path, loaded/shown counts and transport state | The alias appears here once. Counts describe cached data, not database totals. Connected means transport state, not automatic data refresh. |
-| Context actions | Colored keys beside their descriptions | Available browsing actions come from the action catalog. Command/filter entry and theme selection replace them with their own controls, using the same key styling. |
-| Input | `:` command or `/` filter text inside a plain border | Visible only while typing. Enter applies/executes; Esc discards/closes. Long input scrolls to show its end. Closing it returns the space to the content panel. |
+| Context actions | Colored keys beside their descriptions | Browsing hints come from the action catalog. `n/p` stay visible at page/chunk boundaries, and loading does not rearrange the shortcuts. Unavailable keys are muted and remain inactive. Command/filter entry and theme selection replace browsing hints with their own controls. |
+| Input | `:` command or `/` filter text inside a plain border | Visible only while typing. Filters update live; Enter keeps a filter or executes a command. Esc restores/discards. Long input scrolls to show its end. Closing it returns the space to the content panel. |
 | Content | Connection picker, resource table, field detail, help or theme picker | Tables show loaded/shown counts and any applied filter in the title. Column arrows indicate page-local lexical sort. Selection and errors use text as well as color. |
 | Footer | Status/error on the first line; paging and read-scope information on the second; version at bottom-right | The version has reserved space and does not overwrite status or paging text. |
 
@@ -50,9 +50,21 @@ The same bar shows `/4b` while editing a filter. Help, field detail and the them
 
 Without an explicit `--connection <alias>`, startup shows the connection picker and makes no datasource request. Select an alias and press Enter. `c` returns to the picker.
 
-Press `?` for Key, Command and Description columns. Press `T` or enter `:themes` to select a theme; its controls stay in context, not an extra action bar. Use `/4b` then Enter to filter the loaded page. After entry closes, the filter remains in the table title. Sorting and applied filters never open an input bar.
+Press `?` for Key, Command and Description columns. Press `T` or enter `:themes` to select a theme; its controls stay in context, not an extra action bar. Type `/4b` to filter the loaded page immediately, then Enter to keep it. After entry closes, the filter remains in the table title. Sorting and applied filters never open an input bar.
+
+Enter on a data row opens a Field / Type / Value list for every column, including columns outside the table's four-column window. Use `j/k` or arrows to select a field, then Enter for its full cached value. Esc returns to the field list, then to the row table. These steps retain the selected row and never fetch again. Row values in the field list use bounded previews; field detail exposes the complete retained value in chunks.
+
+The field list uses the full panel width: Field and Type each get a quarter of the available columns, and Value gets the remainder. Resizing the terminal resizes all three columns. Previews still have a three-line limit; Enter opens the full value.
+
+Use PageUp/PageDown to move one screen, or Ctrl-U/Ctrl-D for half a screen, within loaded rows, the row field list or field detail. Table movement accounts for wrapped preview heights and stops at the first or last loaded item. These shortcuts do not fetch data or change value chunks; `n/p` keeps that role. They are ignored while typing a command/filter or choosing a theme/display setting. The equivalent commands are `:page_up`, `:page_down`, `:half_page_up` and `:half_page_down`; `?` and `onetui schema` list them. You do not need configuration settings for scrolling or column sizing.
+
+A complete one-row, one-column data result opens directly in the value viewer. Qdrant payloads therefore use the content panel for JSON instead of a three-line table preview. Use `j/k` to scroll, `n/p` for chunks and `v` for formatting; Esc returns to the parent resource.
+
+Filtering updates on each character or Backspace, including held-key repeats. Enter closes the input and keeps the filter; Esc restores the filter and selected row from before editing. Empty input immediately shows all loaded rows. Filtering remains case-sensitive and page-local, searches all cached fields, and neither reformats values nor sends a datasource request. Input still has a 256-byte UTF-8 limit.
 
 See [PostgreSQL usage](postgres.md), [Qdrant usage](qdrant.md) and [configuration](../README.md#configuration) for data navigation and connection settings.
+
+Datasource failures retain the native message and SQLSTATE or gRPC code. PostgreSQL detail/hint/context and network/TLS cause chains are included when available. Known connection secrets are redacted and terminal controls escaped. Errors appear in the footer; its fixed height can clip long diagnostics. See [datasource errors](../README.md#datasource-errors) for the shared TUI/headless behavior and disclosure limits.
 
 ## Small terminals
 
@@ -64,6 +76,30 @@ See [PostgreSQL usage](postgres.md), [Qdrant usage](qdrant.md) and [configuratio
 
 All panels use the selected theme. There are no panel-layout configuration keys. Resizing or opening an input bar changes layout without changing keybindings, connection lifetime or terminal cursor visibility.
 
-## Proposed value display controls
+## Value display controls
 
-[ADR-0004](adr/0004-preserve-values-and-select-display-formats.md) describes text, JSON, hex and binary views, with independent pretty-print, highlighting, Unicode and app-wide wrapping settings. These controls are not implemented. Current detail shows cached escaped text with wrapping; use `onetui schema` for the settings and actions the binary actually supports.
+Press `v` or enter `:display` to open formats and settings. Move with `j/k` or arrows; Enter applies a format or toggles a setting. Esc or Ctrl-C closes the menu and keeps applied session settings. The input bar stays hidden while selecting settings. Open a field with Enter before choosing its format. Format overrides last until detail closes; other switches remain in effect across connections. No choice writes configuration or fetches data.
+
+```text
+:display format json
+:display pretty-print off
+:display highlight off
+:display word-wrap off
+:display unicode escaped
+:display format hex
+:display format binary
+```
+
+`auto` uses JSON for declared JSON or complete JSON objects/arrays in text, plain text otherwise, and hex for binary values. Explicit `json` also accepts JSON scalars. `text` requires valid UTF-8; invalid bytes are never replaced or discarded. Hex shows two digits per byte; binary shows eight digits, most significant bit first. Both show byte offsets. Null, empty text and empty bytes remain distinct.
+
+Pretty printing defaults to on and adds two-space JSON indentation. Off preserves retained JSON whitespace except that terminal controls such as tabs and carriage returns remain visibly escaped; it does not minify. JSON key order, duplicate keys, number text and existing string escapes are preserved. Plain text is not parsed recursively or converted into another format. Data highlighting defaults to on; turning it off retains selection, focus, error colors and UI key hints. Highlight/wrap changes retain the current detail chunk; changing format, indentation or Unicode rendering rebuilds detail from its first chunk.
+
+Word wrapping defaults to on for read-only text throughout the app, including table previews, help and status. Tables allow at most three visual lines per preview; Enter exposes the retained value. With wrapping off, use `H`/`L` for horizontal content scrolling, `h/l` to choose fields and `j/k` to scroll detail/help. Newlines remain logical line boundaries. Command/filter editors stay single-line; structural labels and headings retain their layout constraints. The fixed-height footer may clip long status text.
+
+Unicode defaults to `literal`, preserving printable characters and emoji already in data. `escaped` shows non-ASCII code points as ASCII escapes; JSON uses JSON escape syntax. Both choices escape terminal controls and bidirectional overrides. The fixture emoji exercises Unicode rendering and is not a UI decoration. Hex/binary always use retained bytes, not display escapes.
+
+The detail header identifies the effective format and byte provenance. PostgreSQL native `bytea` supplies binary content; other types, including domains, retain server-text output. Qdrant JSON comes from the SDK's structured response, not the original document or wire bytes. Unsupported or oversized formatting shows a reason and a safe text/hex fallback without changing the value.
+
+Each retained page has a 1 MiB value budget. The current page's stable filter/sort projection and table preview cache each have a separate 1 MiB budget; a preview-budget notice directs users to detail. Detail formatting is capped at 1 MiB with at most 64 JSON nesting levels. Text chunks hold up to 4,096 characters without splitting a grapheme; an oversized grapheme falls back to hex. Hex/binary chunks cover 256 source bytes. Table previews show up to 128 characters plus a truncation marker. These are fixed limits, not settings or an RSS ceiling. Filter/sort always use the stable unformatted projection and ignore display choices.
+
+Use `onetui schema` for settings, defaults and format descriptors. Persistent defaults belong in the optional `[display]` table in your [configuration file](../README.md#display-settings); runtime choices override them only in memory. [ADR-0004](adr/0004-preserve-values-and-select-display-formats.md) records the value and renderer boundaries.

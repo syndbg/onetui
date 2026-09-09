@@ -32,7 +32,11 @@ fn select(app: &mut App, name: &str) {
     }
     let count = app.view.page.rows.len();
     for _ in 0..count {
-        if app.view.page.rows[app.view.selected].cells[0].as_deref() == Some(name) {
+        if app.view.page.rows[app.view.selected].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text)
+            == Some(name)
+        {
             return;
         }
         key(app, KeyCode::Char('j'));
@@ -66,14 +70,22 @@ async fn keyboard_to_postgres_rows_detail_paging_metadata_and_failure() {
     assert_eq!(app.view.page.rows.len(), 100);
     let token = app.view.page.continuation.clone();
     key(&mut app, KeyCode::Enter);
+    assert!(app.row_detail && !app.detail);
+    key(&mut app, KeyCode::Enter);
     assert!(app.detail_text.contains("София"));
-    assert!(app.detail_text.contains("\\n"));
+    assert!(app.detail_text.contains("a'; --\nСофия"));
     assert!(!app.detail_text.contains('\x1b'));
+    key(&mut app, KeyCode::Esc);
     key(&mut app, KeyCode::Esc);
     key(&mut app, KeyCode::Char('n'));
     complete(&mut app, &executor).await;
     assert_eq!(app.view.offset, 100);
-    assert_eq!(app.view.page.rows[0].cells[1].as_deref(), Some("101"));
+    assert_eq!(
+        app.view.page.rows[0].cells[1]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("101")
+    );
     key(&mut app, KeyCode::Char('p'));
     assert!(app.request.is_none());
     assert_eq!(app.view.page.continuation, token);
@@ -606,7 +618,7 @@ mod terminal {
         for _ in 0..10 {
             pty.resize();
             pty.send(b"?");
-            pty.wait(&["Navigationactions"]);
+            pty.wait(&["Help|:command|Escclose", "KEYCOMMANDDESCRIPTION", "Chooseatheme"]);
             pty.resize();
             pty.send(b":back\r");
             pty.wait(&["postgres.schemas", "public"]);
@@ -615,17 +627,31 @@ mod terminal {
         pty.wait(&["postgres.relations", "browse_composite"]);
         pty.open_filtered("browse_composite");
         pty.wait(&["postgres.rows", "Keyset", "София"]);
-        pty.send(b"/value\r");
+        pty.send(b"/value");
         pty.wait(&["postgres.rows[100shown/100loaded]", "filter:\"value\""]);
-        pty.send(b"lss\r");
-        pty.wait(&["Field2/3", "bigint", "non-nulltext", "lexicalsort:iddesc"]);
-        pty.send(b":back\r");
+        pty.send(b"\r");
+        pty.send(b"lss");
+        pty.wait(&[">id↓"]);
+        pty.send(b"\r");
+        pty.wait(&["Rowdata|3fields", "FIELD", "tenant", "id", "c0"]);
+        pty.send(b"\x1b[6~");
+        pty.wait(&["Rowdata|3fields", ">c0"]);
+        pty.send(b"\x1b[5~");
+        pty.wait(&["Rowdata|3fields", ">tenant"]);
+        pty.send(b"\x04");
+        pty.wait(&["Rowdata|3fields", ">c0"]);
+        pty.send(b"\x15");
+        pty.wait(&["Rowdata|3fields", ">tenant"]);
+        pty.send(b"l");
+        pty.send(b"\r");
+        pty.wait(&["Field2/3", "bigint", "non-nulltext"]);
+        pty.send(b":back\r:back\r");
         pty.wait(&["София", "Keyset"]);
         pty.send(b"n");
         pty.wait(&["Page2|", "200"]);
-        pty.send(b"\r");
+        pty.send(b"\r\r");
         pty.wait(&["Field2/3", "bigint", "200"]);
-        pty.send(b":back\r");
+        pty.send(b":back\r:back\r");
         pty.wait(&["София", "Keyset"]);
         pty.send(b"p");
         pty.wait(&["Page1|", "100items"]);
@@ -636,7 +662,7 @@ mod terminal {
         pty.send(b":back\r");
         pty.wait(&["postgres.relations", "browse_composite"]);
         pty.open_filtered("restricted_rows");
-        pty.wait(&["postgres.rows", "accessdenied"]);
+        pty.wait(&["postgres.rows", "42501", "permissiondeniedfortablerestricted_rows"]);
         pty.send(b":back\r");
         pty.wait(&["postgres.relations", "restricted_rows"]);
         pty.open_filtered("browse_uuid");
@@ -715,15 +741,23 @@ mod terminal {
         pty.wait(&["qdrant.payload", "onetui-tui-point-1"]);
         pty.send(b"\r");
         pty.wait(&["Field1/1", "onetui-tui-point-1"]);
-        pty.send(b":back\r");
-        pty.wait(&["qdrant.payload", "onetui-tui-point-1"]);
+        pty.send(b"v");
+        pty.wait(&["Display|*effectiveformat", "json*", "pretty-printon", "word-wrapon"]);
+        pty.send(b"jjjj\r");
+        pty.wait(&["binary*"]);
+        pty.send(b"\x1b");
+        pty.wait(&["Field1/1", "binary", "0111101100100010"]);
+        pty.send(b":display format hex\r");
+        pty.wait(&["Field1/1", "hex", "7b22"]);
+        pty.send(b":display format json\r");
+        pty.wait(&["Field1/1", "json", "onetui-tui-point-1"]);
         pty.send(b":back\r");
         pty.wait(&["qdrant.point", "vectors"]);
         pty.send(b"j\r");
         pty.wait(&["qdrant.vectors", "dense", "(unnamed)"]);
-        pty.send(b"lll\r");
+        pty.send(b"lll\r\r");
         pty.wait(&["Field4/4", "[1.0,2.0,3.0]"]);
-        pty.send(b":back\r");
+        pty.send(b":back\r:back\r");
         pty.wait(&["qdrant.vectors", "dense"]);
         pty.send(b":back\r");
         pty.wait(&["qdrant.point", "payload"]);

@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, bail, ensure};
 use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::provider::PageRequest;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
+use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row};
 use qdrant_client::qdrant::{
     CollectionInfo, PointId, RetrievedPoint, VectorOutput, point_id::PointIdOptions,
     vector_output::Vector, vectors_output::VectorsOptions,
@@ -176,7 +176,7 @@ fn continuation(executor: u64, resource: &Resource, offset: Offset) -> Result<St
 
 fn row(cells: impl IntoIterator<Item = String>, target: Option<Resource>) -> Row {
     Row {
-        cells: cells.into_iter().map(|s| Some(display(&s))).collect(),
+        cells: cells.into_iter().map(|s| Some(s.into())).collect(),
         target,
     }
 }
@@ -339,14 +339,14 @@ pub(crate) fn metadata(resource: &Resource, info: CollectionInfo) -> Result<Page
         Row {
             cells: vec![
                 Some("points_count (approximate)".into()),
-                info.points_count.map(|n| n.to_string()),
+                info.points_count.map(|n| n.to_string().into()),
             ],
             target: None,
         },
         Row {
             cells: vec![
                 Some("indexed_vectors_count (approximate)".into()),
-                info.indexed_vectors_count.map(|n| n.to_string()),
+                info.indexed_vectors_count.map(|n| n.to_string().into()),
             ],
             target: None,
         },
@@ -376,7 +376,7 @@ pub(crate) fn detail(resource: &Resource, mut records: Vec<RetrievedPoint>) -> R
         record.id == Some(point_id(resource)?),
         "Qdrant returned an unexpected point ID"
     );
-    let rows = if resource.id == "qdrant.payload" {
+    let mut rows = if resource.id == "qdrant.payload" {
         let payload: serde_json::Value = qdrant_client::Payload::from(record.payload).into();
         vec![row([serde_json::to_string(&payload)?], None)]
     } else {
@@ -396,6 +396,16 @@ pub(crate) fn detail(resource: &Resource, mut records: Vec<RetrievedPoint>) -> R
             .map(|(name, vector)| vector_row(name, vector))
             .collect::<Result<Vec<_>>>()?
     };
+    for row in &mut rows {
+        let index = if resource.id == "qdrant.payload" {
+            0
+        } else {
+            3
+        };
+        if let Some(onetui_core::Value::Text(text)) = row.cells[index].take() {
+            row.cells[index] = Some(onetui_core::Value::Json(text));
+        }
+    }
     bounded(page(
         resource,
         rows,
@@ -492,7 +502,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            page.rows[0].cells[0].as_deref(),
+            page.rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
             Some("18446744073709551615")
         );
         assert_eq!(
@@ -513,7 +525,14 @@ mod tests {
         assert!(validate(&request, 7).unwrap().is_none());
         let collection = Resource::new("qdrant.collections", vec![]);
         let page = collections(&collection, vec!["bad\x1b\u{202e}name".into()], 0, 7).unwrap();
-        assert!(!page.rows[0].cells[0].as_ref().unwrap().contains('\x1b'));
+        assert!(
+            page.rows[0].cells[0]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains('\x1b')
+        );
         assert!(points(&resource, vec![RetrievedPoint::default()], None, 7).is_err());
         assert!(Id::parse("not-a-uuid").is_err());
         assert!(Id::parse("18446744073709551616").is_err());
@@ -525,7 +544,12 @@ mod tests {
         let names: Vec<_> = (0..101).rev().map(|i| format!("c{i:03}")).collect();
         let first = collections(&resource, names.clone(), 0, 1).unwrap();
         assert_eq!(first.rows.len(), 100);
-        assert_eq!(first.rows[0].cells[0].as_deref(), Some("c000"));
+        assert_eq!(
+            first.rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("c000")
+        );
         let request = PageRequest {
             resource: resource.clone(),
             continuation: first.continuation,
@@ -534,7 +558,12 @@ mod tests {
             panic!("collection offset")
         };
         let last = collections(&resource, names, offset, 1).unwrap();
-        assert_eq!(last.rows[0].cells[0].as_deref(), Some("c100"));
+        assert_eq!(
+            last.rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("c100")
+        );
         assert!(!last.next);
         assert!(collections(&resource, vec!["\x1b".repeat(PAGE_BYTES / 2)], 0, 1).is_err());
         let payload = Resource::new("qdrant.payload", vec!["c".into(), "1".into()]);
@@ -549,7 +578,9 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            detail(&payload, vec![record.clone()]).unwrap().rows[0].cells[0].as_deref(),
+            detail(&payload, vec![record.clone()]).unwrap().rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
             Some("{}")
         );
         let mut large = record;
@@ -584,7 +615,13 @@ mod tests {
             ..Default::default()
         };
         let row = vector_row("legacy".into(), legacy).unwrap();
-        assert_eq!(row.cells[2].as_deref(), Some("2 x 2"));
-        assert_eq!(row.cells[3].as_deref(), Some("[[1.0,2.0],[3.0,4.0]]"));
+        assert_eq!(
+            row.cells[2].as_ref().and_then(onetui_core::Value::text),
+            Some("2 x 2")
+        );
+        assert_eq!(
+            row.cells[3].as_ref().and_then(onetui_core::Value::text),
+            Some("[[1.0,2.0],[3.0,4.0]]")
+        );
     }
 }

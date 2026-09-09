@@ -54,6 +54,61 @@ fn provider() -> onetui_postgres::PostgresExecutor {
         .unwrap()
 }
 
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL fixture"]
+async fn native_error_preserves_sqlstate_detail_hint_and_redacts_password() {
+    let admin = FixturePg::plain(PG_ADMIN).await;
+    let schema = format!("onetui_diagnostic_{}", std::process::id());
+    admin
+        .client
+        .batch_execute(&format!(
+            r#"
+        CREATE SCHEMA {schema};
+        CREATE FUNCTION {schema}.fail() RETURNS integer LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION USING ERRCODE = 'P0001',
+                MESSAGE = 'fixture rejection for fixture-reader-only',
+                DETAIL = E'original detail\nsecond line\x1b[31m',
+                HINT = 'original hint';
+        END $$;
+        CREATE VIEW {schema}.sample AS SELECT {schema}.fail() AS value;
+        GRANT USAGE ON SCHEMA {schema} TO onetui_reader;
+        GRANT SELECT ON {schema}.sample TO onetui_reader;
+    "#
+        ))
+        .await
+        .unwrap();
+    let mut reader = provider();
+    let result = browse(
+        &reader,
+        onetui_core::Resource::new("postgres.rows", vec![schema.clone(), "sample".into()]),
+        None,
+    )
+    .await;
+    reader
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+    admin
+        .client
+        .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+        .await
+        .unwrap();
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.starts_with("PostgreSQL [P0001] ERROR: fixture rejection for [REDACTED]"),
+        "{error}"
+    );
+    assert!(
+        error.contains("DETAIL: original detail\\nsecond line\\u{1b}[31m"),
+        "{error}"
+    );
+    assert!(error.contains("HINT: original hint"), "{error}");
+    assert!(error.contains("CONTEXT:"), "{error}");
+    assert!(!error.contains("fixture-reader-only"));
+    assert!(!error.contains('\x1b'));
+}
+
 async fn browse(
     reader: &onetui_postgres::PostgresExecutor,
     resource: onetui_core::Resource,
@@ -90,7 +145,7 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
         schemas
             .rows
             .iter()
-            .any(|row| row.cells[0].as_deref() == Some("public"))
+            .any(|row| row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("public"))
     );
     let tables = browse(
         &reader,
@@ -102,7 +157,7 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     let sample = tables
         .rows
         .iter()
-        .find(|row| row.cells[0].as_deref() == Some("sample_rows"))
+        .find(|row| row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("sample_rows"))
         .unwrap();
     assert_eq!(sample.target.as_ref().unwrap().id, "postgres.rows");
     let columns = browse(
@@ -115,20 +170,20 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     )
     .await
     .unwrap();
-    assert!(
-        columns
-            .rows
-            .iter()
-            .any(|row| row.cells[0].as_deref() == Some("amount")
-                && row.cells[1].as_deref() == Some("numeric(30,10)"))
-    );
     assert!(columns.rows.iter().any(
-        |row| row.cells[0].as_deref() == Some("note") && row.cells[2].as_deref() == Some("no")
+        |row| row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("amount")
+            && row.cells[1].as_ref().and_then(onetui_core::Value::text) == Some("numeric(30,10)")
+    ));
+    assert!(columns.rows.iter().any(
+        |row| row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("note")
+            && row.cells[2].as_ref().and_then(onetui_core::Value::text) == Some("no")
     ));
     let quoted = tables
         .rows
         .iter()
-        .find(|row| row.cells[0].as_deref() == Some("quoted'; -- relation"))
+        .find(|row| {
+            row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("quoted'; -- relation")
+        })
         .unwrap();
     let columns = browse(
         &reader,
@@ -140,7 +195,12 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     )
     .await
     .unwrap();
-    assert_eq!(columns.rows[0].cells[0].as_deref(), Some("odd\"column"));
+    assert_eq!(
+        columns.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("odd\"column")
+    );
     let empty = browse(
         &reader,
         Resource::new("postgres.relations", vec!["empty_schema".into()]),
@@ -218,41 +278,64 @@ async fn row_values_types_nulls_identifiers_and_fallback_selection() {
     let first = page
         .rows
         .iter()
-        .find(|row| row.cells[0].as_deref() == Some("1"))
+        .find(|row| row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("1"))
         .unwrap();
     assert_eq!(first.cells[1], None);
     assert_eq!(
-        first.cells[2].as_deref(),
+        first.cells[2].as_ref().and_then(onetui_core::Value::text),
         Some("12345678901234567890.1234567890")
     );
-    assert_eq!(first.cells[3].as_deref(), Some("\\x00ff"));
-    assert_eq!(first.cells[4].as_deref(), Some("{a,b}"));
-    assert_eq!(first.cells[5].as_deref(), Some("paid"));
-    assert_eq!(first.cells[6].as_deref(), Some("12.34"));
+    assert_eq!(
+        first.cells[3],
+        Some(onetui_core::Value::Bytes(vec![0, 255]))
+    );
+    assert_eq!(
+        first.cells[4].as_ref().and_then(onetui_core::Value::text),
+        Some("{a,b}")
+    );
+    assert_eq!(
+        first.cells[5].as_ref().and_then(onetui_core::Value::text),
+        Some("paid")
+    );
+    assert_eq!(
+        first.cells[6].as_ref().and_then(onetui_core::Value::text),
+        Some("12.34")
+    );
     assert_eq!(page.columns[2].datatype, "numeric(30,10)");
     assert_eq!(page.columns[6].datatype, "positive_amount");
-    assert!(page.rows.iter().any(|r| r.cells[1].as_deref() == Some("")));
     assert!(
         page.rows
             .iter()
-            .any(|r| r.cells[1].as_deref() == Some("NULL"))
+            .any(|r| r.cells[1].as_ref().and_then(onetui_core::Value::text) == Some(""))
+    );
+    assert!(
+        page.rows
+            .iter()
+            .any(|r| r.cells[1].as_ref().and_then(onetui_core::Value::text) == Some("NULL"))
     );
     let hostile = page
         .rows
         .iter()
-        .find(|r| r.cells[0].as_deref() == Some("4"))
+        .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("4"))
         .unwrap()
         .cells[1]
         .as_ref()
+        .unwrap()
+        .text()
         .unwrap();
     assert!(hostile.contains("София 🌊"));
-    assert!(hostile.contains("\\n"));
-    assert!(!hostile.chars().any(char::is_control));
+    assert!(hostile.contains('\n'));
+    assert!(hostile.contains('\x1b'));
     let quoted = row_page(&reader, "quoted'; -- relation", None)
         .await
         .unwrap();
     assert_eq!(quoted.columns[0].name, "odd\"column");
-    assert_eq!(quoted.rows[0].cells[0].as_deref(), Some("quoted value"));
+    assert_eq!(
+        quoted.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("quoted value")
+    );
     for relation in [
         "sample_view",
         "browse_nullable",
@@ -309,11 +392,11 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
     let mut page = row_page(&reader, "browse_composite", None).await.unwrap();
     assert!(page.notice.starts_with("Keyset"));
     let mut expected = Vec::new();
-    for tenant in [onetui_core::display("a'; --\nСофия"), "b".into()] {
+    for tenant in ["a'; --\nСофия", "b"] {
         for id in 1..=205 {
             expected.push(vec![
-                Some(tenant.clone()),
-                Some(id.to_string()),
+                Some(tenant.into()),
+                Some(id.to_string().into()),
                 Some("value".into()),
             ]);
         }
@@ -331,12 +414,27 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
     }
     assert_eq!(seen, expected);
     let first = row_page(&reader, "browse_bigint", None).await.unwrap();
-    assert_eq!(first.rows[0].cells[0].as_deref(), Some("9007199254740993"));
-    assert_eq!(first.rows[99].cells[0].as_deref(), Some("9007199254741092"));
+    assert_eq!(
+        first.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("9007199254740993")
+    );
+    assert_eq!(
+        first.rows[99].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("9007199254741092")
+    );
     let second = row_page(&reader, "browse_bigint", first.continuation.clone())
         .await
         .unwrap();
-    assert_eq!(second.rows[0].cells[0].as_deref(), Some("9007199254741093"));
+    assert_eq!(
+        second.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("9007199254741093")
+    );
     assert_eq!(
         row_page(&reader, "browse_bigint", None).await.unwrap().rows[0].cells[0],
         first.rows[0].cells[0]
@@ -443,7 +541,12 @@ async fn production_row_limits_preserve_lookahead_position() {
             .contains("server text limit")
     );
     assert_eq!(first.continuation, token);
-    assert_eq!(first.rows[99].cells[0].as_deref(), Some("100"));
+    assert_eq!(
+        first.rows[99].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("100")
+    );
 }
 
 #[tokio::test]
@@ -651,7 +754,12 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
         )
         .await
         .unwrap();
-    assert_eq!(second.rows[0].cells[1].as_deref(), Some("101"));
+    assert_eq!(
+        second.rows[0].cells[1]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("101")
+    );
     assert_eq!(
         observer
             .client

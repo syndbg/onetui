@@ -20,6 +20,13 @@ pub enum Action {
     Filter,
     Sort,
     Themes,
+    Display,
+    ScrollLeft,
+    ScrollRight,
+    PageUp,
+    PageDown,
+    HalfPageUp,
+    HalfPageDown,
 }
 
 #[derive(Serialize)]
@@ -36,9 +43,14 @@ pub const ACTIONS: &[ActionDescriptor] = &[
         description: "Choose a theme: j/k previews, Enter keeps for this session, Esc restores; config is unchanged",
     },
     ActionDescriptor {
+        id: Action::Display,
+        keys: &["v"],
+        description: "Display menu: field format; session pretty-print, highlight, word-wrap and Unicode controls",
+    },
+    ActionDescriptor {
         id: Action::Filter,
         keys: &["/"],
-        description: "Filter this page's displayed text; Enter applies, empty clears, Esc discards",
+        description: "Filter this page as you type; Enter keeps, empty clears, Esc restores the previous filter",
     },
     ActionDescriptor {
         id: Action::Sort,
@@ -73,7 +85,7 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Open,
         keys: &["Enter"],
-        description: "Open the selected resource or row detail; keep the previewed theme for this session",
+        description: "Open resource or all row fields; Enter on a field opens its full value; keep theme preview",
     },
     ActionDescriptor {
         id: Action::Back,
@@ -114,6 +126,36 @@ pub const ACTIONS: &[ActionDescriptor] = &[
         id: Action::Cancel,
         keys: &["Ctrl-c"],
         description: "Restore theme when its menu is open; otherwise cancel active work or quit when idle",
+    },
+    ActionDescriptor {
+        id: Action::ScrollLeft,
+        keys: &["H"],
+        description: "Scroll content left when word-wrap is off",
+    },
+    ActionDescriptor {
+        id: Action::ScrollRight,
+        keys: &["L"],
+        description: "Scroll content right when word-wrap is off",
+    },
+    ActionDescriptor {
+        id: Action::PageUp,
+        keys: &["PageUp"],
+        description: "Scroll up one screen within loaded data or detail; no datasource fetch",
+    },
+    ActionDescriptor {
+        id: Action::PageDown,
+        keys: &["PageDown"],
+        description: "Scroll down one screen within loaded data or detail; no datasource fetch",
+    },
+    ActionDescriptor {
+        id: Action::HalfPageUp,
+        keys: &["Ctrl-u"],
+        description: "Scroll up half a screen within loaded data or detail; no datasource fetch",
+    },
+    ActionDescriptor {
+        id: Action::HalfPageDown,
+        keys: &["Ctrl-d"],
+        description: "Scroll down half a screen within loaded data or detail; no datasource fetch",
     },
 ];
 

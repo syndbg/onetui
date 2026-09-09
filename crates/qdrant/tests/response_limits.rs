@@ -72,9 +72,9 @@ async fn run_reply(reply: ListReply) -> anyhow::Result<String> {
             .add_service(reply)
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
     );
-    let options = toml::from_str(&format!("url='http://{address}'")).unwrap();
+    let options = toml::from_str(&format!("url='http://{address}'\napi_key_env='KEY'")).unwrap();
     let mut executor = onetui_qdrant::QdrantProvider
-        .configure(&options, &|_| panic!("no secrets"))
+        .configure(&options, &|_| Some("fake-secret-do-not-print".into()))
         .unwrap();
     let (_cancel, context) = RequestContext::new(Duration::from_secs(2));
     let output = executor.check(context).await.map(|result| result.summary);
@@ -208,27 +208,40 @@ async fn oversized_metadata_is_rejected_with_a_useful_limit_error() {
     })))
     .await;
     let error = output.unwrap_err().to_string();
-    assert!(error.contains("1 MiB"), "{error}");
+    assert!(error.contains("OutOfRange (11)"), "{error}");
+    assert!(error.contains("1048576"), "{error}");
 }
 
 #[tokio::test]
-async fn small_metadata_succeeds_and_server_errors_do_not_leak_details() {
+async fn server_errors_preserve_codes_and_messages_but_redact_keys_and_controls() {
     let output = run_reply(ListReply::new(Ok(ListCollectionsResponse::default()))).await;
     assert!(output.is_ok(), "{output:?}");
-    for (code, expected) in [
-        (tonic::Code::PermissionDenied, "denied"),
-        (tonic::Code::Unauthenticated, "authentication"),
-        (tonic::Code::OutOfRange, "1 MiB"),
-        (tonic::Code::DeadlineExceeded, "timed out"),
+    for code in [
+        tonic::Code::PermissionDenied,
+        tonic::Code::Unauthenticated,
+        tonic::Code::OutOfRange,
+        tonic::Code::DeadlineExceeded,
+        tonic::Code::NotFound,
+        tonic::Code::Internal,
     ] {
-        let mut status = Status::new(code, "fake-secret-do-not-print\u{1b}[31m");
+        let mut status = Status::new(
+            code,
+            "Exact backend message: fake-secret-do-not-print\u{1b}[31m",
+        );
         status
             .metadata_mut()
-            .insert("api-key", "fake-secret-do-not-print".parse().unwrap());
+            .insert("api-key", "metadata-must-not-print".parse().unwrap());
         let output = run_reply(ListReply::new(Err(status))).await;
         let error = output.unwrap_err().to_string();
-        assert!(error.contains(expected), "{error}");
+        assert_eq!(
+            error,
+            format!(
+                "Qdrant [gRPC {code:?} ({})] Exact backend message: [REDACTED]\\u{{1b}}[31m",
+                code as i32
+            )
+        );
         assert!(!error.contains("fake-secret-do-not-print"));
+        assert!(!error.contains("metadata-must-not-print"));
         assert!(!error.contains('\u{1b}'));
     }
 }

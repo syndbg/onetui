@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Context, Result, anyhow, ensure};
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use std::io::Read;
 use std::net::IpAddr;
@@ -69,10 +69,10 @@ fn pg_tls(ca_file: Option<&Path>) -> Result<MakeRustlsConnect> {
         }
         let file = options
             .open(path)
-            .map_err(|_| anyhow!("cannot read PostgreSQL ca_file"))?;
+            .context("cannot read PostgreSQL ca_file")?;
         let metadata = file
             .metadata()
-            .map_err(|_| anyhow!("cannot inspect PostgreSQL ca_file"))?;
+            .context("cannot inspect PostgreSQL ca_file")?;
         ensure!(
             metadata.is_file(),
             "PostgreSQL ca_file must be a regular file"
@@ -84,15 +84,15 @@ fn pg_tls(ca_file: Option<&Path>) -> Result<MakeRustlsConnect> {
         let mut bytes = Vec::new();
         file.take(CA_BYTES + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| anyhow!("cannot read PostgreSQL ca_file"))?;
+            .context("cannot read PostgreSQL ca_file")?;
         ensure!(
             bytes.len() as u64 <= CA_BYTES,
             "PostgreSQL ca_file exceeds the 1 MiB limit"
         );
         for cert in CertificateDer::pem_slice_iter(&bytes) {
             roots
-                .add(cert.map_err(|_| anyhow!("invalid certificate in PostgreSQL ca_file"))?)
-                .map_err(|_| anyhow!("invalid trust anchor in PostgreSQL ca_file"))?;
+                .add(cert.context("invalid certificate in PostgreSQL ca_file")?)
+                .context("invalid trust anchor in PostgreSQL ca_file")?;
         }
     } else {
         let native = rustls_native_certs::load_native_certs();

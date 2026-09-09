@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 use futures_util::TryStreamExt;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
+use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, types::ToSql};
 
@@ -173,7 +173,14 @@ pub(crate) async fn fetch(
         .columns
         .iter()
         .enumerate()
-        .map(|(i, column)| format!("src.{}::pg_catalog.text AS c{i}", quote(&column.0)))
+        .map(|(i, column)| {
+            let cast = if column.1 == 17 {
+                ""
+            } else {
+                "::pg_catalog.text"
+            };
+            format!("src.{}{cast} AS c{i}", quote(&column.0))
+        })
         .collect();
     projections.extend(
         key_names
@@ -240,19 +247,31 @@ pub(crate) async fn fetch(
             "Row exceeds the 1 MiB server text limit; current page retained"
         );
         let raw = (0..shape.columns.len())
-            .map(|i| row.try_get::<_, Option<String>>(i).map_err(pg_error))
+            .map(|i| {
+                if shape.columns[i].1 == 17 {
+                    row.try_get::<_, Option<Vec<u8>>>(i)
+                        .map(|v| v.map(Value::Bytes))
+                        .map_err(pg_error)
+                } else {
+                    row.try_get::<_, Option<String>>(i)
+                        .map(|v| v.map(Value::Text))
+                        .map_err(pg_error)
+                }
+            })
             .collect::<Result<Vec<_>>>()?;
         last_key = shape
             .keys
             .iter()
             .map(|&i| {
                 raw[i]
-                    .clone()
+                    .as_ref()
+                    .and_then(Value::text)
+                    .map(str::to_owned)
                     .ok_or_else(|| anyhow!("Paging key became NULL; refresh"))
             })
             .collect::<Result<Vec<_>>>()?;
         page.rows.push(Row {
-            cells: raw.into_iter().map(|v| v.map(|v| display(&v))).collect(),
+            cells: raw,
             target: None,
         });
         ensure!(

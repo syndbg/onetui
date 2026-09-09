@@ -44,23 +44,13 @@ fn qdrant_url(value: &str) -> Result<url::Url> {
 }
 
 fn rpc_error(status: tonic::Status) -> anyhow::Error {
-    match status.code() {
-        tonic::Code::Unauthenticated => anyhow!("Qdrant authentication failed; check api_key_env"),
-        tonic::Code::PermissionDenied => {
-            anyhow!("Qdrant read denied; the key may lack collection or listing permission")
-        }
-        tonic::Code::OutOfRange => anyhow!(
-            "Qdrant response exceeded the 1 MiB limit, or the server rejected an out-of-range request"
-        ),
-        tonic::Code::ResourceExhausted => {
-            anyhow!("Qdrant response exceeded the 1 MiB limit or server resources were exhausted")
-        }
-        tonic::Code::DeadlineExceeded => anyhow!("Qdrant request timed out"),
-        tonic::Code::NotFound => {
-            anyhow!("Qdrant collection or point not found; refresh its parent")
-        }
-        _ => anyhow!("Qdrant request failed (gRPC code {})", status.code() as i32),
-    }
+    // Status Display/Debug includes metadata; only the code and message belong in diagnostics.
+    anyhow!(
+        "Qdrant [gRPC {:?} ({})] {}",
+        status.code(),
+        status.code() as i32,
+        status.message()
+    )
 }
 
 pub(crate) fn capabilities() -> serde_json::Value {

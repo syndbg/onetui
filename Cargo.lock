@@ -1421,6 +1421,8 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "toml",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

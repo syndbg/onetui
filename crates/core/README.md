@@ -6,6 +6,8 @@ Configuration uses `onetui-theme`'s selector for the optional top-level `theme` 
 
 ## Validation
 
+`Value` retains text, serialized SDK JSON or binary bytes; `None` represents null. Core owns serializable `[display]` options and format descriptors, without terminal rendering. TUI owns escaped projections and formatting. See [display settings](../../README.md#display-settings).
+
 ```sh
 make build
 cargo test -p onetui-core --locked

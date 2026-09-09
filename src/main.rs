@@ -64,7 +64,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            // Driver/parser error chains can contain credentials or server-supplied text.
+            // Providers redact native diagnostics; avoid Debug, which may expose transport metadata.
             eprintln!("error: {error}");
             ExitCode::FAILURE
         }

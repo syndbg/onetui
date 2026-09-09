@@ -5,7 +5,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use onetui_core::catalog::{ACTIONS, Action, ActionDescriptor, ResourceDescriptor};
 use onetui_core::config::Config;
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, display};
+use onetui_core::value::{DisplayOptions, FORMATS, UnicodeDisplay, ValueFormat};
+use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
 use onetui_theme::Theme;
 
 #[derive(Clone)]
@@ -29,6 +30,9 @@ pub struct View {
     pub visible: Vec<usize>,
     pub filter: String,
     pub sort: Option<(usize, bool)>,
+    pub projections: Vec<Vec<Option<String>>>,
+    pub previews: Vec<Vec<String>>,
+    pub previews_limited: bool,
     previous: VecDeque<(i64, Page, Option<usize>)>,
 }
 
@@ -44,6 +48,9 @@ impl View {
             visible: Vec::new(),
             filter: String::new(),
             sort: None,
+            projections: Vec::new(),
+            previews: Vec::new(),
+            previews_limited: false,
             previous: VecDeque::new(),
         }
     }
@@ -52,23 +59,27 @@ impl View {
         self.visible.get(self.selected).copied()
     }
 
-    fn rebuild(&mut self, keep: Option<usize>) {
+    fn rebuild(&mut self, keep: Option<usize>, options: DisplayOptions) {
+        self.projections = projections(&self.page).expect("validated page projections");
+        self.prepare_previews(options);
+        self.reindex(keep);
+    }
+
+    fn reindex(&mut self, keep: Option<usize>) {
         // Reorder display indices without changing native rows or continuation.
         self.visible = self
-            .page
-            .rows
+            .projections
             .iter()
             .enumerate()
             .filter_map(|(i, row)| {
-                row.cells
-                    .iter()
+                row.iter()
                     .any(|cell| cell.as_deref().unwrap_or("NULL").contains(&self.filter))
                     .then_some(i)
             })
             .collect();
         if let Some((column, descending)) = self.sort {
             self.visible.sort_by(|&a, &b| {
-                let order = self.page.rows[a].cells[column].cmp(&self.page.rows[b].cells[column]);
+                let order = self.projections[a][column].cmp(&self.projections[b][column]);
                 if descending { order.reverse() } else { order }
             });
         }
@@ -76,6 +87,76 @@ impl View {
             .and_then(|index| self.visible.iter().position(|&i| i == index))
             .unwrap_or(0);
     }
+
+    fn prepare_previews(&mut self, options: DisplayOptions) {
+        let mut budget = PAGE_BYTES;
+        self.previews_limited = false;
+        self.previews = self
+            .page
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        if budget < 512 {
+                            self.previews_limited = true;
+                            return String::new();
+                        }
+                        let declared = self
+                            .page
+                            .columns
+                            .get(i)
+                            .is_some_and(|c| matches!(c.datatype.as_str(), "json" | "jsonb"));
+                        let prepared = crate::value::prepare(
+                            value.as_ref(),
+                            DisplayOptions {
+                                format: ValueFormat::Auto,
+                                ..options
+                            },
+                            declared,
+                        );
+                        let raw =
+                            if matches!(prepared.format, ValueFormat::Hex | ValueFormat::Binary) {
+                                crate::value::byte_chunk(
+                                    value.as_ref().map_or(&[], Value::bytes),
+                                    prepared.format,
+                                    0,
+                                )
+                            } else if value.is_none() {
+                                "NULL".into()
+                            } else {
+                                prepared.text
+                            };
+                        let preview = crate::value::preview_prefix(&raw);
+                        budget = budget.saturating_sub(preview.len());
+                        preview
+                    })
+                    .collect()
+            })
+            .collect();
+    }
+}
+
+fn projections(page: &Page) -> Result<Vec<Vec<Option<String>>>, &'static str> {
+    let mut bytes = 0;
+    page.rows
+        .iter()
+        .map(|row| {
+            row.cells
+                .iter()
+                .map(|cell| {
+                    let text = cell.as_ref().map(crate::value::projection).transpose()?;
+                    bytes += text.as_ref().map_or(0, String::len);
+                    if bytes > PAGE_BYTES {
+                        return Err("Page previews exceed 1 MiB; current page retained");
+                    }
+                    Ok(text)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 pub struct App {
@@ -90,13 +171,24 @@ pub struct App {
     pub error: Option<String>,
     pub help: bool,
     pub detail: bool,
+    pub row_detail: bool,
     pub detail_text: String,
     pub detail_chunk: usize,
     pub detail_chunks: usize,
     pub detail_scroll: u16,
+    pub viewport: ratatui::layout::Rect,
     pub command: Option<String>,
     pub filter_input: Option<String>,
+    filter_restore: Option<(String, Option<usize>)>,
     pub theme_menu: Option<Theme>,
+    pub display_menu: Option<usize>,
+    pub display_reasons: [&'static str; FORMATS.len()],
+    pub horizontal_scroll: u16,
+    pub detail_format: ValueFormat,
+    detail_override: Option<ValueFormat>,
+    detail_prepared: String,
+    detail_ranges: Vec<std::ops::Range<usize>>,
+    pub detail_notice: &'static str,
     pub quit: bool,
 }
 
@@ -114,13 +206,24 @@ impl App {
             error: None,
             help: false,
             detail: false,
+            row_detail: false,
             detail_text: String::new(),
             detail_chunk: 0,
             detail_chunks: 0,
             detail_scroll: 0,
+            viewport: ratatui::layout::Rect::new(0, 0, 80, 24),
             command: None,
             filter_input: None,
+            filter_restore: None,
             theme_menu: None,
+            display_menu: None,
+            display_reasons: [""; FORMATS.len()],
+            horizontal_scroll: 0,
+            detail_format: ValueFormat::Text,
+            detail_override: None,
+            detail_prepared: String::new(),
+            detail_ranges: Vec::new(),
+            detail_notice: "",
             quit: false,
         };
         app.connections();
@@ -159,7 +262,7 @@ impl App {
             .into_iter()
             .map(|(alias, kind)| Row {
                 cells: vec![
-                    Some(display(alias)),
+                    Some(alias.into()),
                     Some(kind.into()),
                     Some(
                         self.config
@@ -172,14 +275,19 @@ impl App {
                 target: None,
             })
             .collect();
-        self.view.rebuild(None);
+        self.view.rebuild(None, self.config.display);
         self.help = false;
         self.detail = false;
+        self.row_detail = false;
+        self.filter_input = None;
+        self.filter_restore = None;
         self.detail_text.clear();
+        self.clear_detail();
     }
 
     fn load(&mut self, offset: i64, reset: bool) {
         self.invalidate();
+        self.row_detail = false;
         self.loading = true;
         self.request = Some(Request {
             id: self.generation,
@@ -201,6 +309,14 @@ impl App {
             return;
         }
         self.loading = false;
+        let result = result.and_then(|page| {
+            anyhow::ensure!(
+                page.bytes() <= PAGE_BYTES,
+                "Page exceeds the 1 MiB value limit; current page retained"
+            );
+            projections(&page).map_err(anyhow::Error::msg)?;
+            Ok(page)
+        });
         match result {
             Ok(page) if page.bytes() <= PAGE_BYTES => {
                 if self.view.sort.is_some_and(|(column, _)| {
@@ -233,8 +349,12 @@ impl App {
                 {
                     self.view.sort = None;
                 }
-                self.view.rebuild(None);
+                self.view.rebuild(None, self.config.display);
                 self.error = None;
+                if self.single_value() && self.filter_input.is_none() {
+                    self.detail = true;
+                    self.prepare_detail();
+                }
             }
             Ok(_) => {
                 self.error =
@@ -256,6 +376,21 @@ impl App {
     }
 
     pub fn available(&self, action: Action) -> bool {
+        self.available_while_loading(action, self.loading)
+    }
+
+    fn available_while_loading(&self, action: Action, loading: bool) -> bool {
+        if self.display_menu.is_some() {
+            return matches!(
+                action,
+                Action::Up
+                    | Action::Down
+                    | Action::Open
+                    | Action::Back
+                    | Action::Cancel
+                    | Action::Help
+            );
+        }
         if self.theme_menu.is_some() {
             return matches!(
                 action,
@@ -263,29 +398,35 @@ impl App {
             );
         }
         match action {
-            Action::Filter => !self.detail,
-            Action::Sort => !self.detail && self.column_count() > 0,
+            Action::ScrollLeft | Action::ScrollRight => !self.config.display.word_wrap,
+            Action::Filter => !self.detail && !self.row_detail,
+            Action::Sort => !self.detail && !self.row_detail && self.column_count() > 0,
             Action::Columns => {
-                !self.loading && !self.detail && self.action_target(action).is_some()
+                !loading && !self.detail && !self.row_detail && self.action_target(action).is_some()
             }
             Action::Left | Action::Right => self.column_count() > 0,
-            Action::Back => self.help || self.detail || !self.parents.is_empty(),
-            Action::Open => !self.loading && !self.view.visible.is_empty(),
+            Action::Back => self.help || self.detail || self.row_detail || !self.parents.is_empty(),
+            Action::Open => !loading && !self.view.visible.is_empty(),
             Action::Next => {
                 if self.detail {
                     self.detail_chunk + 1 < self.detail_chunks
                 } else {
-                    !self.loading && self.view.page.next
+                    !self.row_detail && !loading && self.view.page.next
                 }
             }
             Action::Previous => {
                 if self.detail {
                     self.detail_chunk > 0
                 } else {
-                    !self.loading && !self.view.previous.is_empty()
+                    !self.row_detail && !loading && !self.view.previous.is_empty()
                 }
             }
-            Action::Up | Action::Down => !self.view.visible.is_empty(),
+            Action::Up
+            | Action::Down
+            | Action::PageUp
+            | Action::PageDown
+            | Action::HalfPageUp
+            | Action::HalfPageDown => self.help || !self.view.visible.is_empty(),
             _ => true,
         }
     }
@@ -330,11 +471,54 @@ impl App {
         }
     }
 
+    fn clear_detail(&mut self) {
+        self.detail_override = None;
+        self.detail_prepared.clear();
+        self.detail_ranges.clear();
+        self.horizontal_scroll = 0;
+    }
+
+    fn single_value(&self) -> bool {
+        self.view.alias.is_some()
+            && self.column_count() == 1
+            && self.view.page.rows.len() == 1
+            && !self.view.page.next
+            && self.view.page.rows[0].target.is_none()
+            && !self.view.visible.is_empty()
+    }
+
+    fn prepare_detail(&mut self) {
+        let cell = self.view.page.rows[self.view.selected_index().expect("selected detail row")]
+            .cells[self.view.column]
+            .as_ref();
+        let mut options = self.config.display;
+        options.format = self.detail_override.unwrap_or(options.format);
+        let declared_json = self
+            .view
+            .page
+            .columns
+            .get(self.view.column)
+            .is_some_and(|c| matches!(c.datatype.as_str(), "json" | "jsonb"));
+        let prepared = crate::value::prepare(cell, options, declared_json);
+        self.detail_format = prepared.format;
+        self.detail_notice = prepared.notice;
+        self.detail_prepared = prepared.text;
+        self.detail_ranges = crate::value::chunk_ranges(&self.detail_prepared);
+        self.detail_chunk = 0;
+        self.horizontal_scroll = 0;
+        self.detail_text();
+    }
+
     fn detail_text(&mut self) {
         let cell = &self.view.page.rows[self.view.selected_index().expect("selected detail row")]
             .cells[self.view.column];
-        let value = cell.as_deref().unwrap_or("");
-        self.detail_chunks = value.chars().count().div_ceil(4096).max(1);
+        let bytes = cell.as_ref().map_or(&[][..], Value::bytes);
+        let binary = matches!(self.detail_format, ValueFormat::Hex | ValueFormat::Binary);
+        self.detail_chunks = if binary {
+            bytes.len().div_ceil(crate::value::BYTE_CHUNK).max(1)
+        } else {
+            self.detail_ranges.len().max(1)
+        };
         self.detail_chunk = self.detail_chunk.min(self.detail_chunks - 1);
         let datatype = self
             .view
@@ -343,19 +527,26 @@ impl App {
             .get(self.view.column)
             .map_or("metadata", |c| c.datatype.as_str());
         self.detail_text = format!(
-            "{} | {} | {}\n{}",
+            "{} | {} | {} | {} | {}\n{}",
             self.column_name(self.view.column),
             datatype,
+            self.detail_format.name(),
+            cell.as_ref().map_or("no bytes", Value::provenance),
             match cell {
                 None => "SQL NULL",
-                Some(v) if v.is_empty() => "empty text",
+                Some(Value::Bytes(v)) if v.is_empty() => "empty bytes",
+                Some(Value::Bytes(_)) => "non-null bytes",
+                Some(v) if v.bytes().is_empty() => "empty text",
                 Some(_) => "non-null text",
             },
-            value
-                .chars()
-                .skip(self.detail_chunk * 4096)
-                .take(4096)
-                .collect::<String>()
+            if binary {
+                crate::value::byte_chunk(bytes, self.detail_format, self.detail_chunk)
+            } else {
+                self.detail_ranges
+                    .get(self.detail_chunk)
+                    .map_or("", |range| &self.detail_prepared[range.clone()])
+                    .to_owned()
+            }
         );
         self.detail_scroll = 0;
     }
@@ -364,8 +555,68 @@ impl App {
         ACTIONS.iter().filter(|entry| self.available(entry.id))
     }
 
+    pub fn context_actions(&self) -> impl Iterator<Item = &'static ActionDescriptor> + '_ {
+        ACTIONS.iter().filter(|entry| {
+            matches!(entry.id, Action::Next | Action::Previous)
+                || self.available_while_loading(entry.id, false)
+        })
+    }
+
     pub fn act(&mut self, action: Action) {
         if !self.available(action) {
+            return;
+        }
+        if let Some(index) = self.display_menu {
+            if self.help && matches!(action, Action::Up | Action::Down) {
+                self.detail_scroll = if action == Action::Up {
+                    self.detail_scroll.saturating_sub(1)
+                } else {
+                    self.detail_scroll.saturating_add(1)
+                };
+                return;
+            }
+            match action {
+                Action::Up => self.display_menu = Some(index.saturating_sub(1)),
+                Action::Down => self.display_menu = Some((index + 1).min(FORMATS.len() + 3)),
+                Action::Back | Action::Cancel => {
+                    self.display_menu = None;
+                    self.help = false;
+                }
+                Action::Help => {
+                    self.help = !self.help;
+                    self.detail_scroll = 0;
+                }
+                Action::Open => {
+                    let before = self.config.display;
+                    let format_before = self.detail_override;
+                    if index < FORMATS.len() {
+                        if !self.detail {
+                            self.error =
+                                Some("Open a field detail before selecting its format".into());
+                            return;
+                        }
+                        self.detail_override = Some(FORMATS[index].id);
+                    } else {
+                        match index - FORMATS.len() {
+                            0 => {
+                                self.config.display.pretty_print = !self.config.display.pretty_print
+                            }
+                            1 => self.config.display.highlight = !self.config.display.highlight,
+                            2 => self.config.display.word_wrap = !self.config.display.word_wrap,
+                            _ => {
+                                self.config.display.unicode =
+                                    if self.config.display.unicode == UnicodeDisplay::Literal {
+                                        UnicodeDisplay::Escaped
+                                    } else {
+                                        UnicodeDisplay::Literal
+                                    }
+                            }
+                        }
+                    }
+                    self.display_changed(before, format_before);
+                }
+                _ => {}
+            }
             return;
         }
         if let Some(original) = self.theme_menu {
@@ -386,6 +637,14 @@ impl App {
                 }
                 _ => {}
             }
+            return;
+        }
+        if self.help && matches!(action, Action::Up | Action::Down) {
+            self.detail_scroll = if action == Action::Up {
+                self.detail_scroll.saturating_sub(1)
+            } else {
+                self.detail_scroll.saturating_add(1)
+            };
             return;
         }
         if self.detail {
@@ -412,10 +671,55 @@ impl App {
                 return;
             }
         }
+        if self.row_detail && !self.detail && matches!(action, Action::Up | Action::Down) {
+            self.act(if action == Action::Up {
+                Action::Left
+            } else {
+                Action::Right
+            });
+            return;
+        }
         match action {
+            Action::Display => {
+                self.help = false;
+                self.display_menu = Some(0);
+                for (i, format) in FORMATS.iter().enumerate() {
+                    self.display_reasons[i] = if !self.detail {
+                        "Open field detail to select a format"
+                    } else {
+                        let cell = self.view.page.rows[self.view.selected_index().unwrap()].cells
+                            [self.view.column]
+                            .as_ref();
+                        if cell.is_none() {
+                            "Null has no text or byte content"
+                        } else if format.id == ValueFormat::Auto {
+                            format.description
+                        } else {
+                            let prepared = crate::value::prepare(
+                                cell,
+                                DisplayOptions {
+                                    format: format.id,
+                                    ..self.config.display
+                                },
+                                false,
+                            );
+                            if prepared.format != format.id {
+                                prepared.notice
+                            } else {
+                                format.description
+                            }
+                        }
+                    };
+                }
+            }
+            Action::ScrollLeft => self.horizontal_scroll = self.horizontal_scroll.saturating_sub(8),
+            Action::ScrollRight => {
+                self.horizontal_scroll = self.horizontal_scroll.saturating_add(8)
+            }
             Action::Themes => self.theme_menu = Some(self.config.theme),
             Action::Filter => {
                 self.help = false;
+                self.filter_restore = Some((self.view.filter.clone(), self.view.selected_index()));
                 self.filter_input = Some(self.view.filter.clone());
             }
             Action::Sort => {
@@ -426,7 +730,7 @@ impl App {
                     Some((column, true)) if column == self.view.column => None,
                     _ => Some((self.view.column, false)),
                 };
-                self.view.rebuild(selected);
+                self.view.reindex(selected);
             }
             Action::Left | Action::Right => {
                 self.view.column = if action == Action::Left {
@@ -435,8 +739,7 @@ impl App {
                     (self.view.column + 1).min(self.column_count().saturating_sub(1))
                 };
                 if self.detail {
-                    self.detail_chunk = 0;
-                    self.detail_text();
+                    self.prepare_detail();
                 }
             }
             Action::Columns => {
@@ -448,6 +751,13 @@ impl App {
                 let parent = std::mem::replace(&mut self.view, View::new(alias, target));
                 self.parents.push(parent);
                 self.load(0, true);
+            }
+            Action::PageUp | Action::PageDown | Action::HalfPageUp | Action::HalfPageDown => {
+                let down = matches!(action, Action::PageDown | Action::HalfPageDown);
+                let half = matches!(action, Action::HalfPageUp | Action::HalfPageDown);
+                for _ in 0..crate::ui::page_step(self, down, half) {
+                    self.act(if down { Action::Down } else { Action::Up });
+                }
             }
             Action::Up => self.view.selected = self.view.selected.saturating_sub(1),
             Action::Down => {
@@ -480,9 +790,13 @@ impl App {
                 {
                     (self.view.alias.clone(), target.clone())
                 } else {
-                    self.detail = true;
-                    self.detail_chunk = 0;
-                    self.detail_text();
+                    if self.row_detail || self.column_count() == 1 {
+                        self.detail = true;
+                        self.prepare_detail();
+                    } else {
+                        self.row_detail = true;
+                        self.horizontal_scroll = 0;
+                    }
                     return;
                 };
                 let parent = std::mem::replace(&mut self.view, View::new(alias, target));
@@ -495,9 +809,17 @@ impl App {
                 } else if self.detail {
                     self.detail = false;
                     self.detail_text.clear();
+                    self.clear_detail();
+                    if !self.row_detail && self.single_value() {
+                        self.act(Action::Back);
+                    }
+                } else if self.row_detail {
+                    self.row_detail = false;
+                    self.horizontal_scroll = 0;
                 } else if let Some(parent) = self.parents.pop() {
                     self.invalidate();
                     self.view = parent;
+                    self.view.prepare_previews(self.config.display);
                     if self.view.alias.is_none() {
                         self.session += 1;
                         self.connection_status = None;
@@ -517,23 +839,28 @@ impl App {
                     self.invalidate();
                     self.view.offset = offset;
                     self.view.page = page;
-                    self.view.rebuild(selected);
+                    self.view.rebuild(selected, self.config.display);
                 }
             }
             Action::Refresh => {
                 self.detail = false;
+                self.clear_detail();
                 if self.view.resource == Resource::new("connections", vec![]) {
                     let filter = std::mem::take(&mut self.view.filter);
                     let sort = self.view.sort;
                     self.connections();
                     self.view.filter = filter;
                     self.view.sort = sort;
-                    self.view.rebuild(None);
+                    self.view.rebuild(None, self.config.display);
                 } else {
                     self.load(0, true);
                 }
             }
-            Action::Help => self.help = !self.help,
+            Action::Help => {
+                self.help = !self.help;
+                self.detail_scroll = 0;
+                self.horizontal_scroll = 0;
+            }
             Action::Quit => {
                 self.invalidate();
                 self.quit = true;
@@ -555,17 +882,20 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.command = None;
-            self.filter_input = None;
+            self.restore_filter();
             self.act(Action::Cancel);
             return;
         }
         if let Some(input) = &mut self.filter_input {
             match key.code {
-                KeyCode::Esc => self.filter_input = None,
+                KeyCode::Esc => {
+                    self.restore_filter();
+                    return;
+                }
                 KeyCode::Enter => {
-                    let selected = self.view.selected_index();
-                    self.view.filter = self.filter_input.take().unwrap();
-                    self.view.rebuild(selected);
+                    self.filter_input = None;
+                    self.filter_restore = None;
+                    return;
                 }
                 KeyCode::Backspace => {
                     input.pop();
@@ -581,6 +911,12 @@ impl App {
                 }
                 _ => {}
             }
+            self.view.filter = self.filter_input.as_ref().unwrap().clone();
+            self.view.reindex(
+                self.filter_restore
+                    .as_ref()
+                    .and_then(|(_, selected)| *selected),
+            );
             return;
         }
         if let Some(command) = &mut self.command {
@@ -588,6 +924,10 @@ impl App {
                 KeyCode::Esc => self.command = None,
                 KeyCode::Enter => {
                     let command = self.command.take().unwrap();
+                    if command.starts_with("display ") {
+                        self.display_command(&command);
+                        return;
+                    }
                     match serde_json::from_value::<Action>(serde_json::Value::String(command)) {
                         Ok(action) if self.available(action) => self.act(action),
                         _ => {
@@ -602,8 +942,8 @@ impl App {
                     command.pop();
                 }
                 KeyCode::Char(c)
-                    if c.is_ascii_lowercase()
-                        && command.len() < 32
+                    if (c.is_ascii_lowercase() || matches!(c, ' ' | '-' | '_'))
+                        && command.len() < 64
                         && !key
                             .modifiers
                             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
@@ -614,18 +954,25 @@ impl App {
             }
             return;
         }
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
+        if key.modifiers.contains(KeyModifiers::ALT) {
             return;
         }
-        if key.code == KeyCode::Char(':') && self.theme_menu.is_none() {
+        if key.code == KeyCode::Char(':')
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && self.theme_menu.is_none()
+            && self.display_menu.is_none()
+        {
             self.command = Some(String::new());
             return;
         }
         let name = match key.code {
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                format!("Ctrl-{c}")
+            }
+            _ if key.modifiers.contains(KeyModifiers::CONTROL) => return,
             KeyCode::Char(c) => c.to_string(),
+            KeyCode::PageUp => "PageUp".into(),
+            KeyCode::PageDown => "PageDown".into(),
             KeyCode::Up => "Up".into(),
             KeyCode::Down => "Down".into(),
             KeyCode::Left => "Left".into(),
@@ -649,12 +996,256 @@ impl App {
             .position(|theme| *theme == self.config.theme)
             .expect("built-in theme is listed")
     }
+
+    fn restore_filter(&mut self) {
+        self.filter_input = None;
+        if let Some((filter, selected)) = self.filter_restore.take() {
+            self.view.filter = filter;
+            self.view.reindex(selected);
+        }
+    }
+
+    fn display_command(&mut self, command: &str) {
+        let before = self.config.display;
+        let format_before = self.detail_override;
+        let args: Vec<_> = command.split_whitespace().collect();
+        let valid = match args.as_slice() {
+            ["display", "format", name] if self.detail => {
+                if let Some(format) = FORMATS.iter().find(|f| f.name == *name) {
+                    self.detail_override = Some(format.id);
+                    true
+                } else {
+                    false
+                }
+            }
+            ["display", "unicode", name @ ("literal" | "escaped")] => {
+                self.config.display.unicode = if *name == "literal" {
+                    UnicodeDisplay::Literal
+                } else {
+                    UnicodeDisplay::Escaped
+                };
+                true
+            }
+            ["display", setting, value @ ("on" | "off")] => {
+                let target = match *setting {
+                    "pretty-print" => Some(&mut self.config.display.pretty_print),
+                    "highlight" => Some(&mut self.config.display.highlight),
+                    "word-wrap" => Some(&mut self.config.display.word_wrap),
+                    _ => None,
+                };
+                if let Some(target) = target {
+                    *target = *value == "on";
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+        if valid {
+            self.error = None;
+            self.display_changed(before, format_before);
+        } else {
+            self.error = Some(
+                "Invalid display command; use :display. Format selection requires field detail"
+                    .into(),
+            );
+        }
+    }
+
+    fn display_changed(&mut self, before: DisplayOptions, format_before: Option<ValueFormat>) {
+        let content_changed = before.pretty_print != self.config.display.pretty_print
+            || before.unicode != self.config.display.unicode;
+        if self.detail && (content_changed || format_before != self.detail_override) {
+            self.prepare_detail();
+        }
+        if content_changed {
+            self.view.prepare_previews(self.config.display);
+        }
+        if self.config.display.word_wrap {
+            self.horizontal_scroll = 0;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    fn command(app: &mut App, command: &str) {
+        for c in format!(":{command}").chars() {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn single_value_opens_without_a_truncated_table() {
+        let mut app = app();
+        let request = app.request.take().unwrap();
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: vec![onetui_core::Column {
+                    name: "payload".into(),
+                    datatype: "json".into(),
+                }],
+                rows: vec![Row {
+                    cells: vec![Some(Value::Json(
+                        "{\"a\":1,\"b\":[2,3],\"last\":true}".into(),
+                    ))],
+                    target: None,
+                }],
+                ..Page::default()
+            }),
+        );
+        assert!(app.detail, "a scalar result must use the value viewer");
+        assert!(app.detail_text.contains("\"last\": true"));
+        assert!(app.request.is_none());
+    }
+
+    #[test]
+    fn row_opens_field_list_before_individual_value() {
+        let mut app = app();
+        let request = app.request.take().unwrap();
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: ["name", "balance"]
+                    .map(|name| onetui_core::Column {
+                        name: name.into(),
+                        datatype: "text".into(),
+                    })
+                    .to_vec(),
+                rows: vec![Row {
+                    cells: vec![Some("Mina".into()), Some("12.50".into())],
+                    target: None,
+                }],
+                ..Page::default()
+            }),
+        );
+        app.act(Action::Open);
+        assert!(!app.detail, "first Enter should list every field");
+        app.act(Action::Down);
+        app.act(Action::Open);
+        assert!(app.detail_text.contains("12.50"));
+        app.act(Action::Back);
+        assert!(!app.detail);
+        assert_eq!(app.view.selected, 0);
+        assert!(app.request.is_none());
+    }
+
+    #[test]
+    fn filter_updates_while_typing_and_escape_restores_selection_without_reformatting() {
+        let mut app = app();
+        app.act(Action::Connections);
+        app.view.selected = 1;
+        let previews = app.view.previews.as_ptr();
+        let projections = app.view.projections.as_ptr();
+        app.act(Action::Filter);
+        for c in "fake".chars() {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(app.view.visible, vec![0]);
+        assert_eq!(app.view.previews.as_ptr(), previews);
+        assert_eq!(app.view.projections.as_ptr(), projections);
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.view.visible, vec![0, 1]);
+        assert_eq!(app.view.selected, 1);
+        assert!(app.view.filter.is_empty());
+        assert!(app.request.is_none());
+    }
+
+    #[test]
+    fn display_commands_menu_and_formats_preserve_data_and_request_identity() {
+        let mut app = app();
+        app.view.resource = Resource::new("fake.rows", vec!["public".into(), "values".into()]);
+        let request = app.request.take().unwrap();
+        let json = "{\"name\":\"София 🌊\",\"a\":1,\"a\":2}";
+        let cells = vec![
+            Some(Value::Json(json.into())),
+            Some(Value::Bytes((0..=255).cycle().take(600).collect())),
+            None,
+        ];
+        app.complete(
+            &request,
+            Ok(Page {
+                rows: vec![Row {
+                    cells: cells.clone(),
+                    target: None,
+                }],
+                columns: ["json", "bytes", "null"]
+                    .into_iter()
+                    .map(|name| onetui_core::Column {
+                        name: name.into(),
+                        datatype: "text".into(),
+                    })
+                    .collect(),
+                continuation: Some("native-token".into()),
+                ..Page::default()
+            }),
+        );
+        let projections = app.view.projections.clone();
+        let generation = app.generation;
+        app.act(Action::Open);
+        app.act(Action::Open);
+        assert!(app.detail_text.contains("\n  \"name\": "));
+        for pretty in ["on", "off"] {
+            for highlight in ["on", "off"] {
+                for wrap in ["on", "off"] {
+                    for unicode in ["literal", "escaped"] {
+                        command(&mut app, &format!("display pretty-print {pretty}"));
+                        command(&mut app, &format!("display highlight {highlight}"));
+                        command(&mut app, &format!("display word-wrap {wrap}"));
+                        command(&mut app, &format!("display unicode {unicode}"));
+                        assert_eq!(app.config.display.pretty_print, pretty == "on");
+                        assert_eq!(app.config.display.highlight, highlight == "on");
+                        assert_eq!(app.config.display.word_wrap, wrap == "on");
+                        assert_eq!(app.detail_text.contains('🌊'), unicode == "literal");
+                        assert!(app.error.is_none());
+                    }
+                }
+            }
+        }
+        command(&mut app, "display format hex");
+        assert_eq!(app.detail_format, ValueFormat::Hex);
+        assert!(app.detail_text.contains("7b 22 6e"));
+        app.act(Action::Back);
+        assert!(app.detail_override.is_none());
+        app.act(Action::Right);
+        app.act(Action::Open);
+        assert_eq!(app.detail_format, ValueFormat::Hex);
+        command(&mut app, "display format binary");
+        assert_eq!(app.detail_chunks, 3);
+        app.act(Action::Next);
+        assert!(app.detail_text.contains("00000100:"));
+        let cached = app.detail_text.as_ptr();
+        command(&mut app, "display highlight on");
+        command(&mut app, "display word-wrap on");
+        assert_eq!(app.detail_chunk, 1);
+        assert_eq!(app.detail_text.as_ptr(), cached);
+        command(&mut app, "display highlight off");
+        command(&mut app, "display word-wrap off");
+        command(&mut app, "scroll_right");
+        assert_eq!(app.horizontal_scroll, 8);
+        command(&mut app, "display format text");
+        assert!(app.detail_notice.contains("Invalid UTF-8"));
+        app.act(Action::Display);
+        assert!(app.display_reasons[1].contains("Invalid UTF-8"));
+        app.act(Action::Cancel);
+        assert!(app.display_menu.is_none() && !app.quit);
+        assert_eq!(app.view.page.rows[0].cells, cells);
+        assert_eq!(app.view.projections, projections);
+        assert_eq!(app.view.page.continuation.as_deref(), Some("native-token"));
+        assert_eq!(app.generation, generation);
+        assert!(app.request.is_none());
+        command(&mut app, "display word-wrap maybe");
+        assert!(app.error.is_some());
+        app.act(Action::Connections);
+        assert!(!app.config.display.word_wrap && !app.config.display.highlight);
+        assert!(app.detail_prepared.is_empty());
+    }
 
     #[test]
     fn startup_requires_explicit_alias_even_with_one_connection() {
@@ -741,6 +1332,92 @@ mod tests {
             Config::load(file.path(), crate::test_provider::CATALOG).unwrap(),
             Some("pg"),
         )
+    }
+
+    #[test]
+    fn page_keys_scroll_loaded_data_and_detail_without_fetching() {
+        let mut app = app();
+        let request = app.request.take().unwrap();
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: (0..40)
+                    .map(|i| onetui_core::Column {
+                        name: format!("field_{i}"),
+                        datatype: "text".into(),
+                    })
+                    .collect(),
+                rows: (0..50)
+                    .map(|_| Row {
+                        cells: vec![Some("value".into()); 40],
+                        target: None,
+                    })
+                    .collect(),
+                next: true,
+                ..Page::default()
+            }),
+        );
+        let projections = app.view.projections.clone();
+        let previews = app.view.previews.clone();
+        let generation = app.generation;
+        app.key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.view.selected, 11);
+        app.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(app.view.selected, 16);
+        app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(app.view.selected, 11);
+        app.key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(app.view.selected, 0);
+        app.viewport.height = 34;
+        app.key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.view.selected, 21);
+        app.act(Action::Open);
+        assert!(app.row_detail);
+        app.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(app.view.column, 10);
+        assert_eq!(app.view.selected, 21);
+        app.act(Action::Open);
+        assert!(app.detail);
+        app.key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.detail_scroll, 22);
+        app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(app.detail_scroll, 11);
+        app.key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(app.detail_scroll, 0);
+        app.act(Action::Back);
+        app.act(Action::Back);
+        for _ in 0..10 {
+            app.act(Action::PageDown);
+        }
+        assert_eq!(app.view.selected, 49);
+        app.key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(app.view.selected, 49);
+        assert_eq!(app.filter_input.as_deref(), Some(""));
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::PageUp,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        assert_eq!(app.view.selected, 49);
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::PageUp,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
+        assert_eq!(app.view.selected, 28);
+        app.command = Some("page_up".into());
+        app.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(app.command.as_deref(), Some("page_up"));
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.view.selected, 7);
+        assert_eq!(app.view.projections, projections);
+        assert_eq!(app.view.previews, previews);
+        assert_eq!(app.generation, generation);
+        assert_eq!(app.view.offset, 0);
+        assert!(app.request.is_none());
     }
 
     fn filter(app: &mut App, text: &str) {
@@ -912,7 +1589,7 @@ mod tests {
     fn page(next: bool) -> Page {
         Page {
             rows: vec![Row {
-                cells: vec![Some(display("public\x1b[31m"))],
+                cells: vec![Some("public\x1b[31m".into())],
                 target: Some(Resource::new(
                     "fake.relations",
                     vec!["public\x1b[31m".into()],
@@ -932,7 +1609,12 @@ mod tests {
         app.complete(&old, Err(anyhow::anyhow!("old failure")));
         assert_eq!(app.view.resource, Resource::new("connections", vec![]));
         assert!(app.error.is_none());
-        assert_eq!(app.view.page.rows[0].cells[0].as_deref(), Some("pg"));
+        assert_eq!(
+            app.view.page.rows[0].cells[0]
+                .as_ref()
+                .and_then(onetui_core::Value::text),
+            Some("pg")
+        );
     }
 
     #[test]
@@ -972,7 +1654,7 @@ mod tests {
         assert_eq!(app.view.offset, 300);
         assert!(app.request.is_none());
         assert!(
-            !app.view.page.rows[0].cells[0]
+            !app.view.projections[0][0]
                 .as_ref()
                 .unwrap()
                 .contains('\x1b')
@@ -991,7 +1673,7 @@ mod tests {
         assert_eq!(next.continuation, app.view.page.continuation);
         let token = next.continuation.clone();
         let mut oversized = page(false);
-        oversized.rows[0].cells[0] = Some("x".repeat(PAGE_BYTES + 1));
+        oversized.rows[0].cells[0] = Some("x".repeat(PAGE_BYTES + 1).into());
         app.complete(&next, Ok(oversized));
         assert_eq!(app.view.offset, 0);
         assert_eq!(app.view.page.continuation, token);
@@ -1020,15 +1702,16 @@ mod tests {
                 rows: vec![Row {
                     cells: vec![
                         None,
-                        Some(String::new()),
+                        Some(String::new().into()),
                         Some("NULL".into()),
-                        Some(text.clone()),
+                        Some(text.clone().into()),
                     ],
                     target: None,
                 }],
                 ..Page::default()
             }),
         );
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.detail_text.contains("SQL NULL"));
         app.act(Action::Right);
@@ -1050,6 +1733,7 @@ mod tests {
         }
         assert_eq!(restored, text);
         assert!(app.request.is_none(), "detail chunks must never fetch");
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         app.key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
         assert_eq!(app.view.resource.id, "fake.columns");

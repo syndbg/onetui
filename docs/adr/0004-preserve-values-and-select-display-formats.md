@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-09
 ---
 
@@ -9,11 +9,11 @@ date: 2026-09-09
 
 Keep retained values separate from their terminal representation. Let users select text, JSON, hexadecimal or binary-digit views through built-in enum dispatch. Pretty printing, data highlighting and word wrapping are independent settings. Word wrapping defaults to on throughout the app.
 
-These controls are not implemented. This proposal includes defaults and command names for review.
+See [display usage](../ui.md#value-display-controls) for current controls and limits.
 
 ## Current behavior and reference
 
-OneTUI's [Row](../../crates/core/src/lib.rs) stores `Vec<Option<String>>`. Connectors escape terminal controls before caching those strings. [Field detail](../../crates/tui/src/app.rs) splits the cached text into 4,096-character chunks, and the [renderer](../../crates/tui/src/ui.rs) wraps it. That representation cannot retain arbitrary bytes or distinguish original text from escape sequences introduced for display.
+At decision time, OneTUI's [Row](../../crates/core/src/lib.rs) stored `Vec<Option<String>>`, escaped by connectors before caching. [Field detail](../../crates/tui/src/app.rs) split this text into 4,096-character chunks. That representation could not retain arbitrary bytes or distinguish original text from escape sequences introduced for display. The value contract now retains text, serialized JSON or bytes; TUI prepares separate safe projections.
 
 The emoji in the reported payload is literal [fixture data](../../crates/qdrant/examples/seed_demo.rs), used alongside several writing systems to exercise Unicode rendering. It is not an icon added by the renderer. Non-ASCII text can be valid UTF-8; arbitrary binary data need not be. Neither validity nor an emoji establishes the value's format.
 
@@ -59,7 +59,7 @@ Adding a format means adding its enum variant, formatter, descriptor and package
 
 For example, bytes `00 ff 41` display as `00000000 11111111 01000001` in binary mode. Their text view is unavailable because `ff` is not valid UTF-8. Text `41` has bytes `34 31`; it must not silently become the single byte `41`. Null has no byte representation.
 
-Pretty printing affects JSON structure only: two-space indentation when on, retained input whitespace when off. Preserve key order, duplicate keys, number lexemes and string escapes from the retained JSON text. A `serde_json::Value` parse-and-reserialize round trip is not sufficient for that contract. Pretty printing does not recursively parse strings containing JSON, decode base64 or reinterpret arbitrary text. A format without a pretty-print operation shows that the setting does not apply.
+Pretty printing affects JSON structure only: two-space indentation when on, retained input whitespace when off, subject to terminal-control escaping. Preserve key order, duplicate keys, number lexemes and string escapes from the retained JSON text. A `serde_json::Value` parse-and-reserialize round trip is not sufficient for that contract. Pretty printing does not recursively parse strings containing JSON, decode base64 or reinterpret arbitrary text. A format without a pretty-print operation shows that the setting does not apply.
 
 Highlighting adds styles, never content. JSON syntax colors, byte grouping and any data match highlights obey the highlighting switch; selection, focus, errors and context key hints remain visible when it is off. Reuse semantic theme roles and Ratatui spans, not ANSI sequences inside the data. Serde JSON and Ratatui are already dependencies; use them before adding a generic pretty-printer or syntax-highlighting package. Any chosen formatter still has to preserve the retained representation.
 
@@ -69,7 +69,7 @@ Word wrapping changes visual lines only. With it on, all read-only text surfaces
 
 ## Configuration and interaction
 
-Proposed additions to the existing configuration file, not valid settings in the current binary:
+Use the optional display table in the existing configuration file:
 
 ```toml
 [display]
@@ -80,7 +80,7 @@ word_wrap = true
 unicode = "literal"
 ```
 
-| Setting | Type and accepted values | Proposed default and scope |
+| Setting | Type and accepted values | Default and scope |
 | --- | --- | --- |
 | `format` | String: `auto`, `text`, `json`, `hex`, `binary` | `auto`; startup value-view preference |
 | `pretty_print` | Boolean | `true`; formatting of structured values throughout the app |
@@ -92,7 +92,7 @@ The optional table and omitted fields use these defaults. Names are exact and ca
 
 Keep existing file selection: explicit `--config PATH`, otherwise an absolute `$XDG_CONFIG_HOME/onetui/config.toml`, otherwise `$HOME/.config/onetui/config.toml`. Relative explicit paths resolve from the working directory. There is no additional display file, automatic home-file lookup or merge layer. A home file remains an explicit choice: `onetui --config "$HOME/onetui.toml"`.
 
-Propose `:display` as the in-app menu for formats and all switches. List available formats with reasons when a format cannot represent the selected value. Enter applies a choice; Esc closes the menu. Direct commands include `:display format hex`, `:display pretty-print off`, `:display highlight off`, `:display word-wrap off` and `:display unicode escaped`; command booleans accept `on` or `off`. A format choice overrides the current field detail until it closes; the other switches apply across the session and across datasource changes. Startup format preference remains in TOML. Runtime choices override config in memory only and never write the file.
+Use `v` or `:display` as the in-app menu for formats and all switches. List available formats with reasons when a format cannot represent the selected value. Enter applies a choice; Esc closes the menu. Direct commands include `:display format hex`, `:display pretty-print off`, `:display highlight off`, `:display word-wrap off` and `:display unicode escaped`; command booleans accept `on` or `off`. A format choice overrides the current field detail until it closes; the other switches apply across the session and across datasource changes. Startup format preference remains in TOML. Table previews use auto format independently of the detail-format preference. Runtime choices override config in memory only and never write the file.
 
 Context and `?` expose current display actions and effective settings. The input bar still appears only while typing. The value header identifies the effective format and byte provenance. The offline `onetui schema` catalog must describe implemented formats, settings, defaults and command usage from the same descriptors; do not advertise this proposal there before implementation.
 
@@ -104,4 +104,4 @@ Count retained values and derived caches against bounded storage. Generate hex/b
 
 Always pretty-printing hides the original presentation and removes user choice. Treating every cell as JSON loses non-JSON types. Treating every cell as UTF-8 loses arbitrary bytes. Lossy decoding conceals corruption; generic debug output is not a byte viewer. Requiring a formatter trait or plugin ABI adds extensibility that built-in enum dispatch already supplies.
 
-Legacy encoding selection, automatic decompression, base64 decoding, charts, image rendering, editing and export are outside this decision. The byte view remains usable without those decoders. This proposal does not change the initial read-only scope.
+Legacy encoding selection, automatic decompression, base64 decoding, charts, image rendering, editing and export are outside this decision. The byte view remains usable without those decoders. This decision does not change the initial read-only scope.

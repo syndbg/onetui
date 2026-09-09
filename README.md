@@ -19,7 +19,7 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 
 Qdrant browsing means opening a collection, paging through its point IDs, then opening a point's payload or vectors. Those are existing reads, not a similarity search. See [Qdrant usage](docs/qdrant.md) for navigation and limits.
 
-PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering only searches cached text on the displayed page. Customizable keybindings and backend-specific querying are planned.
+PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings and backend-specific querying are planned.
 
 Read and write support is the direction for OneTUI, not a capability of the initial release. Write behavior and permissions will be defined per datasource; broker administration is outside v0.1.
 
@@ -138,7 +138,7 @@ onetui schema --datasource qdrant
 
 The commands print JSON offline without reading your config, resolving secrets or connecting to a datasource. This is OneTUI's configuration and capability catalog, not the schema of a live database or a dump of your current settings. Use it as the version-specific reference; the table below summarizes the connection settings.
 
-Top-level settings are the optional `theme` string and required `[connections]` table, containing named `[connections.<alias>]` entries. Use an empty `[connections]` table when no aliases are configured. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
+Top-level settings are the optional `theme` string, optional `[display]` table and required `[connections]` table, containing named `[connections.<alias>]` entries. Use an empty `[connections]` table when no aliases are configured. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
 
 `theme` colors every TUI screen. Accepted names are exactly `catppuccin`, `gruvbox`, `solarized`, `nord`, `dracula`, `tokyo-night`, `one-dark`, `rose-pine`, `monokai` and `flexoki`. Omission selects `catppuccin`; each name selects one fixed dark palette. Names are case-sensitive. Empty/unknown names and non-string values fail validation, including with `--check`, without echoing the supplied value. Theme names are not environment-expanded. There is no separate theme file, CLI override or file watching; restart to read configuration changes. Existing files without `theme` keep the original colors. See [palette variants and sources](crates/theme/README.md#palettes).
 
@@ -156,7 +156,7 @@ Connection aliases and environment-reference names must contain only ASCII lette
 
 Every connection entry is validated, including unselected aliases: unknown fields/kinds, invalid environment-reference names, relative PostgreSQL CA paths and invalid Qdrant URLs fail when loading the file. Only the selected connection resolves secrets or opens files/transports. Existing valid configuration needs no migration; fix invalid unused entries rather than relying on them being ignored.
 
-Keybindings, views, plugins, heartbeats and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1-300 seconds**. Errors do not echo config contents or driver error chains.
+Keybindings, views, plugins, heartbeats and timeout settings are **not supported in this TOML file yet**. The active-request deadline is a CLI option: `--timeout` defaults to **5 seconds**, with a supported range of **1-300 seconds**. Configuration validation does not echo config contents. Datasource failures preserve native diagnostics as described below.
 
 Example config (save it at the default location or at the explicit path passed to `--config`):
 
@@ -185,6 +185,43 @@ PostgreSQL certificate loading, including native-root lookup when `ca_file` is o
 Remote Qdrant URLs must use `https://` with native trust roots; `http://` is limited to loopback hosts. Specify the gRPC port (normally 6334), not the REST port; ports are never rewritten. URL credentials, path prefixes, queries and fragments are unsupported. Qdrant custom-CA config and client certificates are not implemented. Collection-scoped keys may not permit listing; that is reported as denied, not an empty result.
 
 Qdrant checks and browsing cap each protobuf response at 1 MiB and report an explicit limit error if exceeded; this is not a process-memory ceiling. PostgreSQL's check returns one boolean catalog result. Neither check proves permission to read every table/collection.
+
+### Datasource errors
+
+Both the TUI and `--check` preserve native error messages. PostgreSQL includes SQLSTATE, severity, message, and any detail, hint or context returned by the server. Qdrant includes the gRPC code and original status message. Connection failures include the driver's underlying network/TLS causes. For example:
+
+```text
+PostgreSQL [42501] ERROR: permission denied for table restricted_rows
+```
+
+OneTUI replaces occurrences of the selected PostgreSQL DSN/password or Qdrant API key with `[REDACTED]` and visibly escapes terminal controls. It does not print transport metadata, authorization headers or driver Debug structures. Backend messages can still contain database names or data; review diagnostics before sharing them. Local validation, cancellation and application limits retain OneTUI messages when no backend error exists. This behavior is always enabled and adds no configuration key. The TUI footer can clip long messages; `--check` writes its complete diagnostic to stderr.
+
+### Display settings
+
+Press `v` or enter `:display` for text, JSON, hex and binary views and independent display switches. `j/k` selects, Enter applies, Esc closes. Format selection requires field detail and lasts until detail closes. Other switches last for the session across connections; no config writes or datasource reads occur. Run `onetui schema` for supported settings, defaults and command syntax.
+
+Put startup defaults in the same configuration file, for example `~/onetui.toml` selected with `onetui --config "$HOME/onetui.toml"`:
+
+```toml
+[display]
+format = "auto"
+pretty_print = true
+highlight = true
+word_wrap = true
+unicode = "literal"
+```
+
+| Setting | Purpose and accepted values | Default |
+| --- | --- | --- |
+| `format` | Detail preference: `auto`, `text`, `json`, `hex`, `binary`; table previews use auto | `auto` |
+| `pretty_print` | Boolean; indent JSON when true, preserve retained whitespace when false | `true` |
+| `highlight` | Boolean; data colors, independent of selection and UI theme | `true` |
+| `word_wrap` | Boolean; app-wide read-only text wrapping; `H/L` scroll content when off | `true` |
+| `unicode` | `literal` for printable Unicode, `escaped` for ASCII escapes | `literal` |
+
+The table and every field are optional. Omission uses the listed defaults. Unknown fields, empty/unknown names and wrong types fail validation, including `--check`. String values are case-sensitive and are not environment-expanded. TOML booleans are `true`/`false`; commands such as `:display word-wrap off` use `on`/`off`. Existing config discovery and relative-path rules apply; there is no display file, CLI override flag, file watching or merge layer. Runtime switches override startup defaults in memory. Restart to reread the file.
+
+Invalid UTF-8 never becomes replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping.
 
 ## Disposable local fixtures and tests
 

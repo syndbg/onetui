@@ -29,7 +29,13 @@ fn panel(p: &Palette, title: impl Into<Line<'static>>) -> Block<'static> {
         .title(title.into().style(Style::new().fg(color(p.title)).bold()))
 }
 
-fn key_hints(frame: &mut Frame, area: Rect, p: &Palette, hints: &[(&str, &str)]) {
+fn key_hints(
+    frame: &mut Frame,
+    area: Rect,
+    p: &Palette,
+    hints: &[(&str, &str)],
+    disabled: &[&str],
+) {
     let width = hints
         .iter()
         .map(|(key, _)| key.len())
@@ -43,7 +49,11 @@ fn key_hints(frame: &mut Frame, area: Rect, p: &Palette, hints: &[(&str, &str)])
             Line::from(vec![
                 Span::styled(
                     format!("{key:<width$}"),
-                    Style::new().fg(color(p.key_hint)).bold(),
+                    if disabled.contains(key) {
+                        Style::new().fg(color(p.muted))
+                    } else {
+                        Style::new().fg(color(p.key_hint)).bold()
+                    },
                 ),
                 Span::styled(*description, Style::new().fg(color(p.muted))),
             ])
@@ -145,6 +155,22 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
     if keys.width == 0 {
         return;
     }
+    if app.display_menu.is_some() {
+        key_hints(
+            frame,
+            keys,
+            p,
+            &[
+                ("j/k", "select display setting"),
+                ("Enter", "apply / toggle"),
+                ("Esc", "close; session settings kept"),
+                ("?", "help"),
+                ("", "Config file is unchanged"),
+            ],
+            &[],
+        );
+        return;
+    }
     if app.theme_menu.is_some() {
         key_hints(
             frame,
@@ -157,6 +183,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
                 ("Ctrl-c", "restore previous"),
                 ("", "Config file is unchanged"),
             ],
+            &[],
         );
         return;
     }
@@ -164,8 +191,8 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         let hints: &[(&str, &str)] = if app.filter_input.is_some() {
             &[
                 ("/", "Filter displayed page"),
-                ("Enter", "apply (empty clears)"),
-                ("Esc", "discard"),
+                ("Enter", "keep filter (live)"),
+                ("Esc", "restore previous"),
                 ("Backspace", "delete character"),
                 ("", "Max 256 UTF-8 bytes"),
             ]
@@ -177,11 +204,12 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
                 ("Backspace", "delete character"),
             ]
         };
-        key_hints(frame, keys, p, hints);
+        key_hints(frame, keys, p, hints, &[]);
         return;
     }
-    let columns = Layout::horizontal([Constraint::Fill(1); 3]).split(keys);
-    let actions: Vec<_> = app.actions().collect();
+    let actions: Vec<_> = app.context_actions().collect();
+    let column_count = actions.len().div_ceil(6).max(1);
+    let columns = Layout::horizontal(vec![Constraint::Fill(1); column_count]).split(keys);
     for (column, chunk) in actions.chunks(6).enumerate() {
         let Some(area) = columns.get(column) else {
             break;
@@ -201,7 +229,12 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             .zip(&names)
             .map(|(entry, name)| (entry.keys[0], name.as_str()))
             .collect::<Vec<_>>();
-        key_hints(frame, *area, p, &hints);
+        let disabled: Vec<_> = chunk
+            .iter()
+            .filter(|entry| !app.available(entry.id))
+            .map(|entry| entry.keys[0])
+            .collect();
+        key_hints(frame, *area, p, &hints, &disabled);
     }
 }
 
@@ -261,7 +294,10 @@ where
             {
                 active.submit(request, deadline)?;
             }
-            terminal.draw(|frame| draw(frame, &app)).map_err(|_| anyhow!("cannot draw terminal"))?;
+            terminal.draw(|frame| {
+                app.viewport = frame.area();
+                draw(frame, &app);
+            }).map_err(|_| anyhow!("cannot draw terminal"))?;
             tokio::select! {
                 event = events.next() => match event {
                     Some(Ok(Event::Key(key))) => app.key(key),
@@ -383,7 +419,10 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
                 ]
             })
             .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+        frame.render_widget(
+            wrapping(Paragraph::new(lines), app).scroll((app.detail_scroll, app.horizontal_scroll)),
+            inner,
+        );
         return;
     }
     let key_width = entries
@@ -406,7 +445,10 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
             let mut lines = vec![String::new()];
             for word in description.split_whitespace() {
                 let line = lines.last_mut().unwrap();
-                if !line.is_empty() && line.len() + 1 + word.len() > description_width {
+                if app.config.display.word_wrap
+                    && !line.is_empty()
+                    && line.len() + 1 + word.len() > description_width
+                {
                     lines.push(word.to_owned());
                 } else {
                     if !line.is_empty() {
@@ -418,7 +460,7 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
             Row::new([
                 Cell::from(key).style(Style::new().fg(color(p.key_hint)).bold()),
                 Cell::from(command).style(Style::new().fg(color(p.identifier))),
-                Cell::from(lines.join("\n")),
+                Cell::from(horizontal(&lines.join("\n"), app)),
             ])
             .height(lines.len() as u16)
             .style(Style::new().bg(color(if index % 2 == 0 {
@@ -427,7 +469,7 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
                 p.surface
             })))
         });
-    frame.render_widget(
+    frame.render_stateful_widget(
         Table::new(
             rows,
             [
@@ -443,18 +485,154 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
                 .bottom_margin(1),
         ),
         inner,
+        &mut TableState::default().with_offset(app.detail_scroll as usize),
     );
 }
 
-pub fn draw(frame: &mut Frame, app: &App) {
+fn wrapping<'a>(paragraph: Paragraph<'a>, app: &App) -> Paragraph<'a> {
+    if app.config.display.word_wrap {
+        paragraph.wrap(Wrap { trim: false })
+    } else {
+        paragraph
+    }
+}
+
+fn horizontal(text: &str, app: &App) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    if app.config.display.word_wrap {
+        return text.to_owned();
+    }
+    text.split('\n')
+        .map(|line| {
+            let mut skipped = 0;
+            line.graphemes(true)
+                .skip_while(|g| {
+                    if skipped >= usize::from(app.horizontal_scroll) {
+                        false
+                    } else {
+                        skipped += g.width();
+                        true
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn wrap_preview(text: &str, width: usize, app: &App) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    if !app.config.display.word_wrap {
+        return horizontal(text, app);
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    let mut lines = 1;
+    for word in text.split_word_bounds() {
+        if word == "\n" {
+            if lines == 3 {
+                out.push('…');
+                break;
+            }
+            out.push('\n');
+            lines += 1;
+            used = 0;
+            continue;
+        }
+        if used > 0 && used + word.width() > width {
+            if lines == 3 {
+                out.push('…');
+                break;
+            }
+            out.push('\n');
+            lines += 1;
+            used = 0;
+        }
+        for grapheme in word.graphemes(true) {
+            if used > 0 && used + grapheme.width() > width {
+                if lines == 3 {
+                    out.push('…');
+                    return out;
+                }
+                out.push('\n');
+                lines += 1;
+                used = 0;
+            }
+            out.push_str(grapheme);
+            used += grapheme.width();
+        }
+    }
+    out
+}
+
+fn detail_spans(app: &App) -> Vec<Line<'_>> {
     let p = app.config.theme.palette();
-    let area = frame.area();
-    frame.render_widget(
-        Block::new().style(Style::new().fg(color(p.text)).bg(color(p.background))),
-        area,
-    );
+    app.detail_text
+        .split('\n')
+        .enumerate()
+        .map(|(index, line)| {
+            if index == 0 || !app.config.display.highlight {
+                return Line::raw(line);
+            }
+            if matches!(
+                app.detail_format,
+                onetui_core::value::ValueFormat::Hex | onetui_core::value::ValueFormat::Binary
+            ) && let Some((offset, bytes)) = line.split_once(':')
+            {
+                return Line::from(vec![
+                    Span::styled(offset, Style::new().fg(color(p.muted))),
+                    Span::raw(":"),
+                    Span::styled(bytes, Style::new().fg(color(p.identifier))),
+                ]);
+            }
+            if app.detail_format != onetui_core::value::ValueFormat::Json {
+                return Line::raw(line);
+            }
+            let mut spans = Vec::new();
+            let mut quoted = false;
+            let mut escaped = false;
+            let mut start = 0;
+            for (i, c) in line.char_indices() {
+                if c == '"' && !escaped {
+                    if !quoted {
+                        if start < i {
+                            spans.push(Span::styled(
+                                &line[start..i],
+                                Style::new().fg(color(p.table_heading)),
+                            ));
+                        }
+                        start = i;
+                    } else {
+                        spans.push(Span::styled(
+                            &line[start..i + 1],
+                            Style::new().fg(color(p.identifier)),
+                        ));
+                        start = i + 1;
+                    }
+                    quoted = !quoted;
+                }
+                escaped = quoted && c == '\\' && !escaped;
+            }
+            if start < line.len() {
+                spans.push(Span::styled(
+                    &line[start..],
+                    Style::new().fg(color(if quoted {
+                        p.identifier
+                    } else {
+                        p.table_heading
+                    })),
+                ));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn panels(area: Rect, app: &App) -> [Rect; 4] {
     let show_command = app.command.is_some() || app.filter_input.is_some();
-    let [info, command, body, status] = Layout::vertical([
+    Layout::vertical([
         Constraint::Length(if area.height >= 20 && area.width >= 60 {
             8
         } else {
@@ -470,12 +648,132 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Constraint::Min(1),
         Constraint::Length(if area.height >= 12 { 2 } else { 1 }),
     ])
-    .areas(area);
+    .areas(area)
+}
+
+pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
+    let body = panels(app.viewport, app)[2];
+    let mut budget = usize::from(body.height.saturating_sub(if app.detail { 2 } else { 3 }));
+    if half {
+        budget /= 2;
+    }
+    budget = budget.max(1);
+    if app.detail || app.help {
+        return budget;
+    }
+    let mut index = if app.row_detail {
+        app.view.column
+    } else {
+        app.view.selected
+    };
+    let count = if app.row_detail {
+        app.column_count()
+    } else {
+        app.view.visible.len()
+    };
+    let mut steps = 0;
+    while index < count && budget > 0 {
+        let height = if app.row_detail {
+            let available = body.width.saturating_sub(6);
+            let width = usize::from(available - available / 4 * 2).max(1);
+            wrap_preview(
+                &app.view.previews[app.view.selected_index().unwrap()][index],
+                width,
+                app,
+            )
+            .lines()
+            .count()
+            .clamp(1, 3)
+        } else {
+            let start = app.view.column / 4 * 4;
+            let end = (start + 4).min(app.column_count());
+            let width = body
+                .width
+                .saturating_sub(4 + (end - start).saturating_sub(1) as u16)
+                / (end - start).max(1) as u16;
+            app.view.previews[app.view.visible[index]][start..end]
+                .iter()
+                .map(|text| {
+                    wrap_preview(text, usize::from(width).max(1), app)
+                        .lines()
+                        .count()
+                        .clamp(1, 3)
+                })
+                .max()
+                .unwrap_or(1)
+        };
+        budget = budget.saturating_sub(height);
+        steps += 1;
+        if !down && index == 0 {
+            break;
+        }
+        index = if down { index + 1 } else { index - 1 };
+    }
+    steps
+}
+
+pub fn draw(frame: &mut Frame, app: &App) {
+    let p = app.config.theme.palette();
+    let area = frame.area();
+    frame.render_widget(
+        Block::new().style(Style::new().fg(color(p.text)).bg(color(p.background))),
+        area,
+    );
+    let [info, command, body, status] = panels(area, app);
     context(frame, info, app);
-    if show_command {
+    if app.command.is_some() || app.filter_input.is_some() {
         command_bar(frame, command, app);
     }
-    if app.theme_menu.is_some() {
+    if app.display_menu.is_some() && !app.help {
+        let options = app.config.display;
+        let mut entries: Vec<_> = onetui_core::value::FORMATS
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let reason = app.display_reasons[i];
+                Row::new([
+                    format!(
+                        "{}{}",
+                        f.name,
+                        if app.detail && f.id == app.detail_format {
+                            " *"
+                        } else {
+                            ""
+                        }
+                    ),
+                    reason.to_owned(),
+                ])
+            })
+            .collect();
+        for (name, value) in [
+            ("pretty-print", options.pretty_print),
+            ("highlight", options.highlight),
+            ("word-wrap", options.word_wrap),
+        ] {
+            entries.push(Row::new([
+                name.to_owned(),
+                if value { "on" } else { "off" }.to_owned(),
+            ]));
+        }
+        entries.push(Row::new([
+            "unicode".to_owned(),
+            format!("{:?}", options.unicode).to_lowercase(),
+        ]));
+        let table = Table::new(entries, [Constraint::Length(16), Constraint::Min(1)])
+            .block(panel(p, " Display | * effective format "))
+            .row_highlight_style(
+                Style::new()
+                    .fg(color(p.selection_fg))
+                    .bg(color(p.selection_bg))
+                    .bold(),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(
+            table,
+            body,
+            &mut TableState::default().with_selected(app.display_menu),
+        );
+    } else if app.theme_menu.is_some() {
         let rows = onetui_theme::Theme::ALL.iter().map(|theme| {
             let name = serde_json::to_value(theme).unwrap();
             Row::new([name.as_str().unwrap().to_owned()])
@@ -495,9 +793,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         help(frame, body, app);
     } else if app.detail {
         frame.render_widget(
-            Paragraph::new(app.detail_text.as_str())
-                .wrap(Wrap { trim: false })
-                .scroll((app.detail_scroll, 0))
+            wrapping(Paragraph::new(detail_spans(app)), app)
+                .scroll((app.detail_scroll, if app.config.display.word_wrap { 0 } else { app.horizontal_scroll }))
                 .block(panel(
                     p,
                     format!(
@@ -507,41 +804,103 @@ pub fn draw(frame: &mut Frame, app: &App) {
                         app.detail_chunk + 1,
                         app.detail_chunks
                     ),
-                )),
+                ).title_bottom(app.detail_notice)),
             body,
+        );
+    } else if app.row_detail {
+        let index = app.view.selected_index().expect("selected row");
+        let available = body.width.saturating_sub(6);
+        let metadata_width = available / 4;
+        let value_width = available - metadata_width * 2;
+        let width = usize::from(value_width).max(1);
+        let rows = (0..app.column_count()).map(|column| {
+            let preview = wrap_preview(&app.view.previews[index][column], width, app);
+            let height = preview.lines().count().clamp(1, 3) as u16;
+            Row::new([
+                Cell::from(app.column_name(column).to_owned())
+                    .style(Style::new().fg(color(p.identifier))),
+                Cell::from(
+                    app.view
+                        .page
+                        .columns
+                        .get(column)
+                        .map_or("metadata", |c| c.datatype.as_str()),
+                ),
+                Cell::from(preview),
+            ])
+            .height(height)
+        });
+        frame.render_stateful_widget(
+            Table::new(
+                rows,
+                [
+                    Constraint::Length(metadata_width),
+                    Constraint::Length(metadata_width),
+                    Constraint::Length(value_width),
+                ],
+            )
+            .header(
+                Row::new(["FIELD", "TYPE", "VALUE"])
+                    .style(Style::new().fg(color(p.table_heading)).bold()),
+            )
+            .block(panel(
+                p,
+                format!(
+                    " Row data | {} fields | Enter full value, Esc back ",
+                    app.column_count()
+                ),
+            ))
+            .row_highlight_style(
+                Style::new()
+                    .fg(color(p.selection_fg))
+                    .bg(color(p.selection_bg))
+                    .bold(),
+            )
+            .highlight_symbol("> "),
+            body,
+            &mut TableState::default().with_selected(Some(app.view.column)),
         );
     } else {
         let descriptor = app.descriptor();
         let start = app.view.column / 4 * 4;
         let end = (start + 4).min(app.column_count());
         let rows = app.view.visible.iter().map(|&index| {
-            let row = &app.view.page.rows[index];
-            Row::new(
-                row.cells
-                    .iter()
-                    .enumerate()
-                    .skip(start)
-                    .take(end - start)
-                    .map(|(column, cell)| {
-                        let value = cell.as_deref().unwrap_or("NULL");
-                        let mut preview: String = value.chars().take(128).collect();
-                        if preview.len() < value.len() {
-                            preview.push('…');
-                        }
-                        Cell::from(preview).style(Style::new().fg(if cell.is_none() {
-                            color(p.muted)
-                        } else if column == 0 {
-                            color(p.identifier)
-                        } else {
-                            color(p.text)
-                        }))
-                    }),
-            )
-            .style(Style::new().bg(if index % 2 == 0 {
-                color(p.background)
-            } else {
-                color(p.surface)
-            }))
+            let row = &app.view.projections[index];
+            let width = body
+                .width
+                .saturating_sub(4 + (end - start).saturating_sub(1) as u16)
+                / (end - start).max(1) as u16;
+            let mut height = 1;
+            let cells: Vec<_> = row
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take(end - start)
+                .map(|(column, cell)| {
+                    let preview = wrap_preview(
+                        &app.view.previews[index][column],
+                        width.max(1) as usize,
+                        app,
+                    );
+                    height = height.max(preview.lines().count().min(3) as u16);
+                    Cell::from(preview).style(Style::new().fg(if !app.config.display.highlight {
+                        color(p.text)
+                    } else if cell.is_none() {
+                        color(p.muted)
+                    } else if column == 0 {
+                        color(p.identifier)
+                    } else {
+                        color(p.text)
+                    }))
+                })
+                .collect();
+            Row::new(cells)
+                .height(height)
+                .style(Style::new().bg(if index % 2 == 0 {
+                    color(p.background)
+                } else {
+                    color(p.surface)
+                }))
         });
         let widths = vec![Constraint::Ratio(1, (end - start).max(1) as u32); end - start];
         let table = Table::new(rows, widths)
@@ -574,10 +933,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .block(panel(
                 p,
                 format!(
-                    " {} [{} shown / {} loaded]{} ",
+                    " {} [{} shown / {} loaded]{}{} ",
                     descriptor.id,
                     app.view.visible.len(),
                     app.view.page.rows.len(),
+                    if app.view.previews_limited {
+                        " | preview limit; Enter for detail"
+                    } else {
+                        ""
+                    },
                     if app.view.filter.is_empty() {
                         String::new()
                     } else {
@@ -629,24 +993,27 @@ pub fn draw(frame: &mut Frame, app: &App) {
         version,
     );
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                error,
-                Style::new().fg(if app.error.is_some() {
-                    color(p.error)
-                } else if app.loading {
-                    color(p.warning)
-                } else {
-                    color(p.success)
-                }),
-            ),
-            Line::raw(format!(
-                "Page {} | {} items | next: {} | {scope}",
-                app.view.offset / PAGE_SIZE + 1,
-                app.view.page.rows.len(),
-                app.view.page.next,
-            )),
-        ])
+        wrapping(
+            Paragraph::new(vec![
+                Line::styled(
+                    error,
+                    Style::new().fg(if app.error.is_some() {
+                        color(p.error)
+                    } else if app.loading {
+                        color(p.warning)
+                    } else {
+                        color(p.success)
+                    }),
+                ),
+                Line::raw(format!(
+                    "Page {} | {} items | next: {} | {scope}",
+                    app.view.offset / PAGE_SIZE + 1,
+                    app.view.page.rows.len(),
+                    app.view.page.next,
+                )),
+            ]),
+            app,
+        )
         .style(Style::new().fg(color(p.muted))),
         status,
     );
@@ -654,6 +1021,176 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn row_inspector_lists_fields_beyond_the_four_column_window() {
+        use super::*;
+        use onetui_core::catalog::Action;
+        use onetui_core::{Column, Page, Resource, Row as DataRow};
+        use ratatui::backend::TestBackend;
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, Some("sample"));
+        app.view.resource = Resource::new("fake.rows", vec![]);
+        let request = app.request.take().unwrap();
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: (0..65)
+                    .map(|i| Column {
+                        name: format!("field_{i}"),
+                        datatype: "text".into(),
+                    })
+                    .collect(),
+                rows: vec![DataRow {
+                    cells: (0..65).map(|i| Some(format!("value_{i}").into())).collect(),
+                    target: None,
+                }],
+                ..Page::default()
+            }),
+        );
+        app.act(Action::Open);
+        assert!(app.row_detail && !app.detail);
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("65 fields") && text.contains("field_0") && text.contains("value_0"));
+        app.view.page.columns[0].datatype = "timestamp with time zone".into();
+        app.view.previews[0][0] = "x".repeat(120);
+        for width in [160, 240] {
+            let mut wide = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            wide.draw(|frame| draw(frame, &app)).unwrap();
+            let lines: Vec<String> = wide
+                .backend()
+                .buffer()
+                .content
+                .chunks(usize::from(width))
+                .map(|line| line.iter().map(|c| c.symbol()).collect())
+                .collect();
+            let heading = lines.iter().find(|line| line.contains("FIELD")).unwrap();
+            let value_x = heading.chars().position(|c| c == 'V').unwrap();
+            assert!(value_x >= usize::from(width / 2), "{heading}");
+            let row = lines.iter().find(|line| line.contains("field_0")).unwrap();
+            assert!(row.contains("timestamp with time zone"), "{row}");
+            assert_eq!(row.chars().nth(usize::from(width - 2)), Some('x'));
+        }
+        assert_eq!(page_step(&app, true, false), 9);
+        assert_eq!(page_step(&app, true, true), 3);
+        app.config.display.word_wrap = false;
+        assert_eq!(page_step(&app, true, false), 11);
+        app.config.display.word_wrap = true;
+        app.viewport = Rect::new(0, 0, 1, 1);
+        assert_eq!(page_step(&app, true, true), 1);
+        for _ in 0..64 {
+            app.act(Action::Down);
+        }
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("field_64") && text.contains("value_64"));
+        for width in [1, 20, 60] {
+            let mut narrow = Terminal::new(TestBackend::new(width, 20)).unwrap();
+            narrow.draw(|frame| draw(frame, &app)).unwrap();
+        }
+        assert!(app.request.is_none());
+    }
+
+    #[test]
+    fn display_rendering_wrap_highlight_and_scrolling_are_independent() {
+        use super::*;
+        use onetui_core::catalog::Action;
+        use ratatui::backend::TestBackend;
+        let contents = |terminal: &ratatui::Terminal<TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+        let mut app = App::new(
+            onetui_core::config::Config::parse(
+                "[connections.sample]\nkind='fake'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap(),
+            Some("sample"),
+        );
+        app.view.resource = onetui_core::Resource::new("fake.rows", vec![]);
+        let request = app.request.take().unwrap();
+        app.complete(
+            &request,
+            Ok(onetui_core::Page {
+                columns: vec![onetui_core::Column {
+                    name: "payload".into(),
+                    datatype: "json".into(),
+                }],
+                rows: vec![onetui_core::Row {
+                    cells: vec![Some(onetui_core::Value::Json(
+                        "{\"emoji\":\"🌊\",\"control\":\"\\u001b[31m\",\"values\":[1,2,3]}".into(),
+                    ))],
+                    target: None,
+                }],
+                ..onetui_core::Page::default()
+            }),
+        );
+        app.act(Action::Open);
+        let cached = app.detail_text.as_ptr();
+        for width in [1, 12, 60, 160] {
+            for wrap in [true, false] {
+                for highlight in [true, false] {
+                    app.config.display.word_wrap = wrap;
+                    app.config.display.highlight = highlight;
+                    let mut terminal = ratatui::Terminal::new(TestBackend::new(width, 24)).unwrap();
+                    terminal.draw(|frame| draw(frame, &app)).unwrap();
+                    assert!(!contents(&terminal).contains('\x1b'));
+                    assert_eq!(app.detail_text.as_ptr(), cached);
+                    let spans = detail_spans(&app);
+                    let plain = spans
+                        .iter()
+                        .map(|l| {
+                            l.spans
+                                .iter()
+                                .map(|s| s.content.as_ref())
+                                .collect::<String>()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    assert_eq!(plain, app.detail_text);
+                    if !highlight {
+                        assert!(
+                            spans
+                                .iter()
+                                .flat_map(|l| &l.spans)
+                                .all(|s| s.style == Style::default())
+                        );
+                    }
+                }
+            }
+        }
+        app.act(Action::ScrollRight);
+        assert_eq!(app.horizontal_scroll, 8);
+        app.act(Action::Display);
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(120, 28)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(contents(&terminal).contains("word-wrap"));
+        assert!(contents(&terminal).contains("binary"));
+        assert!(app.command.is_none());
+    }
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use std::io::Write;
@@ -744,16 +1281,18 @@ mod tests {
         assert!(text[8].contains("connections [2 shown / 2 loaded]"));
         assert!(!text.join("").contains("Page-local:"));
         app.act(Action::Filter);
-        app.filter_input = Some("4b".into());
+        for c in "4b".chars() {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = lines(&terminal);
         assert!(text[0].contains("Context"));
         assert!(text[..8].join("").contains("Filter displayed page"));
         assert_eq!(text[8], format!("╭{}╮", "─".repeat(118)));
         assert!(text[9].contains("/4b"));
-        assert!(text[..8].join("").contains("apply (empty clears)"));
+        assert!(text[..8].join("").contains("keep filter (live)"));
         assert_eq!(text[10], format!("╰{}╯", "─".repeat(118)));
-        assert!(text[11].contains("connections [2 shown / 2 loaded]"));
+        assert!(text[11].contains("connections [1 shown / 2 loaded]"));
         assert!(text[22].contains("Ready"));
         assert!(text[23].contains("Page 1"));
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -769,7 +1308,8 @@ mod tests {
         assert_eq!(app.view.filter, "4b");
 
         app.act(Action::Filter);
-        app.filter_input = Some(String::new());
+        app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         assert!(lines(&terminal)[8].contains("connections [2 shown / 2 loaded]"));
@@ -861,6 +1401,76 @@ mod tests {
         }
     }
 
+    #[test]
+    fn paging_hints_keep_their_positions_when_loading_or_at_page_boundaries() {
+        use super::*;
+        use ratatui::backend::TestBackend;
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, Some("sample"));
+        let request = app.request.take().unwrap();
+        let page = Page {
+            rows: vec![onetui_core::Row {
+                cells: vec![Some("public".into())],
+                target: Some(onetui_core::Resource::new(
+                    "fake.relations",
+                    vec!["public".into()],
+                )),
+            }],
+            next: true,
+            ..Page::default()
+        };
+        app.complete(&request, Ok(page.clone()));
+        let mut terminal = Terminal::new(TestBackend::new(180, 8)).unwrap();
+        let render = |terminal: &mut Terminal<TestBackend>, app: &App| {
+            terminal
+                .draw(|frame| context(frame, frame.area(), app))
+                .unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        let first = render(&mut terminal, &app);
+        assert!(first.contains("next") && first.contains("previous"));
+        let previous = first.find("previous").unwrap();
+        assert!(!app.available(Action::Previous));
+        app.act(Action::Previous);
+        assert!(app.request.is_none());
+        app.act(Action::Next);
+        assert!(app.loading);
+        assert_eq!(first, render(&mut terminal, &app));
+        let pending = app.request.take().unwrap();
+        let generation = app.generation;
+        app.act(Action::Next);
+        assert_eq!(app.generation, generation);
+        assert!(app.request.is_none());
+        let mut last_page = page;
+        last_page.next = false;
+        app.complete(&pending, Ok(last_page));
+        assert!(app.available(Action::Previous));
+        assert!(!app.available(Action::Next));
+        assert_eq!(first, render(&mut terminal, &app));
+        app.act(Action::Next);
+        assert!(app.request.is_none());
+        app.act(Action::Previous);
+        assert_eq!(first, render(&mut terminal, &app));
+        let buffer = terminal.backend().buffer();
+        let description = first[..previous].chars().count();
+        let key = buffer.content[..description]
+            .iter()
+            .rev()
+            .find(|cell| cell.symbol() == "p")
+            .unwrap();
+        assert_eq!(key.fg, color(app.config.theme.palette().muted));
+    }
+
     fn assert_context_layout(theme: onetui_theme::Theme) {
         let p = theme.palette();
         let mut app = App::new(
@@ -886,7 +1496,7 @@ mod tests {
                     })
                     .collect(),
                 rows: vec![onetui_core::Row {
-                    cells: vec![Some("42".into()), Some(display("София\u{001b}")), None],
+                    cells: vec![Some("42".into()), Some("София\u{001b}".into()), None],
                     target: None,
                 }],
                 next: true,
@@ -922,12 +1532,13 @@ mod tests {
             "Connected",
             "1 shown / 1 loaded",
             "m      columns",
-            "n      next",
+            "n       next",
             "София\\u{1b}",
         ] {
             assert!(text.contains(expected), "missing {expected}:\n{text}");
         }
-        assert!(!text.contains("p      previous"));
+        assert!(text.contains("previous"));
+        assert!(!app.available(Action::Previous));
         assert!(!text.contains("Page-local:"));
         assert!(!text.contains("DO_NOT_RENDER"));
         assert!(!text.contains('\u{001b}'));
@@ -954,8 +1565,15 @@ mod tests {
         let text = contents(&terminal);
         assert!(text.contains("id ↑"));
         assert!(text.contains("Loading"));
-        assert!(!text.contains("m      columns"));
-        assert!(!text.contains("n      next"));
+        assert!(text.contains("m      columns"));
+        assert!(!app.available(Action::Columns));
+        assert!(!app.available(Action::Next));
+        assert!(text.lines().any(|line| {
+            line.split_whitespace()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .any(|pair| pair == ["n", "next"])
+        }));
         assert!(
             terminal
                 .backend()
@@ -1035,7 +1653,7 @@ mod tests {
                 .collect(),
             rows: (0..100)
                 .map(|_| onetui_core::Row {
-                    cells: (0..4).map(|_| Some(display(&raw))).collect(),
+                    cells: (0..4).map(|_| Some(raw.clone().into())).collect(),
                     target: None,
                 })
                 .collect(),
@@ -1048,7 +1666,11 @@ mod tests {
         app.complete(&request, Ok(page));
         let install_time = started.elapsed();
         assert_eq!(app.view.page.rows.len(), 100);
-        let cached_cell = app.view.page.rows[0].cells[0].as_ref().unwrap().as_ptr();
+        let cached_cell = app.view.page.rows[0].cells[0]
+            .as_ref()
+            .unwrap()
+            .bytes()
+            .as_ptr();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let mut unchanged = Vec::new();
@@ -1066,7 +1688,11 @@ mod tests {
         }
         assert_eq!(app.view.selected, 99);
         assert_eq!(
-            app.view.page.rows[0].cells[0].as_ref().unwrap().as_ptr(),
+            app.view.page.rows[0].cells[0]
+                .as_ref()
+                .unwrap()
+                .bytes()
+                .as_ptr(),
             cached_cell
         );
         app.act(Action::Cancel);
@@ -1154,9 +1780,9 @@ mod tests {
                 rows: vec![onetui_core::Row {
                     cells: vec![
                         None,
-                        Some(String::new()),
+                        Some(String::new().into()),
                         Some("NULL".into()),
-                        Some("🌊".repeat(5000)),
+                        Some("🌊".repeat(5000).into()),
                         Some("four".into()),
                         Some("five".into()),
                     ],

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Context, Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
     RequestContext, ShutdownContext,
@@ -107,28 +107,48 @@ impl QdrantExecutor {
             clean: false,
         };
         let deadline = context.deadline;
-        let result = context.run(async {
-            if lease.channel.is_none() {
-                self.status.send_replace(ConnectionStatus::Connecting);
-                let url = crate::qdrant_url(&self.url)?;
-                let mut endpoint = Endpoint::from_shared(url.to_string()).map_err(|_| anyhow!("invalid Qdrant gRPC endpoint"))?
-                    .connect_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()))
-                    .keep_alive_while_idle(false);
-                if url.scheme() == "https" {
-                    endpoint = endpoint.tls_config(ClientTlsConfig::new().with_native_roots()).map_err(|_| anyhow!("cannot configure Qdrant TLS using native trust roots"))?;
+        let result = context
+            .run(async {
+                if lease.channel.is_none() {
+                    self.status.send_replace(ConnectionStatus::Connecting);
+                    let url = crate::qdrant_url(&self.url)?;
+                    let mut endpoint = Endpoint::from_shared(url.to_string())
+                        .context("Qdrant endpoint")?
+                        .connect_timeout(
+                            deadline.saturating_duration_since(tokio::time::Instant::now()),
+                        )
+                        .keep_alive_while_idle(false);
+                    if url.scheme() == "https" {
+                        endpoint = endpoint
+                            .tls_config(ClientTlsConfig::new().with_native_roots())
+                            .context("Qdrant TLS")?;
+                    }
+                    let channel = endpoint.connect().await.context("Qdrant connection")?;
+                    *lease.channel = Some(channel);
                 }
-                let channel = endpoint.connect().await.map_err(|_| anyhow!("Qdrant connection failed; verify gRPC endpoint, reachability and TLS certificate trust"))?;
-                *lease.channel = Some(channel);
-            }
-            operation(lease.channel.as_ref().expect("connected channel").clone(), deadline).await
-        }).await?;
+                operation(
+                    lease.channel.as_ref().expect("connected channel").clone(),
+                    deadline,
+                )
+                .await
+            })
+            .await?;
         // Formatting runs on the worker too; check cancellation/deadline again after it.
         let result = context.run(std::future::ready(result)).await?;
         if result.is_ok() {
             lease.clean = true;
             self.status.send_replace(ConnectionStatus::Connected);
         }
-        result
+        result.map_err(|error| {
+            onetui_core::diagnostic(
+                error,
+                &[self
+                    .api_key
+                    .as_ref()
+                    .and_then(|key| key.to_str().ok())
+                    .unwrap_or("")],
+            )
+        })
     }
 }
 

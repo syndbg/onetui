@@ -43,6 +43,8 @@ pub trait Provider: Send + Sync {
     ) -> Result<Self::Executor>;
 }
 
+/// Native failures retain backend codes/messages and underlying transport causes.
+/// Executors redact known connection secrets and escape controls before returning diagnostics.
 pub trait Executor: Send + Sync {
     fn status(&self) -> watch::Receiver<ConnectionStatus>;
     fn check(&self, context: RequestContext) -> impl Future<Output = Result<CheckResult>> + Send;

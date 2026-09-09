@@ -31,6 +31,18 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(schema["schema_format_version"], 1);
     assert_eq!(
+        schema["configuration"]["display"]["defaults"],
+        serde_json::to_value(onetui_core::value::DisplayOptions::default()).unwrap()
+    );
+    assert_eq!(
+        schema["configuration"]["display"]["formats"],
+        serde_json::to_value(onetui_core::value::FORMATS).unwrap()
+    );
+    assert_eq!(
+        schema["configuration"]["display"]["fields"]["word_wrap"]["type"],
+        "boolean"
+    );
+    assert_eq!(
         schema["datasources"][0]["resources"][0]["id"],
         "postgres.schemas"
     );
@@ -53,6 +65,20 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
         .find(|action| action["id"] == "themes")
         .expect("theme menu action");
     assert_eq!(themes["keys"], serde_json::json!(["T"]));
+    for (id, key) in [
+        ("page_up", "PageUp"),
+        ("page_down", "PageDown"),
+        ("half_page_up", "Ctrl-u"),
+        ("half_page_down", "Ctrl-d"),
+    ] {
+        let action = schema["shell"]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["id"] == id)
+            .unwrap();
+        assert_eq!(action["keys"], serde_json::json!([key]));
+    }
     assert!(
         schema["configuration"]["theme"]["behavior"]
             .as_str()
