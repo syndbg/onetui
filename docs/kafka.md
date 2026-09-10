@@ -49,13 +49,37 @@ Unknown settings are rejected. Broker metadata can advertise endpoints other tha
 
 ## Navigation and values
 
-Enter on a connection opens a local resource menu with Topics, Brokers and Groups. The menu does not connect to Kafka; selecting an entry starts its native read. Topics opens topic metadata, then partitions; Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
+Enter on a connection opens a local resource menu with Topics, Brokers and Groups. The menu does not connect to Kafka; selecting an entry starts its native read. Topics lists topics; Enter on a topic offers Partitions and Configuration. Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
 
-Brokers lists IDs, hosts and ports advertised by Kafka. Groups lists names, state, protocol and member counts; Enter opens member IDs, client IDs/hosts, metadata and assignment bytes. Assignments remain raw protocol bytes, available in the value viewer; OneTUI does not claim they are decoded partition assignments. Group names must fit 1..1024 UTF-8 bytes without control characters. These views do not join, rebalance or commit for any inspected group. They re-read and locally page metadata, so membership may change between pages. Committed-offset/lag views and broker/topic configuration inspection are not implemented yet.
+Brokers lists IDs, hosts and ports advertised by Kafka; Enter opens the selected broker's configuration. Groups lists names, state, protocol and member counts; Enter offers Members and Offsets. Members shows member IDs, client IDs/hosts, metadata and assignment bytes. Assignments remain raw protocol bytes, available in the value viewer; OneTUI does not claim they are decoded partition assignments. Group names must fit 1..1024 UTF-8 bytes without control characters. These views do not join, rebalance or commit for any inspected group. They re-read and locally page metadata, so membership may change between pages.
 
 Group inspection requires `Describe` on the inspected groups. Kafka can omit unauthorized groups; an empty listing is not proof that no groups exist. The resource menu adds no permissions or connection settings by itself. Esc returns through retained parent views to the menu.
 
 Group/member arrays are limited to 4 MiB of native structures during conversion, and each retained page is limited to 100 rows and 1 MiB including its continuation. These are not process-memory guarantees. Per-group broker errors remain errors, not empty membership. Missing or hidden groups cannot be distinguished from an omitted metadata entry.
+
+### Configuration and group offsets
+
+For local topic settings, run `make run` and choose `local_kafka` → Topics → `demo_events` → Configuration. The `kafka.topic_config` and `kafka.broker_config` views show each setting's name, value, source and `is_default`, `is_read_only`, `is_sensitive` flags. OneTUI withholds every value marked sensitive. Null also represents a value the broker did not return; an empty string remains distinct. Synonyms and secret retrieval are not supported.
+
+Configuration reads require `DescribeConfigs` on the selected topic, or on the cluster for broker configuration. These permissions are separate from record-reading permissions. The disposable `fixture-reader` account deliberately lacks them so tests can verify native authorization errors; the local plaintext connection can inspect the fixtures.
+
+Choose Groups → a group → Offsets to inspect `kafka.offsets`. It lists stored topic/partition offsets, not all possible subscriptions or partitions. A missing group and a group without stored offsets both yield an empty view. The browser never uses the inspected group as its client group ID.
+
+| Column | Meaning |
+| --- | --- |
+| `committed` | Stored next offset; null when Kafka returns no commit. |
+| `low` | Earliest retained offset. |
+| `stable_end` | Exclusive read-committed boundary from the browser's native client. |
+| `lag` | `stable_end - committed` when the commit is within the available window. This is offset distance, not message count; transactions and compaction can leave gaps. |
+| `status` | `within window`, `no commit`, `before retained start`, or `beyond stable end`. The last three have null lag; OneTUI does not clamp invalid positions to zero. |
+
+Offsets require group `Describe`; watermarks also require topic `Describe`. An authorization or partition error fails the request and retains the previous page. Each page re-reads offsets and fetches watermarks only for its displayed partitions, under the normal request deadline. These independent reads are not a snapshot and can race with commits, retention and transactions. Results sort by topic and partition; configuration sorts by name. `n/p` uses session/resource-bound bookmarks, with the usual 100-row and 1 MiB page limits and 4 MiB native-array conversion limit.
+
+These views use the existing connection and add no `onetui.toml` settings or CLI options. Dump their descriptors with:
+
+```sh
+onetui schema --datasource kafka
+```
 
 ### Replay from an offset or timestamp
 
@@ -93,6 +117,8 @@ Each page contains at most 100 records and 1 MiB of retained page data. The firs
 
 Metadata has no native page API: OneTUI re-reads the bounded response, sorts topics/partitions and shows a page. No browsing mode promises a cross-page snapshot. Native receiving is capped at 4 MiB, with 1 MiB of configured prefetch. The larger native cap allows Zstandard's stepped buffer growth to decode a near-1-MiB value; the retained page still must fit 1 MiB. These limits do not guarantee process RSS limits.
 
+The native client uses a 100 ms fetch-queue refill backoff with its one-message queue threshold. This avoids the default one-second refill delay while keeping prefetch bounded. It is a fixed connector setting, listed as `fetch_queue_backoff_ms` in the catalog, not an `onetui.toml` option or a latency guarantee.
+
 `check` fetches metadata only. Record reads use manual assignment and explicit offsets, never a topic subscription. Auto-commit, automatic offset storage and topic auto-creation are disabled. OneTUI generates an internal session group ID for the client API; it does not use an application group or commit its offsets. No user override can enable these side effects.
 
 For authenticated browsing, grant `Read` and `Describe` on the selected topics, plus `Describe` on groups prefixed `onetui-`. The native client requires that private group ID even with manual assignment and asks for its coordinator. Group `Read` permission is unnecessary: OneTUI does not join the group or commit offsets. Metadata listing alone does not prove record-reading permission; Kafka can omit unauthorized topics from a listing.
@@ -122,6 +148,6 @@ make dev-traffic
 make run
 ```
 
-Choose `local_kafka`, Topics, `demo_live`, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
+Choose `local_kafka`, Topics, `demo_live`, Partitions, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
 
 SQL, publishing from the app, consumer-group administration, schema-registry decoding, mutual TLS, OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.

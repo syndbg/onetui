@@ -126,6 +126,8 @@ impl Config {
             .set("isolation.level", "read_committed")
             .set("enable.partition.eof", "true")
             .set("queued.min.messages", "1")
+            // The default 1-second refill backoff stalls this deliberately small queue.
+            .set("fetch.queue.backoff.ms", "100")
             .set("queued.max.messages.kbytes", "1024")
             .set("fetch.message.max.bytes", "1048576")
             .set("fetch.max.bytes", "1048576")
@@ -175,6 +177,7 @@ mod tests {
         assert_eq!(native.get("allow.auto.create.topics"), Some("false"));
         assert_eq!(native.get("auto.offset.reset"), Some("error"));
         assert_eq!(native.get("isolation.level"), Some("read_committed"));
+        assert_eq!(native.get("fetch.queue.backoff.ms"), Some("100"));
         for options in [
             "bootstrap_servers=[]",
             "bootstrap_servers=['localhost']",

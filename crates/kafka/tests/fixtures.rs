@@ -81,20 +81,26 @@ async fn kafka_broker_stall_cancellation_deadline_and_recovery() {
     broker("pause");
     // Await the assertion task as a result so panic cannot skip unpausing the fixture.
     let tested = tokio::spawn(async move {
-        for _ in 0..3 {
+        for resource in [
+            Resource::new("kafka.records", vec!["demo_events".into(), "0".into()]),
+            Resource::new("kafka.topic_config", vec!["demo_events".into()]),
+            Resource::new("kafka.offsets", vec!["fixture-cancelled-group".into()]),
+        ] {
             let started = tokio::time::Instant::now();
             let (cancel, context) = RequestContext::new(Duration::from_secs(5));
             let (result, ()) = tokio::join!(
-                current.follow_page(
-                    PageRequest {
-                        resource: Resource::new(
-                            "kafka.records",
-                            vec!["demo_events".into(), "0".into()]
-                        ),
+                async {
+                    let following = resource.id == "kafka.records";
+                    let request = PageRequest {
+                        resource,
                         continuation: None,
-                    },
-                    context
-                ),
+                    };
+                    if following {
+                        current.follow_page(request, context).await
+                    } else {
+                        current.fetch_page(request, context).await
+                    }
+                },
                 async {
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     let _ = cancel.send(());
@@ -290,6 +296,36 @@ async fn kafka_verified_tls_sasl_and_native_auth_errors() {
                 "omitted group must not look like an empty membership: {denied:#}"
             );
             assert!(!denied.to_string().contains(password));
+            for (id, name, expected_code) in [
+                (
+                    "kafka.topic_config",
+                    "demo_events",
+                    "TOPIC_AUTHORIZATION_FAILED",
+                ),
+                ("kafka.broker_config", "1", "CLUSTER_AUTHORIZATION_FAILED"),
+                (
+                    "kafka.offsets",
+                    "fixture-protected-group",
+                    "GROUP_AUTHORIZATION_FAILED",
+                ),
+            ] {
+                let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+                let denied = executor
+                    .fetch_page(
+                        PageRequest {
+                            resource: Resource::new(id, vec![name.into()]),
+                            continuation: None,
+                        },
+                        context,
+                    )
+                    .await
+                    .unwrap_err();
+                assert!(
+                    denied.to_string().contains(expected_code),
+                    "{id}: {denied:#}"
+                );
+                assert!(!denied.to_string().contains(password));
+            }
         }
         executor
             .shutdown(ShutdownContext::new(Duration::from_secs(2)))
@@ -423,7 +459,41 @@ async fn kafka_browses_seeded_partitions_and_refetches_old_bookmarks() {
         .target
         .clone()
         .unwrap();
-    let partitions = fetch(&executor, target, None).await;
+    let topic_menu = fetch(&executor, target, None).await;
+    assert_eq!(topic_menu.rows.len(), 2);
+    let config = fetch(&executor, topic_menu.rows[1].target.clone().unwrap(), None).await;
+    let cleanup = config
+        .rows
+        .iter()
+        .find(|row| row.cells[0] == Some("cleanup.policy".into()))
+        .unwrap();
+    assert_eq!(cleanup.cells[1], Some("delete".into()));
+    assert_eq!(config.columns[1].datatype, "text");
+    let broker_resource = brokers.rows[0].target.clone().unwrap();
+    let first_config = fetch(&executor, broker_resource.clone(), None).await;
+    assert_eq!(first_config.rows.len(), 100);
+    assert!(first_config.next);
+    let mut config_page = first_config.clone();
+    let mut sensitive = 0;
+    loop {
+        for row in &config_page.rows {
+            if row.cells[5] == Some("true".into()) {
+                sensitive += 1;
+                assert_eq!(row.cells[1], None, "sensitive config must be withheld");
+            }
+        }
+        let Some(token) = config_page.continuation else {
+            break;
+        };
+        config_page = fetch(&executor, broker_resource.clone(), Some(token)).await;
+    }
+    assert!(sensitive > 0);
+    let again = fetch(&executor, broker_resource, None).await;
+    assert_eq!(again.rows.len(), first_config.rows.len());
+    for (actual, expected) in again.rows.iter().zip(&first_config.rows) {
+        assert_eq!(actual.cells, expected.cells);
+    }
+    let partitions = fetch(&executor, topic_menu.rows[0].target.clone().unwrap(), None).await;
     assert_eq!(partitions.rows.len(), 3);
     let resource = partitions.rows[0].target.clone().unwrap();
     let first = fetch(&executor, resource.clone(), None).await;
@@ -665,7 +735,8 @@ async fn kafka_transactions_limits_and_application_offsets() {
             .iter()
             .find(|row| row.cells[0] == Some(group_name.clone().into()))
             .expect("fixture application group");
-        let members = fetch(&executor, group.target.clone().unwrap(), None).await;
+        let group_menu = fetch(&executor, group.target.clone().unwrap(), None).await;
+        let members = fetch(&executor, group_menu.rows[0].target.clone().unwrap(), None).await;
         assert_eq!(members.rows.len(), 1);
         assert!(
             matches!(&members.rows[0].cells[3], Some(Value::Bytes(value)) if !value.is_empty())
@@ -674,6 +745,28 @@ async fn kafka_transactions_limits_and_application_offsets() {
             matches!(&members.rows[0].cells[4], Some(Value::Bytes(value)) if !value.is_empty())
         );
         observer.unsubscribe();
+        let inspected = fetch(&executor, group_menu.rows[1].target.clone().unwrap(), None).await;
+        assert_eq!(inspected.rows.len(), 1);
+        assert_eq!(inspected.rows[0].cells[0], Some(test_topic.clone().into()));
+        assert_eq!(inspected.rows[0].cells[2], Some("7".into()));
+        let (_, stable_end) = observer
+            .fetch_watermarks(&test_topic, 0, Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(
+            inspected.rows[0].cells[4],
+            Some(stable_end.to_string().into())
+        );
+        assert_eq!(
+            inspected.rows[0].cells[5],
+            Some((stable_end - 7).to_string().into())
+        );
+        let empty = fetch(
+            &executor,
+            Resource::new("kafka.offsets", vec![format!("{test_topic}_absent")]),
+            None,
+        )
+        .await;
+        assert!(empty.rows.is_empty());
         let live_first = follow(&executor, resource.clone(), tail.continuation.clone()).await;
         let live_second = follow(&executor, resource.clone(), live_first.continuation).await;
         assert_eq!(live_first.rows.len() + live_second.rows.len(), 120);
@@ -830,6 +923,14 @@ async fn kafka_transactions_limits_and_application_offsets() {
             partition.error().unwrap();
             assert_eq!(partition.offset(), Offset::Offset(110));
         }
+        let retained = fetch(&executor, group_menu.rows[1].target.clone().unwrap(), None).await;
+        assert_eq!(retained.rows[0].cells[2], Some("7".into()));
+        assert_eq!(retained.rows[0].cells[3], Some("110".into()));
+        assert_eq!(retained.rows[0].cells[5], None);
+        assert_eq!(
+            retained.rows[0].cells[6],
+            Some("before retained start".into())
+        );
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let error = executor
             .follow_page(

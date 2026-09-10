@@ -81,7 +81,7 @@ impl Groups {
                             Some(text(group.protocol)?.into()),
                             Some(members.len().to_string().into()),
                         ],
-                        target: Some(Resource::new("kafka.members", vec![name.into()])),
+                        target: Some(Resource::new("kafka.group", vec![name.into()])),
                     });
                 }
             } else {
@@ -137,12 +137,12 @@ fn check_error(error: native::rd_kafka_resp_err_t) -> Result<()> {
 }
 
 // Callers provide pointers from a still-owned librdkafka response (or a test buffer).
-unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str> {
+pub(crate) unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str> {
     ensure!(!ptr.is_null(), "Kafka returned a null metadata string");
     Ok(unsafe { CStr::from_ptr(ptr) }.to_str()?)
 }
 
-unsafe fn slice<'a, T>(ptr: *const T, count: i32) -> Result<&'a [T]> {
+pub(crate) unsafe fn slice<'a, T>(ptr: *const T, count: i32) -> Result<&'a [T]> {
     let count = usize::try_from(count)?;
     ensure!(
         count

@@ -42,7 +42,7 @@ These commands append to disposable fixtures without reading user connection con
 
 ## Kafka traffic
 
-In OneTUI, choose `local_kafka`, Topics, `demo_live`, partition `0`, then `f` to follow. The Kafka resource menu also exposes broker metadata and consumer-group members. To replay seeded data, open Topics → `demo_events` → partition `0`, press `e`, clear with Ctrl-U and execute `{"offset":123,"end_offset":250}`. [Kafka usage](../docs/kafka.md) documents the inputs, limits and permissions. No connection configuration changes are required.
+In OneTUI, choose `local_kafka`, Topics, `demo_live`, Partitions, partition `0`, then `f` to follow. A topic also offers Configuration; Enter on a broker opens its settings. Groups offers Members or Offsets for the selected group. To replay seeded data, open Topics → `demo_events` → Partitions → partition `0`, press `e`, clear with Ctrl-U and execute `{"offset":123,"end_offset":250}`. [Kafka usage](../docs/kafka.md) documents the inputs, limits and permissions. No connection configuration changes are required.
 
 Auto display shows the demo key as `demo` and the value as JSON; invalid UTF-8 in the other datasets remains hex. Retained bytes are unchanged. Open a field and use `v` to select hex/binary explicitly.
 

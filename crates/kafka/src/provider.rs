@@ -34,7 +34,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     }),
     kind: "kafka",
     entry_resource: Some("kafka.resources"),
-    browsing: "topics / partitions / records; brokers; groups / members",
+    browsing: "topics / partitions / records and configuration; brokers / configuration; groups / members and offsets",
     resources: crate::browse::RESOURCES,
     documentation: crate::capabilities,
 };
@@ -224,7 +224,10 @@ impl Executor for KafkaExecutor {
     }
     async fn fetch_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
         let position = crate::browse::validate(&request, self.identity, false)?;
-        if request.resource.id == "kafka.resources" {
+        if matches!(
+            request.resource.id,
+            "kafka.resources" | "kafka.topic" | "kafka.group"
+        ) {
             ensure!(!self.closed, "Kafka session is closed");
             let mut context = context;
             return context
@@ -325,6 +328,24 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
     };
     let following = matches!(job.operation, Operation::Follow(_));
     let position = crate::browse::validate(request, identity, following)?;
+    if matches!(
+        request.resource.id,
+        "kafka.topic_config" | "kafka.broker_config" | "kafka.offsets"
+    ) {
+        return crate::inspect::page(
+            client,
+            &request.resource,
+            position.map_or(0, |p| p.offset),
+            identity,
+            || job.remaining(),
+            |topic, partition| {
+                native_request(client, job, |wait| {
+                    client.fetch_watermarks(topic, partition, wait)
+                })
+            },
+        )
+        .map(Response::Page);
+    }
     if matches!(request.resource.id, "kafka.groups" | "kafka.members") {
         let groups = native_request(client, job, |wait| {
             crate::groups::Groups::fetch(
@@ -623,7 +644,13 @@ mod tests {
         assert_eq!(brokers.rows.len(), 1);
         assert_eq!(brokers.rows[0].cells[0], Some("1".into()));
         assert_eq!(topics.rows.len(), 1);
-        let partitions = fetch(&executor, topics.rows[0].target.clone().unwrap(), None).await;
+        let topic_menu = fetch(&executor, topics.rows[0].target.clone().unwrap(), None).await;
+        assert_eq!(topic_menu.rows.len(), 2);
+        assert_eq!(
+            topic_menu.rows[1].target.as_ref().unwrap().id,
+            "kafka.topic_config"
+        );
+        let partitions = fetch(&executor, topic_menu.rows[0].target.clone().unwrap(), None).await;
         assert_eq!(partitions.rows.len(), 2);
         let resource = partitions.rows[0].target.clone().unwrap();
         let first = fetch(&executor, resource.clone(), None).await;

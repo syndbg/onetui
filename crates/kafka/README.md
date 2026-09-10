@@ -2,6 +2,8 @@
 
 Kafka provider, strict configuration, metadata, bounded record browsing, offset/timestamp replay and live follow batches through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
 
+Topic/broker configuration and consumer-group committed offsets use read-only native admin calls on the same client. Results preserve native errors and withhold sensitive settings. Group lag is read-committed offset distance, not a message count. The fixture suite checks configuration paging, secret masking, group offsets, ACL errors and CLI submenu navigation; the broker-stall test covers cancellation. These views add no connection settings.
+
 The native build uses CMake, a C/C++ toolchain, Make and Perl. Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source; do not install a system librdkafka for this build. TLS uses OpenSSL rather than the other connectors' Rustls stack.
 
 On Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev`. The pinned librdkafka CMake template defines a disabled OIDC macro as zero, but one source include checks whether it exists; CURL headers are therefore needed even though CURL linking and OAuth are disabled. macOS supplies these headers through its SDK. Recheck this prerequisite when updating librdkafka.

@@ -9,6 +9,63 @@ use serde::{Deserialize, Serialize};
 
 pub static RESOURCES: &[&ResourceDescriptor] = &[
     &ResourceDescriptor {
+        id: "kafka.topic",
+        description: "Choose partitions or read-only topic configuration",
+        columns: &["resource", "description"],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
+        id: "kafka.group",
+        description: "Choose members or committed offsets without joining the group",
+        columns: &["resource", "description"],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
+        id: "kafka.topic_config",
+        description: "Read-only topic settings; sensitive values are withheld",
+        columns: &[
+            "name",
+            "value",
+            "source",
+            "is_default",
+            "is_read_only",
+            "is_sensitive",
+        ],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
+        id: "kafka.broker_config",
+        description: "Read-only broker settings; sensitive values are withheld",
+        columns: &[
+            "name",
+            "value",
+            "source",
+            "is_default",
+            "is_read_only",
+            "is_sensitive",
+        ],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
+        id: "kafka.offsets",
+        description: "Group committed offsets and read-committed offset distance; not message counts",
+        columns: &[
+            "topic",
+            "partition",
+            "committed",
+            "low",
+            "stable_end",
+            "lag",
+            "status",
+        ],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
         id: "kafka.resources",
         description: "Choose topics, brokers or consumer groups; no broker mutation",
         columns: &["resource", "description"],
@@ -24,7 +81,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
     },
     &ResourceDescriptor {
         id: "kafka.groups",
-        description: "Consumer group state and protocol; Enter opens members without joining",
+        description: "Consumer group state and protocol; Enter chooses members or offsets",
         columns: &["name", "state", "protocol_type", "protocol", "members"],
         paging: true,
         actions: &[],
@@ -38,7 +95,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
     },
     &ResourceDescriptor {
         id: "kafka.topics",
-        description: "Topic metadata; Enter opens partitions without joining a consumer group",
+        description: "Topic metadata; Enter chooses partitions or configuration",
         columns: &["name", "partitions"],
         paging: true,
         actions: &[],
@@ -81,8 +138,11 @@ pub(crate) fn validate(
     );
     let valid = match (request.resource.id, request.resource.path.as_slice()) {
         ("kafka.resources" | "kafka.topics" | "kafka.brokers" | "kafka.groups", []) => true,
-        ("kafka.members", [group]) => valid_group(group),
-        ("kafka.partitions", [topic]) => valid_topic(topic),
+        ("kafka.group" | "kafka.members" | "kafka.offsets", [group]) => valid_group(group),
+        ("kafka.topic" | "kafka.topic_config" | "kafka.partitions", [topic]) => valid_topic(topic),
+        ("kafka.broker_config", [broker]) => {
+            broker.len() <= 10 && broker.parse::<i32>().is_ok_and(|n| n >= 0)
+        }
         ("kafka.records", [topic, partition]) => {
             valid_topic(topic)
                 && partition.len() <= 10
@@ -122,7 +182,7 @@ pub(crate) fn validate(
     Ok(Some(position))
 }
 
-fn valid_topic(topic: &str) -> bool {
+pub(crate) fn valid_topic(topic: &str) -> bool {
     !matches!(topic, "" | "." | "..")
         && topic.len() <= 249
         && topic
@@ -139,19 +199,29 @@ pub(crate) fn resources(resource: &Resource, offset: i64, identity: u64) -> Resu
         resource,
         "Choose a Kafka resource. All operations are read-only.",
     );
-    let rows = [
-        (
-            "kafka.topics",
-            "Topic partitions and record replay/following",
-        ),
-        ("kafka.brokers", "Broker IDs and advertised addresses"),
-        ("kafka.groups", "Consumer group state and members"),
-    ];
+    let rows: &[(&str, &str)] = match resource.id {
+        "kafka.topic" => &[
+            ("kafka.partitions", "Partitions and record replay/following"),
+            ("kafka.topic_config", "Read-only topic configuration"),
+        ],
+        "kafka.group" => &[
+            ("kafka.members", "Member metadata and assignment bytes"),
+            ("kafka.offsets", "Committed offsets and read-committed lag"),
+        ],
+        _ => &[
+            (
+                "kafka.topics",
+                "Topic partitions and record replay/following",
+            ),
+            ("kafka.brokers", "Broker IDs and advertised addresses"),
+            ("kafka.groups", "Consumer group state, members and offsets"),
+        ],
+    };
     ensure!(offset <= rows.len() as i64, "Invalid Kafka resource offset");
-    for (id, description) in rows.into_iter().skip(usize::try_from(offset)?) {
+    for &(id, description) in rows.iter().skip(usize::try_from(offset)?) {
         page.rows.push(Row {
             cells: vec![Some(id.into()), Some(description.into())],
-            target: Some(Resource::new(id, vec![])),
+            target: Some(Resource::new(id, resource.path.clone())),
         });
     }
     finish(page, resource, identity, None, false)
@@ -169,10 +239,12 @@ pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
             .map(|name| Column {
                 name: (*name).into(),
                 datatype: match *name {
+                    "value" if resource.id.ends_with("_config") => "text",
+                    "is_default" | "is_read_only" | "is_sensitive" => "boolean",
                     "key" | "value" | "metadata" | "assignment" => "bytes",
                     "headers" => "JSON (ordered header names and nullable byte arrays)",
                     "offset" | "timestamp_ms" | "partition" | "leader" | "partitions" | "port"
-                    | "members" => "integer",
+                    | "members" | "committed" | "low" | "stable_end" | "lag" => "integer",
                     "id" if resource.id == "kafka.brokers" => "integer",
                     _ => "text",
                 }
@@ -234,7 +306,10 @@ pub(crate) fn metadata(
                     Some(broker.host().into()),
                     Some(broker.port().to_string().into()),
                 ],
-                target: None,
+                target: Some(Resource::new(
+                    "kafka.broker_config",
+                    vec![broker.id().to_string()],
+                )),
             });
         }
     } else if resource.id == "kafka.topics" {
@@ -256,7 +331,7 @@ pub(crate) fn metadata(
                     Some(topic.name().into()),
                     Some(topic.partitions().len().to_string().into()),
                 ],
-                target: Some(Resource::new("kafka.partitions", vec![topic.name().into()])),
+                target: Some(Resource::new("kafka.topic", vec![topic.name().into()])),
             });
         }
     } else {

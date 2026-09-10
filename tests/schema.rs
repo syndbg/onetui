@@ -221,7 +221,7 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
     assert_eq!(kafka["following"]["poll_interval_ms"], 1000);
     assert_eq!(kafka["following"]["buffer_rows"], 100);
     assert_eq!(kafka["following"]["buffer_bytes"], 1048576);
-    assert_eq!(kafka["resources"].as_array().unwrap().len(), 8);
+    assert_eq!(kafka["resources"].as_array().unwrap().len(), 13);
     assert_eq!(
         kafka["configuration"]["security_protocol"]["default"],
         "SSL"
