@@ -42,6 +42,8 @@ These commands append to disposable fixtures without reading user connection con
 
 ## Kafka traffic
 
+Schema-bound messages are not wired into the app yet. For raw Protobuf/Avro decoding without a broker, use the [standalone codec example](../crates/codec/README.md#try-a-raw-message). The traffic producers continue to send their existing JSON/byte fixtures.
+
 To browse all seeded partitions together, choose `local_kafka` → Topics → `demo_events` → `kafka.records`. The extra `partition` column identifies each record's source; `n/p` replays pages and `f` follows the whole topic. The same entry under `demo_live` follows fixture traffic. Topic-wide reads allow up to 32 partitions, without global timestamp ordering; use Partitions for larger topics or offset/timestamp replay.
 
 In OneTUI, choose `local_kafka`, Topics, `demo_live`, Partitions, partition `0`, then `f` to follow. A topic also offers Configuration; Enter on a broker opens its settings. Groups offers Members or Offsets for the selected group. To replay seeded data, open Topics → `demo_events` → Partitions → partition `0`, press `e`, clear with Ctrl-U and execute `{"offset":123,"end_offset":250}`. [Kafka usage](../docs/kafka.md) documents the inputs, limits and permissions. No connection configuration changes are required.

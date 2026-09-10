@@ -13,7 +13,7 @@ This replaces only the opaque-bytes-always-use-hex rule in [ADR-0004](0004-prese
 
 Protobuf and Avro decoding will require explicit schema and framing choices. Auto is a display convenience, not serialization detection: binary messages can happen to be valid UTF-8. A successful decode also cannot prove that the selected schema is correct.
 
-Readable Auto display is implemented. Schema-driven codecs and registry access are planned. No codec settings or dependencies are added by this change.
+Readable Auto display and the raw Protobuf/Avro decoder library are implemented. App bindings and registry access remain planned. [The codec guide](../../crates/codec/README.md) describes the library's bounds and unsupported types. The app has no codec settings yet.
 
 ## Decoder boundary
 

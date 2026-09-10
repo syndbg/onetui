@@ -34,6 +34,7 @@ Read and write support is the direction for OneTUI, not a capability of the init
 - Tokio for asynchronous requests, cancellation and connection tasks.
 - `tokio-postgres` with Rustls for PostgreSQL; `qdrant-client` and Tonic for Qdrant gRPC.
 - `rdkafka` with native librdkafka/OpenSSL for Kafka; `async-nats` with Rustls for NATS JetStream.
+- `prost-reflect` and `apache-avro` in the standalone codec package; app integration is pending.
 - Clap for CLI arguments; Serde, JSON and TOML for configuration and the offline catalog.
 
 Datasources are compiled into the binary using static enum dispatch. Adding one requires a connector package and a rebuild; runtime plugins are not planned.
@@ -102,6 +103,7 @@ Selected sessions connect lazily and retain healthy transports. PostgreSQL finis
 | --- | --- |
 | `onetui` (root) | CLI dispatch, catalog assembly and release/developer workflow tests |
 | [`onetui-core`](crates/core/README.md) | Configuration, shared display/resource contracts and actions; no database SDKs |
+| [`onetui-codec`](crates/codec/README.md) | Raw Protobuf/Avro decoding, typed values and bounded JSON presentation; app bindings and registry access pending |
 | [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, row/metadata queries, descriptors and PostgreSQL-only tests |
 | [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, collection/point/detail reads, descriptors and Qdrant-only tests |
 | [`onetui-kafka`](crates/kafka/README.md) | Kafka TLS/SASL, native client lifetime, metadata/record reads, live batches, offset bookmarks and Kafka-only tests |
@@ -238,7 +240,7 @@ unicode = "literal"
 
 The table and every field are optional. Omission uses the listed defaults. Unknown fields, empty/unknown names and wrong types fail validation, including `--check`. String values are case-sensitive and are not environment-expanded. TOML booleans are `true`/`false`; commands such as `:display word-wrap off` use `on`/`off`. Existing config discovery and relative-path rules apply; there is no display file, CLI override flag, file watching or merge layer. Runtime switches override startup defaults in memory. Restart to reread the file.
 
-Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling back to hex for invalid UTF-8. Invalid bytes never become replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping. Protobuf/Avro decoding is [planned separately](docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md), not included in Auto.
+Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling back to hex for invalid UTF-8. Invalid bytes never become replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping. The [Protobuf/Avro library and standalone example](crates/codec/README.md) work with explicit local schemas; app bindings are [still planned](docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md). Auto does not use these codecs.
 
 ## Disposable local fixtures and tests
 
