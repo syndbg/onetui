@@ -34,6 +34,7 @@ pub(crate) enum Format {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Framing {
     Raw,
+    Confluent,
 }
 
 #[derive(Clone, Deserialize)]
@@ -43,8 +44,37 @@ pub(crate) struct Binding {
     pub field: Field,
     pub format: Format,
     pub framing: Framing,
-    pub schema_file: String,
+    pub schema_file: Option<String>,
     pub message_name: Option<String>,
+    pub registry: Option<crate::registry::Config>,
+}
+
+pub(crate) fn validate_path(path: &str) -> Result<()> {
+    ensure!(
+        path.len() <= 4096 && !path.chars().any(char::is_control) && Path::new(path).is_absolute(),
+        "Decoder path must be absolute, at most 4096 bytes, without controls"
+    );
+    Ok(())
+}
+
+pub(crate) fn read_file(path: &str, limit: usize) -> Result<Vec<u8>> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A FIFO substituted at this path must not hold the native worker indefinitely.
+        options.custom_flags(nix::libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "Decoder path must be a regular file"
+    );
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= limit, "Decoder file exceeds {limit} bytes");
+    Ok(bytes)
 }
 
 pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
@@ -57,12 +87,35 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
             crate::browse::valid_topic(&binding.topic),
             "Invalid decoder topic"
         );
-        ensure!(
-            binding.schema_file.len() <= 4096
-                && !binding.schema_file.chars().any(char::is_control)
-                && Path::new(&binding.schema_file).is_absolute(),
-            "Decoder schema_file must be an absolute path of at most 4096 bytes without controls"
-        );
+        match binding.framing {
+            Framing::Raw => {
+                validate_path(
+                    binding
+                        .schema_file
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Raw binding requires schema_file"))?,
+                )?;
+                ensure!(
+                    binding.registry.is_none(),
+                    "Raw binding does not accept registry"
+                );
+            }
+            Framing::Confluent => {
+                ensure!(
+                    binding.format == Format::Avro,
+                    "Confluent Protobuf decoding is not supported yet"
+                );
+                ensure!(
+                    binding.schema_file.is_none(),
+                    "Registry binding does not accept schema_file"
+                );
+                binding
+                    .registry
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Confluent binding requires registry"))?
+                    .validate()?;
+            }
+        }
         ensure!(
             !bindings[..index]
                 .iter()
@@ -95,25 +148,13 @@ enum Decoder {
 
 impl Decoder {
     fn load(binding: &Binding) -> Result<Self> {
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            // A FIFO substituted at this path must not hold the native worker indefinitely.
-            options.custom_flags(nix::libc::O_NONBLOCK);
-        }
-        let file = options.open(&binding.schema_file)?;
-        ensure!(
-            file.metadata()?.is_file(),
-            "Decoder schema_file must be a regular file"
-        );
-        let mut bytes = Vec::new();
-        file.take(SCHEMA_BYTES as u64 + 1).read_to_end(&mut bytes)?;
-        ensure!(
-            bytes.len() <= SCHEMA_BYTES,
-            "Decoder schema exceeds 256 KiB"
-        );
+        let bytes = read_file(
+            binding
+                .schema_file
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("Raw binding requires schema_file"))?,
+            SCHEMA_BYTES,
+        )?;
         match binding.framing {
             Framing::Raw => match binding.format {
                 Format::Avro => Ok(Self::Avro(onetui_avro::Decoder::new(std::str::from_utf8(
@@ -124,6 +165,9 @@ impl Decoder {
                     binding.message_name.as_deref().unwrap(),
                 )?)),
             },
+            Framing::Confluent => {
+                anyhow::bail!("Registry binding requires per-message schema resolution")
+            }
         }
     }
 
@@ -145,9 +189,40 @@ impl Decoder {
 struct Entry {
     binding: Binding,
     loaded: Option<Result<Decoder, String>>,
+    registry: Option<Result<crate::registry::Registry, String>>,
 }
 
 impl Entry {
+    fn registry(&mut self) -> Result<&mut crate::registry::Registry> {
+        self.registry
+            .get_or_insert_with(|| {
+                crate::registry::Registry::new(self.binding.registry.clone().unwrap())
+                    .map_err(|e| format!("{e:#}"))
+            })
+            .as_mut()
+            .map_err(|error| anyhow::anyhow!("{error}"))
+    }
+
+    fn preview(
+        &mut self,
+        raw: &[u8],
+        remaining: &impl Fn() -> Result<()>,
+    ) -> (Option<String>, Result<String>) {
+        if self.binding.registry.is_some() {
+            return match self.registry() {
+                Ok(registry) => registry.preview(raw, remaining),
+                Err(error) => (None, Err(error)),
+            };
+        }
+        let decoder = self.load();
+        (
+            decoder.as_ref().ok().map(|d| d.schema_id().to_owned()),
+            decoder
+                .as_ref()
+                .map_err(|error| anyhow::anyhow!("{error}"))
+                .and_then(|d| d.json(raw)),
+        )
+    }
     fn load(&mut self) -> &Result<Decoder, String> {
         self.loaded.get_or_insert_with(|| {
             Decoder::load(&self.binding).map_err(|error| format!("{error:#}"))
@@ -165,6 +240,7 @@ impl Bindings {
                 .map(|binding| Entry {
                     binding,
                     loaded: None,
+                    registry: None,
                 })
                 .collect(),
         )
@@ -173,10 +249,14 @@ impl Bindings {
     pub fn check(&mut self, remaining: impl Fn() -> Result<()>) -> Result<()> {
         for entry in &mut self.0 {
             remaining()?;
-            entry
-                .load()
-                .as_ref()
-                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            if entry.binding.registry.is_some() {
+                entry.registry()?.check(&remaining)?;
+            } else {
+                entry
+                    .load()
+                    .as_ref()
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+            }
             remaining()?;
         }
         Ok(())
@@ -210,10 +290,18 @@ impl Bindings {
                 continue;
             };
             remaining()?;
-            let decoder = entry.load();
+            let identity = if entry.binding.registry.is_some() {
+                None
+            } else {
+                entry.load().as_ref().ok().map(|d| d.schema_id().to_owned())
+            };
             remaining()?;
-            let identity = decoder.as_ref().ok().map(|d| d.schema_id().to_owned());
-            reserved += page.rows.len() * (identity.as_ref().map_or(0, String::len) + ERROR_BYTES);
+            let identity_bytes = if entry.binding.registry.is_some() {
+                600
+            } else {
+                identity.as_ref().map_or(0, String::len)
+            };
+            reserved += page.rows.len() * (identity_bytes + ERROR_BYTES);
             for (suffix, datatype) in [
                 ("decoded", "JSON projection (not wire bytes)"),
                 ("schema", "schema identity"),
@@ -224,7 +312,7 @@ impl Bindings {
                     datatype: datatype.into(),
                 });
             }
-            selected.push((index, decoder, identity));
+            selected.push((index, entry, identity));
         }
         if selected.is_empty() {
             return Ok(());
@@ -255,19 +343,19 @@ impl Bindings {
         let mut available = available - reserved;
         page.columns.extend(columns);
         for row in &mut page.rows {
-            for (index, decoder, identity) in &selected {
+            for (index, entry, identity) in &mut selected {
                 remaining()?;
                 let mut error = None;
+                let mut schema_identity = identity.clone();
                 let decoded = if let Some(value) = &row.cells[*index] {
                     let result = if available == 0 {
                         Err(anyhow::anyhow!(
                             "Decoded preview exceeds remaining page budget"
                         ))
                     } else {
-                        decoder
-                            .as_ref()
-                            .map_err(|error| anyhow::anyhow!("{error}"))
-                            .and_then(|decoder| decoder.json(value.bytes()))
+                        let (resolved, result) = entry.preview(value.bytes(), &remaining);
+                        schema_identity = resolved;
+                        result
                     };
                     match result {
                         Ok(json) if json.len() <= PREVIEW_BYTES.min(available) => {
@@ -295,7 +383,7 @@ impl Bindings {
                     None
                 };
                 row.cells
-                    .extend([decoded, identity.clone().map(Value::Text), error]);
+                    .extend([decoded, schema_identity.map(Value::Text), error]);
             }
         }
         remaining()?;

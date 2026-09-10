@@ -13,8 +13,14 @@ pub(crate) fn schema(text: &str) -> Result<Schema> {
     Ok(schema)
 }
 
-pub(crate) fn decode(schema: &Schema, bytes: &[u8]) -> Result<apache_avro::types::Value> {
-    let resolved = ResolvedSchema::try_from(schema)?;
+pub(crate) fn decode(
+    schema: &Schema,
+    references: &[Schema],
+    bytes: &[u8],
+) -> Result<apache_avro::types::Value> {
+    let resolved = ResolvedSchema::new_with_schemata(
+        references.iter().chain(std::iter::once(schema)).collect(),
+    )?;
     let mut input = bytes;
     scan(
         schema,
@@ -27,6 +33,7 @@ pub(crate) fn decode(schema: &Schema, bytes: &[u8]) -> Result<apache_avro::types
     ensure!(input.is_empty(), "Trailing bytes after Avro datum");
     let mut input = bytes;
     let value = apache_avro::reader::datum::GenericDatumReader::builder(schema)
+        .resolved_writer_schemata(resolved)
         .build()?
         .read_value(&mut input)?;
     ensure!(input.is_empty(), "Trailing bytes after Avro datum");

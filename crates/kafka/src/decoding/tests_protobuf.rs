@@ -33,8 +33,9 @@ fn protobuf_key_binding_uses_exact_message_and_preserves_raw_value() {
         field: Field::Key,
         format: Format::Protobuf,
         framing: Framing::Raw,
-        schema_file: path.to_str().unwrap().into(),
+        schema_file: Some(path.to_str().unwrap().into()),
         message_name: Some("demo.Event".into()),
+        registry: None,
     };
     validate(std::slice::from_ref(&binding)).unwrap();
     let mut invalid = binding.clone();

@@ -53,8 +53,13 @@ impl Provider for KafkaProvider {
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<KafkaExecutor> {
         let identity = NEXT_EXECUTOR.fetch_add(1, Ordering::Relaxed);
-        let options = crate::config::Config::parse(options)?;
-        let (config, secrets) = options.native(identity, env)?;
+        let mut options = crate::config::Config::parse(options)?;
+        let (config, mut secrets) = options.native(identity, env)?;
+        for binding in &mut options.decoders {
+            if let Some(registry) = &mut binding.registry {
+                secrets.extend(registry.resolve(env)?);
+            }
+        }
         Ok(KafkaExecutor {
             config,
             decoders: options.decoders,

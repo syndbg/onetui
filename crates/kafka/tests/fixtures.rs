@@ -16,6 +16,8 @@ mod topic;
 mod decoding_avro;
 #[path = "fixtures/decoding_protobuf.rs"]
 mod decoding_protobuf;
+#[path = "fixtures/registry_avro.rs"]
+mod registry_avro;
 
 fn executor() -> KafkaExecutor {
     let options =

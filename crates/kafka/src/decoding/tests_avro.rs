@@ -7,8 +7,9 @@ fn binding(path: &Path) -> Binding {
         field: Field::Value,
         format: Format::Avro,
         framing: Framing::Raw,
-        schema_file: path.to_str().unwrap().into(),
+        schema_file: Some(path.to_str().unwrap().into()),
         message_name: None,
+        registry: None,
     }
 }
 
@@ -44,7 +45,7 @@ fn avro_binding_is_strict_offline_and_scoped() {
     assert_eq!(settings["default"], serde_json::json!([]));
     assert_eq!(
         settings["fields"]["framing"]["values"],
-        serde_json::json!(["raw"])
+        serde_json::json!(["raw", "confluent"])
     );
     assert_eq!(settings["limits"]["schema_bytes_per_binding"], SCHEMA_BYTES);
     let example: Binding = serde_json::from_value(settings["example"].clone()).unwrap();
@@ -56,7 +57,7 @@ fn avro_binding_is_strict_offline_and_scoped() {
     for field in ["schema_file", "topic", "message_name"] {
         let mut invalid = valid.clone();
         match field {
-            "schema_file" => invalid.schema_file = "relative.avsc".into(),
+            "schema_file" => invalid.schema_file = Some("relative.avsc".into()),
             "topic" => invalid.topic = "*".into(),
             _ => invalid.message_name = Some("not-avro".into()),
         }

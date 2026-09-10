@@ -14,6 +14,7 @@ pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 pub struct Decoder {
     schema_id: String,
     schema: apache_avro::Schema,
+    references: Vec<apache_avro::Schema>,
 }
 
 /// Retains the native typed value and original bytes; JSON is only a presentation.
@@ -34,6 +35,46 @@ impl Decoder {
         Ok(Self {
             schema_id: format!("avro:sha256:{}", fingerprint(writer_schema.as_bytes())),
             schema,
+            references: Vec::new(),
+        })
+    }
+
+    /// Resolve named writer dependencies without substituting a reader schema.
+    pub fn with_references(writer_schema: &str, references: &[&str]) -> Result<Self> {
+        if references.is_empty() {
+            return Self::new(writer_schema);
+        }
+        ensure!(references.len() <= 32, "Avro schema references exceed 32");
+        ensure!(
+            writer_schema.len() + references.iter().map(|s| s.len()).sum::<usize>()
+                <= MAX_SCHEMA_BYTES,
+            "Avro schema bundle exceeds 256 KiB"
+        );
+        let mut texts = references.to_vec();
+        texts.push(writer_schema);
+        let mut budget = bounds::Budget::default();
+        for text in &texts {
+            bounds::schema_json(&serde_json::from_str(text)?, &mut budget, 0)?;
+        }
+        let mut schemas = apache_avro::Schema::parse_list(&texts)?;
+        apache_avro::schema::ResolvedSchema::new_with_schemata(schemas.iter().collect())?;
+        let schema = schemas.pop().unwrap();
+        let mut identity = Sha256::new();
+        for text in texts {
+            identity.update((text.len() as u64).to_be_bytes());
+            identity.update(text.as_bytes());
+        }
+        Ok(Self {
+            schema_id: format!(
+                "avro:sha256:{}",
+                identity
+                    .finalize()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+            ),
+            schema,
+            references: schemas,
         })
     }
 
@@ -48,7 +89,7 @@ impl Decoder {
             raw.len() <= MAX_PAYLOAD_BYTES,
             "Message exceeds 64 KiB decode limit; inspect raw bytes"
         );
-        let value = avro::decode(&self.schema, raw)?;
+        let value = avro::decode(&self.schema, &self.references, raw)?;
         Ok(Decoded {
             raw: raw.to_vec(),
             schema_id: self.schema_id.clone(),
