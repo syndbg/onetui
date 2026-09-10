@@ -1,6 +1,6 @@
 # onetui-kafka
 
-Kafka provider, strict configuration, metadata and bounded record browsing through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
+Kafka provider, strict configuration, metadata, bounded record browsing and live follow batches through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
 
 The native build uses CMake, a C/C++ toolchain, Make and Perl. Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source; do not install a system librdkafka for this build. TLS uses OpenSSL rather than the other connectors' Rustls stack.
 
@@ -16,4 +16,6 @@ The default native protocol test starts librdkafka's loopback mock cluster. It d
 
 The broker-stall test pauses only the disposable Kafka container, checks repeated cancellation and a request deadline, then unpauses it before propagating assertion failures. It verifies reconnection and another record page afterward. Do not run it alongside another fixture user.
 
-See [Kafka usage/configuration](../../docs/kafka.md), [ADR-0006](../../docs/adr/0006-browse-kafka-with-rust-rdkafka.md).
+The live CLI test also needs `cargo build -p onetui-kafka --example produce_demo --locked`; the full integration runner builds it automatically. It sends two records 15 seconds apart to `demo_live` and verifies live arrival, stop, inspection, restart and connection switching. The example is a fixture-only producer; `make dev-traffic` runs it continuously after `make dev-up`.
+
+See [Kafka usage/configuration](../../docs/kafka.md), [ADR-0006](../../docs/adr/0006-browse-kafka-with-rust-rdkafka.md), [ADR-0007](../../docs/adr/0007-follow-live-records-in-bounded-batches.md).

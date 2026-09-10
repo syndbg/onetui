@@ -192,6 +192,17 @@ fn kafka_catalog_filter_is_offline_and_does_not_advertise_queries() {
     assert_eq!(kafka["id"], "kafka");
     assert_eq!(kafka["entry_resource"], "kafka.topics");
     assert!(kafka["query"].is_null());
+    assert_eq!(kafka["follow_resource"], "kafka.records");
+    assert!(
+        kafka["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|op| op == "follow_page")
+    );
+    assert_eq!(kafka["following"]["poll_interval_ms"], 1000);
+    assert_eq!(kafka["following"]["buffer_rows"], 100);
+    assert_eq!(kafka["following"]["buffer_bytes"], 1048576);
     assert_eq!(kafka["resources"].as_array().unwrap().len(), 3);
     assert_eq!(
         kafka["configuration"]["security_protocol"]["default"],

@@ -339,6 +339,7 @@ where
                 draw(frame, &app);
             }).map_err(|_| anyhow!("cannot draw terminal"))?;
             tokio::select! {
+                _ = async { tokio::time::sleep_until(app.follow_due.expect("follow deadline")).await }, if app.follow_due.is_some() => app.follow_tick(),
                 event = events.next() => match event {
                     Some(Ok(Event::Key(key))) => app.key(key),
                     Some(Ok(Event::Paste(text))) => {
@@ -1064,7 +1065,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
         });
         frame.render_stateful_widget(table, body, &mut state);
     }
-    let state = if app.loading {
+    let state = if app.following {
+        "LIVE | f / Ctrl-c stop | navigation pauses"
+    } else if app.view.live && !app.loading {
+        "Following stopped | f starts at current end | r returns to historical browsing"
+    } else if app.loading {
         "Loading… Ctrl-c cancels"
     } else if app.view.page.rows.is_empty() {
         "Empty result"
@@ -1107,18 +1112,26 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     error,
                     Style::new().fg(if app.error.is_some() {
                         color(p.error)
-                    } else if app.loading {
+                    } else if app.loading && !app.following {
                         color(p.warning)
                     } else {
                         color(p.success)
                     }),
                 ),
-                Line::raw(format!(
-                    "Page {} | {} items | next: {} | {scope}",
-                    app.view.offset / PAGE_SIZE + 1,
-                    app.view.page.rows.len(),
-                    app.view.page.next,
-                )),
+                Line::raw(if app.view.live {
+                    format!(
+                        "Live window | {} retained | {} evicted locally | {scope}",
+                        app.view.page.rows.len(),
+                        app.view.live_evicted
+                    )
+                } else {
+                    format!(
+                        "Page {} | {} items | next: {} | {scope}",
+                        app.view.offset / PAGE_SIZE + 1,
+                        app.view.page.rows.len(),
+                        app.view.page.next,
+                    )
+                }),
             ]),
             app,
         )

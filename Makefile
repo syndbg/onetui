@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-seed dev-down dev-logs check-local test-integration release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-seed dev-traffic dev-down dev-logs check-local test-integration release-check package
 
 help:
 	@printf '%s\n' \
@@ -16,6 +16,7 @@ help:
 	  'workflow-lint          Validate GitHub workflows (requires Go; downloads pinned actionlint)' \
 	  'dev-up                 Build and start ready-to-use disposable local databases' \
 	  'dev-seed               Add demo data to running fixtures without resetting existing data' \
+	  'dev-traffic            Produce one Kafka demo_live record every 15 seconds; Ctrl-C stops' \
 	  'check-local            Check local PostgreSQL, Qdrant and Kafka fixtures' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
 	  'test-integration       Start fresh fixtures, test, then clean up (refuses existing fixtures)' \
@@ -53,6 +54,9 @@ dev-up: build
 
 dev-seed: build
 	bash hack/dev.sh seed
+
+dev-traffic: build
+	bash hack/dev.sh traffic
 
 dev-down:
 	bash hack/dev.sh down

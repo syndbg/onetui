@@ -69,6 +69,8 @@ Ready                                                                 v0.1.0
 
 ## Navigation
 
+Resources that support live following advertise `f` / `:follow` in context and help. Kafka exposes it on a selected partition's record view. The footer shows `LIVE`, retained rows and local eviction count instead of historical page numbers. `f` or Ctrl-C stops and retains data; navigation, inspection or command entry also stops updates. `f` starts again at a new current end, while `r` returns to historical browsing. See [Kafka following](kafka.md#live-following) for limits and transaction behavior. The command bar still appears only while typing; following adds no panel or configuration setting.
+
 Without an explicit `--connection <alias>`, startup shows the connection picker and makes no datasource request. Select an alias and press Enter. `c` returns to the picker.
 
 Press `?` for Key, Command and Description columns. Press `T` or enter `:themes` to select a theme; its controls stay in context, not an extra action bar. Type `/4b` to filter the loaded page immediately, then Enter to keep it. After entry closes, the filter remains in the table title. Sorting and applied filters never open an input bar.

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    Follow,
     Query,
     Up,
     Down,
@@ -38,6 +39,11 @@ pub struct ActionDescriptor {
 }
 
 pub const ACTIONS: &[ActionDescriptor] = &[
+    ActionDescriptor {
+        id: Action::Follow,
+        keys: &["f"],
+        description: "Start live following from the current end; press again to stop and retain data",
+    },
     ActionDescriptor {
         id: Action::Query,
         keys: &["e"],

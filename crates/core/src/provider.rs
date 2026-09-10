@@ -10,6 +10,7 @@ use crate::catalog::ResourceDescriptor;
 use crate::{Page, Resource};
 
 pub struct ProviderDescriptor {
+    pub follow_resource: Option<&'static str>,
     pub query: Option<QueryDescriptor>,
     pub kind: &'static str,
     pub entry_resource: Option<&'static str>,
@@ -26,6 +27,7 @@ impl ProviderDescriptor {
     pub fn capabilities(&self) -> serde_json::Value {
         let mut value = (self.documentation)();
         value["query"] = serde_json::to_value(self.query).expect("query descriptor");
+        value["follow_resource"] = serde_json::json!(self.follow_resource);
         if self.query.is_some() {
             value["query_max_bytes"] = QUERY_BYTES.into();
         }
@@ -51,6 +53,15 @@ pub trait Provider: Send + Sync {
 /// Native failures retain backend codes/messages and underlying transport causes.
 /// Executors redact known connection secrets and escape controls before returning diagnostics.
 pub trait Executor: Send + Sync {
+    /// One bounded live batch. No cursor starts at the current end; even an empty
+    /// batch returns a cursor. Cancellation/error must not advance the caller's cursor.
+    fn follow_page(
+        &self,
+        _request: PageRequest,
+        _context: RequestContext,
+    ) -> impl Future<Output = Result<Page>> + Send {
+        async { anyhow::bail!("Live following is unavailable for this provider") }
+    }
     fn query_page(
         &self,
         _request: QueryRequest,
@@ -193,6 +204,12 @@ pub fn validate_catalog<P: Provider>(catalog: &[P]) -> Result<()> {
             "invalid provider entry resource"
         );
         ensure!(
+            descriptor
+                .follow_resource
+                .is_none_or(|id| descriptor.resource(id).is_some_and(|r| r.paging)),
+            "invalid provider follow resource"
+        );
+        ensure!(
             descriptor.query.is_none_or(|q| descriptor
                 .resource(q.resource)
                 .is_some_and(|r| r.paging)
@@ -240,6 +257,7 @@ mod tests {
             actions: &[],
         };
         static DUPLICATE: ProviderDescriptor = ProviderDescriptor {
+            follow_resource: None,
             query: None,
             kind: "fake",
             entry_resource: None,
@@ -248,6 +266,7 @@ mod tests {
             documentation: || serde_json::json!({}),
         };
         static MISSING: ProviderDescriptor = ProviderDescriptor {
+            follow_resource: None,
             query: None,
             kind: "fake",
             entry_resource: Some("fake.missing"),

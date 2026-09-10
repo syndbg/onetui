@@ -51,4 +51,4 @@ Metadata calls and native destruction can block. Keep them off the UI and Tokio 
 
 `rdkafka` adds a C build and native TLS/compression dependencies. Compile and package the selected features on the supported macOS/Linux targets before advertising support. Its producer and administration APIs do not become OneTUI capabilities merely because the library includes them.
 
-Live following, cross-partition merging, production, consumer-group administration and schema-registry decoding are outside this first slice. Kafka has no SQL query mode here. A future follow operation needs explicit start/stop, bounded buffers and visible gap handling; it must not masquerade as an endless page request.
+Cross-partition merging, production from the app, consumer-group administration and schema-registry decoding are outside this slice. Kafka has no SQL query mode here.

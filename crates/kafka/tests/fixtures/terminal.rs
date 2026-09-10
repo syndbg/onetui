@@ -131,7 +131,7 @@ impl Pty {
     }
 
     fn wait(&mut self, expected: &[&str]) {
-        let until = Instant::now() + Duration::from_secs(10);
+        let until = Instant::now() + Duration::from_secs(25);
         let mut redraw = Instant::now() + Duration::from_millis(150);
         loop {
             self.read();
@@ -178,6 +178,81 @@ impl Pty {
         keys.extend_from_slice(b"\r\r");
         self.send(&keys);
     }
+}
+
+#[test]
+#[ignore = "writes demo_live through the fixture producer; actual CLI follow and stop"]
+fn actual_cli_kafka_live_follow_with_fixture_producer() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let producer_binary = root.join("target/debug/examples/produce_demo");
+    let seed = Command::new(&producer_binary)
+        .args(["--count", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        seed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&seed.stderr)
+    );
+    let mut config = tempfile::NamedTempFile::new().unwrap();
+    write!(config, "[connections.kafka]\nkind='kafka'\nbootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'").unwrap();
+    let binary = std::env::var_os("ONETUI_TEST_BIN")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let mut command = Command::new(binary);
+    command
+        .arg("--config")
+        .arg(config.path())
+        .args(["--connection", "kafka"]);
+    let (mut pty, _) = Pty::spawn(command);
+    pty.wait(&["kafka.topics", "demo_live"]);
+    pty.open_filtered("demo_live");
+    pty.wait(&["kafka.partitions", "1shown/1loaded"]);
+    pty.send(b"\r");
+    pty.wait(&["kafka.records", "Page1"]);
+    pty.send(b"f");
+    pty.wait(&["LIVE", "0retained"]);
+    let started = Instant::now();
+    let mut producer = Command::new(&producer_binary)
+        .args(["--count", "2"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pty.wait(&["LIVE", "2retained"]);
+        assert!(
+            started.elapsed() >= Duration::from_secs(15),
+            "producer must not burst both records"
+        );
+        pty.send(b"\x03");
+        pty.wait(&["Followingstopped", "2retained"]);
+        pty.send(b"\r");
+        pty.wait(&["Rowdata", "value", "headers"]);
+        pty.send(b"\x1b");
+        pty.wait(&["kafka.records", "Followingstopped"]);
+        pty.send(b"r");
+        pty.wait(&["Page1", "kafka.records"]);
+        pty.send(b"f");
+        pty.wait(&["LIVE", "0retained"]);
+        pty.send(b"c");
+        pty.wait(&["connections", "kafka"]);
+        pty.send(b"q");
+        pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
+    }));
+    if result.is_err() {
+        let _ = producer.kill();
+    }
+    let produced = producer.wait_with_output().unwrap();
+    result.unwrap();
+    assert!(
+        produced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&produced.stderr)
+    );
+    let output = String::from_utf8_lossy(&produced.stdout);
+    assert_eq!(output.lines().count(), 2);
+    assert!(output.contains("sequence=0") && output.contains("sequence=1"));
 }
 
 #[test]

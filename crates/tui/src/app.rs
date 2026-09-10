@@ -10,6 +10,7 @@ use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
 use onetui_theme::Theme;
 
 const BOOKMARK_LIMIT: usize = 4096;
+mod follow;
 
 struct PageBookmark {
     offset: i64,
@@ -20,6 +21,7 @@ struct PageBookmark {
 
 #[derive(Clone)]
 pub struct Request {
+    pub follow: bool,
     pub query: Option<String>,
     pub id: u64,
     pub alias: String,
@@ -31,6 +33,8 @@ pub struct Request {
 }
 
 pub struct View {
+    pub live: bool,
+    pub live_evicted: usize,
     pub query: Option<String>,
     query_draft: Option<String>,
     pub alias: Option<String>,
@@ -52,6 +56,8 @@ pub struct View {
 impl View {
     fn new(alias: Option<String>, resource: Resource) -> Self {
         Self {
+            live: false,
+            live_evicted: 0,
             query: None,
             query_draft: None,
             alias,
@@ -176,6 +182,8 @@ fn projections(page: &Page) -> Result<Vec<Vec<Option<String>>>, &'static str> {
 }
 
 pub struct App {
+    pub following: bool,
+    pub(crate) follow_due: Option<tokio::time::Instant>,
     pub query_editor: Option<crate::query::Editor>,
     pub config: Config,
     pub view: View,
@@ -212,6 +220,8 @@ pub struct App {
 impl App {
     pub fn new(config: Config, alias: Option<&str>) -> Self {
         let mut app = Self {
+            following: false,
+            follow_due: None,
             query_editor: None,
             config,
             view: View::new(None, Resource::new("connections", vec![])),
@@ -262,6 +272,8 @@ impl App {
     }
 
     fn invalidate(&mut self) {
+        self.following = false;
+        self.follow_due = None;
         self.generation += 1;
         self.request = None;
         self.loading = false;
@@ -309,6 +321,7 @@ impl App {
         self.row_detail = false;
         self.loading = true;
         self.request = Some(Request {
+            follow: false,
             query: self.view.query.clone(),
             id: self.generation,
             alias: self.view.alias.clone().expect("datasource view has alias"),
@@ -336,6 +349,10 @@ impl App {
             return;
         }
         self.loading = false;
+        if request.follow {
+            self.complete_follow(request, result);
+            return;
+        }
         let result = result.and_then(|page| {
             anyhow::ensure!(
                 page.bytes() <= PAGE_BYTES,
@@ -356,6 +373,8 @@ impl App {
                     }
                 }
                 self.query_editor = None;
+                self.view.live = false;
+                self.view.live_evicted = 0;
                 if self.view.sort.is_some_and(|(column, _)| {
                     self.view.page.columns.get(column).map(|c| &c.name)
                         != page.columns.get(column).map(|c| &c.name)
@@ -423,7 +442,7 @@ impl App {
     }
 
     pub fn available(&self, action: Action) -> bool {
-        self.available_while_loading(action, self.loading)
+        self.available_while_loading(action, self.loading && !self.following)
     }
 
     fn available_while_loading(&self, action: Action, loading: bool) -> bool {
@@ -448,6 +467,21 @@ impl App {
             );
         }
         match action {
+            Action::Follow => {
+                !loading
+                    && !self.help
+                    && !self.detail
+                    && !self.row_detail
+                    && self.view.query.is_none()
+                    && self
+                        .view
+                        .alias
+                        .as_deref()
+                        .and_then(|alias| self.config.descriptor(alias))
+                        .is_some_and(|provider| {
+                            provider.follow_resource == Some(self.view.resource.id)
+                        })
+            }
             Action::Query => !loading && self.query_target().is_some(),
             Action::ScrollLeft | Action::ScrollRight => !self.config.display.word_wrap,
             Action::Filter => !self.detail && !self.row_detail,
@@ -462,14 +496,22 @@ impl App {
                 if self.detail {
                     self.detail_chunk + 1 < self.detail_chunks
                 } else {
-                    !self.row_detail && !loading && self.view.page.next
+                    !self.view.live
+                        && !self.following
+                        && !self.row_detail
+                        && !loading
+                        && self.view.page.next
                 }
             }
             Action::Previous => {
                 if self.detail {
                     self.detail_chunk > 0
                 } else {
-                    !self.row_detail && !loading && !self.view.previous.is_empty()
+                    !self.view.live
+                        && !self.following
+                        && !self.row_detail
+                        && !loading
+                        && !self.view.previous.is_empty()
                 }
             }
             Action::Up
@@ -671,6 +713,12 @@ impl App {
         if !self.available(action) {
             return;
         }
+        if self.following {
+            self.invalidate();
+            if matches!(action, Action::Follow | Action::Cancel) {
+                return;
+            }
+        }
         if let Some(index) = self.display_menu {
             if self.help && matches!(action, Action::Up | Action::Down) {
                 self.detail_scroll = if action == Action::Up {
@@ -785,6 +833,7 @@ impl App {
             return;
         }
         match action {
+            Action::Follow => self.start_follow(),
             Action::Query => {
                 let descriptor = self.query_descriptor().expect("query provider");
                 let text = self
@@ -1122,6 +1171,9 @@ impl App {
             && self.theme_menu.is_none()
             && self.display_menu.is_none()
         {
+            if self.following {
+                self.invalidate();
+            }
             self.command = Some(String::new());
             return;
         }

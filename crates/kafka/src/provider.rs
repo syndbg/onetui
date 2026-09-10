@@ -25,6 +25,7 @@ static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 static NATIVE_OWNER: Semaphore = Semaphore::const_new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    follow_resource: Some("kafka.records"),
     query: None,
     kind: "kafka",
     entry_resource: Some("kafka.topics"),
@@ -76,6 +77,7 @@ struct Owner {
 enum Operation {
     Check,
     Page(PageRequest),
+    Follow(PageRequest),
 }
 
 enum Response {
@@ -208,8 +210,15 @@ impl Executor for KafkaExecutor {
         }
     }
     async fn fetch_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
-        crate::browse::validate(&request, self.identity)?;
+        crate::browse::validate(&request, self.identity, false)?;
         match self.execute(Operation::Page(request), context).await? {
+            Response::Page(page) => Ok(page),
+            _ => unreachable!(),
+        }
+    }
+    async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
+        crate::browse::validate(&request, self.identity, true)?;
+        match self.execute(Operation::Follow(request), context).await? {
             Response::Page(page) => Ok(page),
             _ => unreachable!(),
         }
@@ -281,9 +290,10 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                 ),
             }));
         }
-        Operation::Page(request) => request,
+        Operation::Page(request) | Operation::Follow(request) => request,
     };
-    let position = crate::browse::validate(request, identity)?;
+    let following = matches!(job.operation, Operation::Follow(_));
+    let position = crate::browse::validate(request, identity, following)?;
     if request.resource.id != "kafka.records" {
         let metadata = native_request(client, job, |wait| {
             client.fetch_metadata(request.resource.path.first().map(String::as_str), wait)
@@ -324,7 +334,17 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
     let (low, stable_end) = native_request(client, job, |wait| {
         client.fetch_watermarks(topic, partition, wait)
     })?;
-    let (start, end) = position.map_or((low, stable_end), |p| (p.offset, p.end.unwrap()));
+    let (start, end) = if following {
+        ensure!(
+            position
+                .as_ref()
+                .is_none_or(|p| p.end.is_some_and(|end| end <= stable_end)),
+            "Kafka live window moved backwards; following stopped, start again explicitly"
+        );
+        (position.map_or(stable_end, |p| p.offset), stable_end)
+    } else {
+        position.map_or((low, stable_end), |p| (p.offset, p.end.unwrap()))
+    };
     ensure!(
         start >= low && start <= end && end <= stable_end,
         "Kafka offsets unavailable: requested [{start}, {end}), available [{low}, {stable_end}); refresh"
@@ -336,7 +356,14 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
         ),
     );
     if start == end {
-        return crate::browse::finish(page, &request.resource, identity, None).map(Response::Page);
+        return crate::browse::finish(
+            page,
+            &request.resource,
+            identity,
+            following.then_some((end, Some(end))),
+            following,
+        )
+        .map(Response::Page);
     }
     let mut assignment = TopicPartitionList::new();
     assignment.add_partition_offset(topic, partition, Offset::Offset(start))?;
@@ -357,11 +384,17 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                         next = end;
                         break;
                     }
+                    let row = crate::browse::record(&message)?;
+                    page.rows.push(row);
+                    if following && page.bytes() > PAGE_BYTES && page.rows.len() > 1 {
+                        page.rows.pop();
+                        next = message.offset();
+                        break;
+                    }
                     next = message
                         .offset()
                         .checked_add(1)
                         .ok_or_else(|| anyhow!("Kafka offset overflow"))?;
-                    page.rows.push(crate::browse::record(&message)?);
                     ensure!(
                         page.bytes() <= PAGE_BYTES,
                         "Kafka page exceeds 1 MiB; current page and bookmark retained"
@@ -396,7 +429,8 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
             page,
             &request.resource,
             identity,
-            (next < end).then_some((next, Some(end))),
+            (following || next < end).then_some((next, Some(end))),
+            following,
         )
     })();
     let unassigned = client.unassign();
@@ -420,6 +454,24 @@ mod tests {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         executor
             .fetch_page(
+                PageRequest {
+                    resource,
+                    continuation,
+                },
+                context,
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn follow(
+        executor: &KafkaExecutor,
+        resource: Resource,
+        continuation: Option<String>,
+    ) -> Page {
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        executor
+            .follow_page(
                 PageRequest {
                     resource,
                     continuation,
@@ -488,10 +540,60 @@ mod tests {
         assert!(!last.next);
         let previous = fetch(&executor, resource.clone(), first.continuation).await;
         assert_eq!(previous.rows[0].cells[0], Some("100".into()));
-        let beginning = fetch(&executor, resource, None).await;
+        let beginning = fetch(&executor, resource.clone(), None).await;
         assert_eq!(beginning.rows[0].cells[0], Some("0".into()));
         let empty = fetch(&executor, partitions.rows[1].target.clone().unwrap(), None).await;
         assert!(empty.rows.is_empty() && !empty.next);
+        let tail = follow(&executor, resource.clone(), None).await;
+        assert!(tail.rows.is_empty() && tail.continuation.is_some());
+        let quiet = follow(&executor, resource.clone(), tail.continuation.clone()).await;
+        assert!(quiet.rows.is_empty());
+        assert_eq!(tail.continuation, quiet.continuation);
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        assert!(
+            executor
+                .fetch_page(
+                    PageRequest {
+                        resource: resource.clone(),
+                        continuation: tail.continuation.clone()
+                    },
+                    context
+                )
+                .await
+                .is_err()
+        );
+        for n in 250..500u32 {
+            producer
+                .send(
+                    BaseRecord::to("records")
+                        .partition(0)
+                        .key("key")
+                        .payload(&n.to_be_bytes()[..]),
+                )
+                .unwrap();
+        }
+        producer.flush(Duration::from_secs(5)).unwrap();
+        let mut token = tail.continuation.clone();
+        let mut seen = Vec::new();
+        for count in [100, 100, 50] {
+            let batch = follow(&executor, resource.clone(), token).await;
+            assert_eq!(batch.rows.len(), count);
+            seen.extend(batch.rows.iter().map(|row| {
+                row.cells[0]
+                    .as_ref()
+                    .unwrap()
+                    .text()
+                    .unwrap()
+                    .parse::<u32>()
+                    .unwrap()
+            }));
+            token = batch.continuation;
+        }
+        assert_eq!(seen, (250..500).collect::<Vec<_>>());
+        let replay = follow(&executor, resource.clone(), tail.continuation).await;
+        assert_eq!(replay.rows[0].cells[0], Some("250".into()));
+        let quiet = follow(&executor, resource.clone(), token).await;
+        assert!(quiet.rows.is_empty());
         // A separate observer checks the private group without committing or subscribing itself.
         let observer: BaseConsumer = executor.config.create().unwrap();
         let mut offsets = TopicPartitionList::new();

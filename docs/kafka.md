@@ -1,6 +1,6 @@
 # Kafka browsing
 
-Kafka support is in development. Local Kafka 4.2.0 tests cover browsing, transactions, byte values, limits, retention-invalidated bookmarks, verified TLS, SASL PLAIN/SCRAM and unchanged application offsets. Full integration and release validation are still pending. The connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources.
+The Kafka connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources. It supports historical browsing and live following of one partition.
 
 ## Configuration
 
@@ -63,4 +63,29 @@ For authenticated browsing, grant `Read` and `Describe` on the selected topics, 
 
 Native work stays outside the UI and Tokio async worker threads. Cancellation stops waiting; a native call or destructor may still be finishing. One process permits only one native owner, including cleanup, so repeated switches cannot accumulate blocked workers. A replacement waits within its request deadline. The native client is reused within the selected session and released on disconnect, switch or quit.
 
-SQL, live following, publishing, consumer-group administration, schema-registry decoding, mutual TLS, OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.
+## Live following
+
+Open a topic, partition and its `kafka.records` view, then press `f` or enter `:follow`. The initial request captures the current read-committed stable end and clears historical rows once it succeeds. The footer shows `LIVE`; subsequent requests fetch new committed records from that cursor, one second after the previous request finishes. Open transactions stay hidden until committed; aborted records never appear.
+
+Press `f` or Ctrl-C to stop without quitting. Navigation, opening a record, menus and command entry also stop following before changing the view, keeping data steady for inspection. The stopped window remains readable. Pressing `f` again starts at a new current end and clears the old live window after that first request succeeds; it does not resume messages missed while stopped. `r` returns to historical browsing from the earliest available offset. Historical `n/p` paging is disabled in a live window.
+
+The window retains at most 100 records and 1 MiB of page data, also respecting the separate 1 MiB display-projection budget. Older displayed rows are evicted as new ones arrive, with a visible `evicted locally` count. The cursor still reads forward without skipping records to catch up. A busy partition can outpace the one-batch-per-second reader. This is a bounded viewer, not a durable consumer or a complete traffic archive.
+
+Retention invalidation, a backwards-moving boundary, an oversized value, authentication failure or deadline stops following with the last successful data retained. Restart is explicit. Normal offset gaps can come from compaction or transaction markers. There are no group subscriptions, acknowledgements or committed offsets.
+
+Following adds no `onetui.toml` settings. The existing request timeout applies to each batch. `onetui schema --datasource kafka` lists `follow_page`, its resource and fixed limits; `onetui schema` lists the `follow` action. See [ADR-0007](adr/0007-follow-live-records-in-bounded-batches.md).
+
+For local traffic, run these in separate terminals:
+
+```sh
+make dev-up
+make dev-traffic
+```
+
+```sh
+make run
+```
+
+Choose `local_kafka`, `demo_live`, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
+
+SQL, publishing from the app, consumer-group administration, schema-registry decoding, mutual TLS, OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.

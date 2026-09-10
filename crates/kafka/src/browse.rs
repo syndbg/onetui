@@ -41,7 +41,15 @@ pub(crate) struct Position {
     pub end: Option<i64>,
 }
 
-pub(crate) fn validate(request: &PageRequest, identity: u64) -> Result<Option<Position>> {
+pub(crate) fn validate(
+    request: &PageRequest,
+    identity: u64,
+    following: bool,
+) -> Result<Option<Position>> {
+    ensure!(
+        !following || request.resource.id == "kafka.records",
+        "Live following requires a Kafka partition record view"
+    );
     let valid = match (request.resource.id, request.resource.path.as_slice()) {
         ("kafka.topics", []) => true,
         ("kafka.partitions", [topic]) => valid_topic(topic),
@@ -57,6 +65,13 @@ pub(crate) fn validate(request: &PageRequest, identity: u64) -> Result<Option<Po
         return Ok(None);
     };
     ensure!(token.len() <= 4096, "Invalid Kafka continuation");
+    let token = if following {
+        token
+            .strip_prefix("follow:")
+            .ok_or_else(|| anyhow!("Invalid Kafka follow continuation"))?
+    } else {
+        token.as_str()
+    };
     let position: Position =
         serde_json::from_str(token).map_err(|_| anyhow!("Invalid Kafka continuation"))?;
     ensure!(
@@ -115,6 +130,7 @@ pub(crate) fn finish(
     resource: &Resource,
     identity: u64,
     next: Option<(i64, Option<i64>)>,
+    following: bool,
 ) -> Result<Page> {
     if let Some((offset, end)) = next {
         page.continuation = Some(serde_json::to_string(&Position {
@@ -125,6 +141,9 @@ pub(crate) fn finish(
             end,
         })?);
         page.next = true;
+        if following {
+            page.continuation = page.continuation.map(|token| format!("follow:{token}"));
+        }
     }
     ensure!(
         page.rows.len() <= PAGE_SIZE as usize && page.bytes() <= PAGE_BYTES,
@@ -214,6 +233,7 @@ pub(crate) fn metadata(
         resource,
         identity,
         (next < total).then_some((next as i64, None)),
+        false,
     )
 }
 
@@ -320,13 +340,21 @@ mod tests {
     #[test]
     fn bookmarks_are_scoped_and_sizes_are_enforced() {
         let resource = Resource::new("kafka.records", vec!["test".into(), "0".into()]);
-        let page = finish(page(&resource, ""), &resource, 7, Some((100, Some(250)))).unwrap();
+        let page = finish(
+            page(&resource, ""),
+            &resource,
+            7,
+            Some((100, Some(250))),
+            false,
+        )
+        .unwrap();
         let request = PageRequest {
             resource: resource.clone(),
             continuation: page.continuation,
         };
-        assert_eq!(validate(&request, 7).unwrap().unwrap().offset, 100);
-        assert!(validate(&request, 8).is_err());
+        assert_eq!(validate(&request, 7, false).unwrap().unwrap().offset, 100);
+        assert!(validate(&request, 8, false).is_err());
+        assert!(validate(&request, 7, true).is_err());
         let huge = OwnedMessage::new(
             Some(vec![0; PAGE_BYTES + 1]),
             None,
@@ -343,7 +371,8 @@ mod tests {
                     resource: Resource::new("kafka.records", vec!["test".into(), "-1".into()]),
                     continuation: None
                 },
-                7
+                7,
+                false
             )
             .is_err()
         );

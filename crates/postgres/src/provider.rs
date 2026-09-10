@@ -18,6 +18,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 pub struct PostgresProvider;
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    follow_resource: None,
     query: Some(QueryDescriptor {
         resource: "postgres.query",
         language: "SQL",

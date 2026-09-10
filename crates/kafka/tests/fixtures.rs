@@ -30,6 +30,24 @@ async fn fetch(executor: &KafkaExecutor, resource: Resource, continuation: Optio
         .unwrap()
 }
 
+async fn follow(
+    executor: &KafkaExecutor,
+    resource: Resource,
+    continuation: Option<String>,
+) -> Page {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor
+        .follow_page(
+            PageRequest {
+                resource,
+                continuation,
+            },
+            context,
+        )
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "pauses/unpauses only the disposable Kafka fixture; no data reset"]
 async fn kafka_broker_stall_cancellation_deadline_and_recovery() {
@@ -64,11 +82,23 @@ async fn kafka_broker_stall_cancellation_deadline_and_recovery() {
         for _ in 0..3 {
             let started = tokio::time::Instant::now();
             let (cancel, context) = RequestContext::new(Duration::from_secs(5));
-            let (result, ()) = tokio::join!(current.check(context), async {
-                tokio::time::sleep(Duration::from_millis(40)).await;
-                let _ = cancel.send(());
-            });
-            let error = result.err().expect("cancelled request");
+            let (result, ()) = tokio::join!(
+                current.follow_page(
+                    PageRequest {
+                        resource: Resource::new(
+                            "kafka.records",
+                            vec!["demo_events".into(), "0".into()]
+                        ),
+                        continuation: None,
+                    },
+                    context
+                ),
+                async {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    let _ = cancel.send(());
+                }
+            );
+            let error = result.expect_err("cancelled request");
             assert!(error.to_string().contains("cancelled"), "{error:#}");
             assert!(started.elapsed() < Duration::from_millis(750));
             current
@@ -377,6 +407,8 @@ async fn kafka_transactions_limits_and_application_offsets() {
     let result = tokio::spawn(async move {
         let mut executor = executor();
         let resource = Resource::new("kafka.records", vec![test_topic.clone(), "0".into()]);
+        let tail = follow(&executor, resource.clone(), None).await;
+        assert!(tail.rows.is_empty());
         let producer: FutureProducer = config
             .clone()
             .set("transactional.id", &test_topic)
@@ -439,6 +471,41 @@ async fn kafka_transactions_limits_and_application_offsets() {
             near_limit_page.rows[0].cells[3].as_ref().unwrap().bytes(),
             near_limit
         );
+        let large_resource = Resource::new("kafka.records", vec![test_topic.clone(), "1".into()]);
+        let large_tail = follow(&executor, large_resource.clone(), None).await;
+        producer.begin_transaction().unwrap();
+        for _ in 0..2 {
+            producer
+                .send(
+                    FutureRecord::to(&test_topic)
+                        .partition(1)
+                        .key("key")
+                        .payload(&near_limit),
+                    Duration::from_secs(5),
+                )
+                .await
+                .unwrap();
+        }
+        producer
+            .commit_transaction(Duration::from_secs(10))
+            .unwrap();
+        let large_first = follow(&executor, large_resource.clone(), large_tail.continuation).await;
+        assert_eq!(
+            large_first.rows.len(),
+            1,
+            "byte budget must split a batch without skipping its next record"
+        );
+        let large_second = follow(&executor, large_resource, large_first.continuation).await;
+        assert_eq!(large_second.rows.len(), 1);
+        assert_eq!(
+            large_first.rows[0].cells[3].as_ref().unwrap().bytes(),
+            near_limit
+        );
+        assert_eq!(
+            large_second.rows[0].cells[3].as_ref().unwrap().bytes(),
+            near_limit
+        );
+        assert_ne!(large_first.rows[0].cells[0], large_second.rows[0].cells[0]);
         let first = fetch(&executor, resource.clone(), None).await;
         let second = fetch(&executor, resource.clone(), first.continuation.clone()).await;
         assert_eq!(first.rows.len() + second.rows.len(), 120);
@@ -463,6 +530,15 @@ async fn kafka_transactions_limits_and_application_offsets() {
             .add_partition_offset(&test_topic, 0, Offset::Offset(7))
             .unwrap();
         observer.commit(&offsets, CommitMode::Sync).unwrap();
+        let live_first = follow(&executor, resource.clone(), tail.continuation.clone()).await;
+        let live_second = follow(&executor, resource.clone(), live_first.continuation).await;
+        assert_eq!(live_first.rows.len() + live_second.rows.len(), 120);
+        assert!(
+            !live_second
+                .rows
+                .iter()
+                .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"aborted")
+        );
         let replay = fetch(&executor, resource.clone(), first.continuation).await;
         assert_eq!(replay.rows.len(), 20);
         assert_eq!(
@@ -522,6 +598,36 @@ async fn kafka_transactions_limits_and_application_offsets() {
                 .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"open transaction")
         );
         producer.abort_transaction(Duration::from_secs(10)).unwrap();
+        let quiet = follow(&executor, resource.clone(), live_second.continuation).await;
+        assert!(
+            quiet.rows.is_empty(),
+            "aborted transaction must not appear in follow"
+        );
+        producer.begin_transaction().unwrap();
+        producer
+            .send(
+                FutureRecord::to(&test_topic)
+                    .partition(0)
+                    .key("key")
+                    .payload("live commit"),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        let open = follow(&executor, resource.clone(), quiet.continuation).await;
+        assert!(
+            open.rows.is_empty(),
+            "open transaction must not appear in follow"
+        );
+        producer
+            .commit_transaction(Duration::from_secs(10))
+            .unwrap();
+        let committed = follow(&executor, resource.clone(), open.continuation).await;
+        assert_eq!(committed.rows.len(), 1);
+        assert_eq!(
+            committed.rows[0].cells[3].as_ref().unwrap().bytes(),
+            b"live commit"
+        );
         producer.begin_transaction().unwrap();
         let oversized = vec![b'x'; onetui_core::PAGE_BYTES + 1];
         producer
@@ -537,6 +643,18 @@ async fn kafka_transactions_limits_and_application_offsets() {
         producer
             .commit_transaction(Duration::from_secs(10))
             .unwrap();
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let error = executor
+            .follow_page(
+                PageRequest {
+                    resource: resource.clone(),
+                    continuation: committed.continuation,
+                },
+                context,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("1 MiB"), "{error:#}");
         let first = fetch(&executor, resource.clone(), None).await;
         let token = first.continuation.unwrap();
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
@@ -568,6 +686,21 @@ async fn kafka_transactions_limits_and_application_offsets() {
             partition.error().unwrap();
             assert_eq!(partition.offset(), Offset::Offset(110));
         }
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let error = executor
+            .follow_page(
+                PageRequest {
+                    resource: resource.clone(),
+                    continuation: tail.continuation,
+                },
+                context,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("offsets unavailable"),
+            "{error:#}"
+        );
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let error = executor
             .fetch_page(

@@ -71,7 +71,9 @@ impl Worker {
                     resource: request.resource.clone(),
                     continuation: request.continuation.clone(),
                 };
-                let result = if let Some(text) = request.query.clone() {
+                let result = if request.follow {
+                    executor.follow_page(page, context).await
+                } else if let Some(text) = request.query.clone() {
                     executor
                         .query_page(QueryRequest { page, text }, context)
                         .await

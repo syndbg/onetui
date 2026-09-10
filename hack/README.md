@@ -25,6 +25,22 @@ The scripts set fixture-only credentials in their own process and do not modify 
 
 If you ran the previous `bpearl-fixtures` project, it remains untouched by this rename and may still occupy the same ports. When ready to discard its temporary data, run `docker compose --project-name bpearl-fixtures -f hack/compose.yaml down`, then `make dev-up` for the new `onetui-fixtures` project. Configuration now defaults to `~/.config/onetui/config.toml`; old configuration is not moved automatically. Environment references are explicit TOML values, so existing custom variable names still work when explicitly configured.
 
+## Kafka traffic
+
+After `make dev-up`, run `make dev-traffic` in a separate terminal. This opt-in producer sends one JSON record immediately, then one every 15 seconds until Ctrl-C. It connects only to the fixed disposable broker at `127.0.0.1:19092`, creates `demo_live` with one partition if absent and appends without resetting existing data. Newly created topics use a one-hour / 64 MiB retention policy; Kafka applies retention asynchronously. Existing topic settings are preserved. The four seeded Kafka datasets are unchanged.
+
+In another terminal run `make run`, select `local_kafka`, open `demo_live` and partition `0`, then press `f` in the record view. `f` or Ctrl-C stops following and keeps the displayed window. Navigation/inspection also stops it. Starting again reads only from a new current end. `r` returns to historical browsing.
+
+For a finite simulator run:
+
+```sh
+cargo run -p onetui-kafka --example produce_demo --locked -- --count 2
+```
+
+`--count` is an optional positive integer number of records. Omission runs until interrupted; zero, invalid or unknown arguments fail. Two records take at least 15 seconds. The endpoint, topic and interval are fixed; the simulator does not read `onetui.toml` or environment credentials. Each record has a run-local sequence, send timestamp and synthetic message. Delivery failures exit with the native error. This example is a fixture tool, not an app write capability.
+
+The integration runner builds the example. Kafka's live CLI test runs the two-record producer and checks timed arrival, stop, retained row inspection, restart and connection switching. It uses only the disposable fixture.
+
 ## Demo data
 
 Kafka includes `demo_events` (1,500 JSON records across three partitions), `demo_binary` (512 records across two partitions), `demo_tombstones` (64 null/empty/JSON values) and `demo_empty`. Records include exact timestamps, binary keys, duplicate headers, invalid UTF-8 and terminal-control bytes. Retention is disabled for this disposable broker so historical fixture timestamps do not expire. The seeder uses Zstandard compression and only connects to `127.0.0.1:19092`. Repeated seeding preserves topics with the expected partition/offset counts; a mismatch fails without replacing data. It never targets a user-supplied broker.

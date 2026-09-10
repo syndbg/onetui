@@ -51,14 +51,14 @@ cleanup() {
 }
 
 case "${1:-}" in
-    up|check|test|run|seed)
+    up|check|test|run|seed|traffic)
         if [[ ! -x target/debug/onetui ]]; then
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
         ;;
     down|logs) ;;
-    *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|down|logs}\n' >&2; exit 2 ;;
+    *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|traffic|down|logs}\n' >&2; exit 2 ;;
 esac
 
 if [[ "$1" == run ]]; then
@@ -80,6 +80,10 @@ docker info >/dev/null
 case "$1" in
     up) up ;;
     seed) seed ;;
+    traffic)
+        check_connection local_kafka
+        exec cargo run -p onetui-kafka --example produce_demo --locked
+        ;;
     check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka ;;
     down) "${compose[@]}" down --timeout 10 ;;
     logs) "${compose[@]}" logs --no-color --tail 100 ;;
@@ -92,6 +96,7 @@ case "$1" in
         trap 'exit 130' INT
         trap 'exit 143' TERM
         up
+        cargo build -p onetui-kafka --example produce_demo --locked
         cargo test --workspace --locked --test fixtures -- --ignored --test-threads=1
         ;;
 esac

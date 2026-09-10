@@ -60,6 +60,13 @@ impl Provider for BuiltinProvider {
 }
 
 impl Executor for BuiltinExecutor {
+    async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
+        match self {
+            Self::Postgres(e) => e.follow_page(request, context).await,
+            Self::Qdrant(e) => e.follow_page(request, context).await,
+            Self::Kafka(e) => e.follow_page(request, context).await,
+        }
+    }
     async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
         match self {
             Self::Postgres(e) => e.query_page(request, context).await,
@@ -195,6 +202,7 @@ mod tests {
         provider.validate_config(&options).unwrap();
         assert_eq!(provider.descriptor().entry_resource, Some("kafka.topics"));
         assert!(provider.descriptor().query.is_none());
+        assert_eq!(provider.descriptor().follow_resource, Some("kafka.records"));
         let mut executor = provider
             .configure(&options, &|_| panic!("no secret configured"))
             .unwrap();
@@ -203,6 +211,23 @@ mod tests {
         let (cancel, context) = RequestContext::new(Duration::from_secs(1));
         cancel.send(()).unwrap();
         assert!(executor.check(context).await.is_err());
+        let (cancel, context) = RequestContext::new(Duration::from_secs(1));
+        cancel.send(()).unwrap();
+        assert!(
+            executor
+                .follow_page(
+                    PageRequest {
+                        resource: onetui_core::Resource::new(
+                            "kafka.records",
+                            vec!["demo_live".into(), "0".into()]
+                        ),
+                        continuation: None,
+                    },
+                    context
+                )
+                .await
+                .is_err()
+        );
         executor
             .shutdown(ShutdownContext::new(Duration::from_secs(1)))
             .await
