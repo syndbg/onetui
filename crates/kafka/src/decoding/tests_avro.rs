@@ -39,6 +39,16 @@ fn page(values: Vec<Option<Value>>) -> Page {
 
 #[test]
 fn avro_binding_is_strict_offline_and_scoped() {
+    let catalog = crate::capabilities();
+    let settings = &catalog["configuration"]["decoders"];
+    assert_eq!(settings["default"], serde_json::json!([]));
+    assert_eq!(
+        settings["fields"]["framing"]["values"],
+        serde_json::json!(["raw"])
+    );
+    assert_eq!(settings["limits"]["schema_bytes_per_binding"], SCHEMA_BYTES);
+    let example: Binding = serde_json::from_value(settings["example"].clone()).unwrap();
+    validate(&[example]).unwrap();
     let valid = binding(Path::new("/not-read-during-validation/event.avsc"));
     validate(std::slice::from_ref(&valid)).unwrap();
     assert!(validate(&[valid.clone(), valid.clone()]).is_err());
@@ -143,6 +153,33 @@ fn avro_missing_files_limits_and_live_columns_are_stable() {
     );
     assert!(large.bytes() <= PAGE_BYTES);
     assert!(large.rows[0].cells[4].is_some() || large.notice.contains("omitted"));
+    let mut full = page(vec![Some(Value::Bytes(vec![0; 10_000])); 100]);
+    let raw = full
+        .rows
+        .iter()
+        .map(|r| r.cells.clone())
+        .collect::<Vec<_>>();
+    assert!(full.bytes() <= bindings.raw_page_limit("events"));
+    bindings.project("events", &mut full, || Ok(())).unwrap();
+    assert!(full.notice.contains("Decoder previews omitted"));
+    assert!(full.bytes() <= PAGE_BYTES);
+    assert_eq!(full.continuation.as_deref(), Some("unchanged-position"));
+    assert!(full.next);
+    assert_eq!(
+        small
+            .columns
+            .iter()
+            .map(|c| (&c.name, &c.datatype))
+            .collect::<Vec<_>>(),
+        full.columns
+            .iter()
+            .map(|c| (&c.name, &c.datatype))
+            .collect::<Vec<_>>()
+    );
+    for (row, original) in full.rows.iter().zip(raw) {
+        assert_eq!(row.cells[..2], original);
+        assert!(row.cells[2..].iter().all(Option::is_none));
+    }
     std::fs::write(&schema, vec![0; SCHEMA_BYTES + 1]).unwrap();
     assert!(
         Bindings::new(vec![binding(&schema)])
