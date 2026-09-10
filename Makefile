@@ -19,7 +19,7 @@ help:
 	  'dev-traffic            Produce Kafka and NATS traffic every 15 seconds; Ctrl-C stops both' \
 	  'dev-traffic-kafka      Produce Kafka traffic only' \
 	  'dev-traffic-nats       Produce one NATS demo.live message every 15 seconds; Ctrl-C stops' \
-	  'check-local            Check local PostgreSQL, Qdrant, Kafka and NATS fixtures' \
+	  'check-local            Check all local fixtures, including Redpanda Schema Registry' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
 	  'test-integration       Start fresh fixtures, test, then clean up (refuses existing fixtures)' \
 	  'release-check TAG=v...  Verify the release tag matches Cargo version' \

@@ -1,56 +1,42 @@
 # OneTUI agent instructions
 
-## Communication
+@/Users/syndbg/.codex/RTK.md
 
-- Always use `$caveman` in full mode for agent commentary and handoffs. Read the skill when available; otherwise use terse, precise language.
-- Preserve technical detail, paths, commands, and actionable errors. Use complete explanations when brevity would obscure safety or correctness.
-- Keep source code, documentation, and proposed commit/PR text clear and conventional; Caveman applies to conversation.
+## Style
 
-## Feature completion
+- Always apply `$humanizer:humanizer`, `$ponytail:ponytail` (full) and `$caveman` (full), without waiting for the user to mention them. Read available skills; preserve these rules when unavailable.
+- Keep commentary and handoffs brief: changes, checks, blockers. Preserve exact commands and errors; explain more only when requested or needed for safety.
+- Write normal, concise prose in code, docs and proposed commit/PR text. Comments explain why or risk, not obvious operations.
+- Link to existing sources instead of narrating files or repeating their contents. For commands, point to [Makefile](Makefile) and `make help`; say which targets to run. Skip file tours, implementation diaries and repeated feature lists.
 
-- Read the relevant documentation and implementation before changing behavior. Keep work within the requested scope.
-- A feature is complete only when its implementation, tests, documentation, and configuration examples agree and all tests pass.
-- Add or update tests for changed behavior, including relevant error paths and boundary cases. Bug fixes need a regression test.
-- Before declaring feature work complete, run these gates from the repository root:
+## Development
 
-  ```sh
-  rtk make verify
-  rtk make test-integration
-  rtk make workflow-lint
-  ```
+- Read relevant ADRs and source before changing behavior. Stay within the requested scope.
+- Reuse existing code, standard libraries and installed dependencies. Add abstractions or dependencies only for a concrete need. Fix root causes; preserve validation, security and error handling.
+- Keep implementation and tests in their owning package. Never combine datasource suites in a shared backend loop. Small duplicated fixture helpers are acceptable; root tests cover CLI orchestration.
+- Test changed behavior, failures and boundaries. Add regression tests for bugs. Never weaken assertions or hide failures to pass a gate.
+- Keep affected docs, configuration examples, CLI help and schema output current. Document purpose, usage and limits; distinguish supported from planned behavior.
+- For settings, document types, values, defaults, required/empty behavior, units/bounds, config location/precedence, path and secret handling, errors and a working example. Record compatibility changes. Prefer `onetui schema` for the complete settings catalog.
+- ADRs record decisions and rejected alternatives. Keep delivery checklists in issues and pull requests.
 
-- `make verify` covers build, formatting, lint, and default tests. Default Cargo tests skip the ignored Docker fixture tests; `make test-integration` is also required.
-- Never disable tests, weaken assertions, or hide failing exit codes to pass a gate. Failed or unrun required checks mean the feature remains incomplete; report the blocker.
-- Integration fixtures may refuse to run while existing containers are present. Do not bypass that protection or delete running fixtures without permission.
-- Distinguish local validation from hosted CI and live-system evidence. Do not claim CI passed without checking its result.
-- Documentation-only edits require content/link checks and `rtk git diff --check`; full feature gates are unnecessary unless behavior or executable examples changed.
+## Commands and validation
 
-## Documentation and configuration
+Use [Makefile](Makefile): `make help`, `make dev-up`, `make run`, `make dev-traffic`, `make check-local`, `make fmt`, `make build`, `make lint`, `make test`.
+Prefix agent shell commands with `rtk`; use `rtk proxy` when needed. User-facing commands need no RTK wrapper.
 
-- Update affected documentation and configuration examples in the same change as the feature. Review `README.md`, `hack/README.md`, and relevant `docs/` files; change only those affected.
-- Explain the feature's purpose, how to use it, limitations, and at least one copy-ready example. Clearly separate implemented behavior from planned support.
-- For every added or changed configuration key, CLI option, or environment variable, document:
-  - Purpose and when it is needed.
-  - Type, accepted values, formats, units, and bounds where applicable.
-  - Default behavior, whether it is required, and what omission or an empty value means.
-  - Configuration file location, discovery order, override precedence, and relative-path resolution where applicable.
-  - Environment-variable expansion or secret lookup behavior, validation failures, and a working usage example.
-- Keep parser validation, CLI help, checked-in examples, and any implemented schema output consistent. Do not document unsupported keys or imply planned schema generation already exists.
-- Document compatibility changes and migration steps when behavior changes. Use placeholders or disposable fixture credentials, never real secrets.
-- If a feature has no configuration impact, say so in the handoff; do not invent settings or make unrelated documentation edits.
+Before declaring a feature complete, all tests must pass and docs/config must match. Run:
 
-## Repository workflow and safety
+```sh
+rtk make verify
+rtk make test-integration
+rtk make workflow-lint
+```
 
-- Keep implementation and tests in the package that owns the behavior. PostgreSQL and Qdrant have separate connector packages and test suites; never parameterize one test or harness over both backends. Duplicate small setup/assertion helpers when needed for isolation. Root tests cover CLI orchestration only.
-- Follow `@/Users/syndbg/.codex/RTK.md`. Prefix shell commands with `rtk`; use `rtk proxy` when no dedicated wrapper applies.
-- For code exploration, use the code-review-graph tools first when available: start with `get_minimal_context`, inspect impact and test coverage for changes, and use `detect_changes` for reviews. When graph coverage is missing or stale, refresh and retry before falling back to `rg` and focused file reads. If tools are unavailable, state that limitation and use local source.
-- Preserve unrelated and pre-existing work. Ask before staging, branching, stashing, restoring, rebasing, merging, pushing, or other Git-state mutations.
-- Never run `git commit` on the user's behalf. Never add `Co-Authored-By` to commit messages.
-- Do not mutate real datasource contents or expose credentials during development or verification. Use the disposable local fixtures for write-dependent tests.
-- Keep changes minimal and reuse existing patterns. Add dependencies or abstractions only for a concrete requirement.
-- Follow Semantic Versioning. Releases are published through the GitHub Releases UI; do not create tags, publish releases, or bump versions without authorization.
+Documentation-only changes need content/link checks and `rtk git diff --check`, unless behavior or executable examples changed. Report failed or unrun gates. Local checks do not prove hosted CI or release validation.
 
-## Handoff
+## Workflow and safety
 
-- State what changed, where usage/configuration is documented, and which checks passed, failed, or were not run.
-- Call out remaining blockers explicitly. Never label unfinished or unverified feature work complete.
+- Use code-review-graph first: `get_minimal_context`, impact/test queries, and `detect_changes` for reviews. Refresh and retry missing/stale results before falling back to `rg` and source reads. If unavailable, state that and use local source.
+- Preserve existing edits. Ask before staging, branching, stashing, restoring, rebasing, merging, pushing or other Git-state changes. Never run `git commit` or add `Co-Authored-By`.
+- Use disposable fixtures for writes; never real datasource contents or credentials. Do not bypass fixture reset guards or delete running fixtures without authorization. `make dev-down` deletes temporary fixture data.
+- Follow Semantic Versioning and [CONTRIBUTING.md](CONTRIBUTING.md). Releases use the GitHub Releases UI. Do not bump versions, create tags or publish without authorization.
