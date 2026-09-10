@@ -34,6 +34,7 @@ up() {
 }
 
 seed() {
+    "${compose[@]}" exec -T kafka sh /onetui-kafka-security.sh
     "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
     cargo run -p onetui-qdrant --example seed_demo --locked
     cargo run -p onetui-kafka --example seed_demo --locked

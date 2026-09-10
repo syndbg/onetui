@@ -3,6 +3,10 @@ use onetui_core::{Page, Resource, Value};
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
 use std::time::Duration;
 
+#[cfg(unix)]
+#[path = "fixtures/terminal.rs"]
+mod terminal;
+
 fn executor() -> KafkaExecutor {
     let options =
         toml::from_str("bootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'")
@@ -24,6 +28,228 @@ async fn fetch(executor: &KafkaExecutor, resource: Resource, continuation: Optio
         )
         .await
         .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "pauses/unpauses only the disposable Kafka fixture; no data reset"]
+async fn kafka_broker_stall_cancellation_deadline_and_recovery() {
+    fn broker(action: &str) {
+        let output = std::process::Command::new("docker")
+            .args([
+                "compose",
+                "--project-name",
+                "onetui-fixtures",
+                "--env-file",
+                "/dev/null",
+                "-f",
+                "hack/compose.yaml",
+                action,
+                "kafka",
+            ])
+            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut current = executor();
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    current.check(context).await.unwrap();
+    broker("pause");
+    // Await the assertion task as a result so panic cannot skip unpausing the fixture.
+    let tested = tokio::spawn(async move {
+        for _ in 0..3 {
+            let started = tokio::time::Instant::now();
+            let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+            let (result, ()) = tokio::join!(current.check(context), async {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                let _ = cancel.send(());
+            });
+            let error = result.err().expect("cancelled request");
+            assert!(error.to_string().contains("cancelled"), "{error:#}");
+            assert!(started.elapsed() < Duration::from_millis(750));
+            current
+                .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+                .await
+                .unwrap();
+            current = executor();
+        }
+        let started = tokio::time::Instant::now();
+        let (_cancel, context) = RequestContext::new(Duration::from_millis(250));
+        let error = current
+            .check(context)
+            .await
+            .err()
+            .expect("stalled broker deadline");
+        assert!(error.to_string().contains("timed out"), "{error:#}");
+        assert!(started.elapsed() < Duration::from_millis(750));
+        current
+    })
+    .await;
+    broker("unpause");
+    let mut current = tested.unwrap();
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(10));
+    current.check(context).await.unwrap();
+    let page = fetch(
+        &current,
+        Resource::new("kafka.records", vec!["demo_events".into(), "0".into()]),
+        None,
+    )
+    .await;
+    assert_eq!(page.rows.len(), 100);
+    current
+        .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable Kafka TLS/SASL fixture; read-only"]
+async fn kafka_verified_tls_sasl_and_native_auth_errors() {
+    use std::io::Write;
+    let cert = std::process::Command::new("docker")
+        .args([
+            "compose",
+            "--project-name",
+            "onetui-fixtures",
+            "--env-file",
+            "/dev/null",
+            "-f",
+            "hack/compose.yaml",
+            "exec",
+            "-T",
+            "kafka",
+            "cat",
+            "/tmp/onetui-kafka-tls/ca.crt",
+        ])
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .output()
+        .unwrap();
+    assert!(
+        cert.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cert.stderr)
+    );
+    let mut ca = tempfile::NamedTempFile::new().unwrap();
+    ca.write_all(&cert.stdout).unwrap();
+    // Each case exercises the provider, including native teardown before the next alias.
+    for (host, protocol, mechanism, username, password, trust, expected) in [
+        ("localhost:19093", "SSL", None, "", "", true, None),
+        (
+            "localhost:19094",
+            "SASL_SSL",
+            Some("PLAIN"),
+            "fixture-reader",
+            "fixture-reader-only",
+            true,
+            None,
+        ),
+        (
+            "localhost:19094",
+            "SASL_SSL",
+            Some("SCRAM-SHA-256"),
+            "fixture-reader",
+            "fixture-reader-only",
+            true,
+            None,
+        ),
+        (
+            "localhost:19094",
+            "SASL_SSL",
+            Some("SCRAM-SHA-512"),
+            "fixture-reader",
+            "fixture-reader-only",
+            true,
+            None,
+        ),
+        (
+            "localhost:19094",
+            "SASL_SSL",
+            Some("PLAIN"),
+            "fixture-reader",
+            "wrong-fixture-secret",
+            true,
+            Some("Invalid username or password"),
+        ),
+        (
+            "127.0.0.1:19093",
+            "SSL",
+            None,
+            "",
+            "",
+            true,
+            Some("certificate verify failed"),
+        ),
+        (
+            "localhost:19093",
+            "SSL",
+            None,
+            "",
+            "",
+            false,
+            Some("certificate verify failed"),
+        ),
+        (
+            "localhost:19094",
+            "SASL_SSL",
+            Some("PLAIN"),
+            "fixture-denied",
+            "fixture-denied-only",
+            true,
+            Some("RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED"),
+        ),
+    ] {
+        let mut options: toml::Table = toml::from_str(&format!(
+            "bootstrap_servers=['{host}']\nsecurity_protocol='{protocol}'"
+        ))
+        .unwrap();
+        if trust {
+            options.insert("ca_file".into(), ca.path().to_str().unwrap().into());
+        }
+        if let Some(mechanism) = mechanism {
+            options.insert("sasl_mechanism".into(), mechanism.into());
+            options.insert("username_env".into(), "FIXTURE_USER".into());
+            options.insert("password_env".into(), "FIXTURE_PASSWORD".into());
+        }
+        let mut executor = KafkaProvider
+            .configure(&options, &|name| match name {
+                "FIXTURE_USER" => Some(username.into()),
+                "FIXTURE_PASSWORD" => Some(password.into()),
+                _ => None,
+            })
+            .unwrap();
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let result = executor
+            .fetch_page(
+                PageRequest {
+                    resource: Resource::new(
+                        "kafka.records",
+                        vec!["demo_events".into(), "0".into()],
+                    ),
+                    continuation: None,
+                },
+                context,
+            )
+            .await;
+        executor
+            .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+            .await
+            .unwrap();
+        match expected {
+            Some(expected) => {
+                let error = format!("{:#}", result.unwrap_err());
+                assert!(error.contains(expected), "{host} {mechanism:?}: {error}");
+                assert!(!error.contains("wrong-fixture-secret"));
+            }
+            None => match result {
+                Ok(page) => assert_eq!(page.rows.len(), 100, "{host} {mechanism:?}"),
+                Err(error) => panic!("{host} {mechanism:?}: {error:#}"),
+            },
+        }
+    }
 }
 
 #[tokio::test]
@@ -317,6 +543,35 @@ async fn kafka_transactions_limits_and_application_offsets() {
         let error = executor
             .fetch_page(
                 PageRequest {
+                    resource: resource.clone(),
+                    continuation: Some(token.clone()),
+                },
+                context,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("1 MiB"), "{error:#}");
+        let retention: AdminClient<_> = config.create().unwrap();
+        let mut truncate = TopicPartitionList::new();
+        truncate
+            .add_partition_offset(&test_topic, 0, Offset::Offset(110))
+            .unwrap();
+        let deleted = retention
+            .delete_records(
+                &truncate,
+                &AdminOptions::new().operation_timeout(Some(Duration::from_secs(5))),
+            )
+            .await
+            .unwrap();
+        {
+            let partition = deleted.find_partition(&test_topic, 0).unwrap();
+            partition.error().unwrap();
+            assert_eq!(partition.offset(), Offset::Offset(110));
+        }
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let error = executor
+            .fetch_page(
+                PageRequest {
                     resource,
                     continuation: Some(token),
                 },
@@ -324,7 +579,10 @@ async fn kafka_transactions_limits_and_application_offsets() {
             )
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("1 MiB"), "{error:#}");
+        assert!(
+            error.to_string().contains("offsets unavailable"),
+            "{error:#}"
+        );
         executor
             .shutdown(ShutdownContext::new(Duration::from_secs(2)))
             .await

@@ -4,7 +4,7 @@ OneTUI is working toward v0.1.0. Check [architecture decisions](docs/adr/0002-us
 
 ## Local setup
 
-Install rustup, Make, Bash and Docker with Compose. The repository pins the Rust toolchain. Kafka's native build also needs CMake, a C/C++ compiler and Perl; Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source. An OpenSSL command is needed for TLS fixtures; Go is needed for workflow linting. On macOS, install Xcode Command Line Tools and CMake (`brew install cmake`); on Debian/Ubuntu, install `build-essential cmake perl pkg-config`.
+Install rustup, Make, Bash and Docker with Compose. The repository pins the Rust toolchain. Kafka's native build also needs CMake, a C/C++ compiler and Perl; Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source. An OpenSSL command is needed for TLS fixtures; Go is needed for workflow linting. On macOS, install Xcode Command Line Tools and CMake (`brew install cmake`); on Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev`. The pinned librdkafka CMake build requires CURL headers even with its CURL runtime feature disabled.
 
 Run from the repository root:
 
@@ -58,7 +58,7 @@ cd dist
 shasum -a 256 -c onetui-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
 ```
 
-Use the filename matching your native platform. Packaging derives the target from rustc, builds explicitly for it, smoke-checks `--version`, and bundles the binary, README, LICENSE and THIRD_PARTY_NOTICES.md. Keep theme attribution notices with redistributed binaries. Packaging refuses to overwrite existing archives/checksums. Move an old local artifact aside before rebuilding; `dist/` is ignored by Git.
+Use the filename matching your native platform. Packaging derives the target from rustc, builds explicitly for it, smoke-checks `--version`, and bundles the binary, README, LICENSE and THIRD_PARTY_NOTICES.md. Keep the bundled Kafka/native-library and theme notices with redistributed binaries. When updating Kafka's native dependencies, review their license texts against the new Cargo.lock versions and update the release-notice test. Packaging refuses to overwrite existing archives/checksums. Move an old local artifact aside before rebuilding; `dist/` is ignored by Git.
 
 Artifacts are initially unsigned/unnotarized. Linux binaries use the runner's GNU libc. Compatibility with older distributions or musl is unverified. Intel macOS, Linux arm64 and Windows binaries are not part of this initial workflow. Compatibility and signing remain release-readiness work.
 

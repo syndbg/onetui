@@ -21,6 +21,7 @@ fn capabilities() -> serde_json::Value {
             "password_env": {"required": "with SASL_SSL", "type": "nonempty ASCII environment variable name", "purpose": "Environment variable holding the SASL password; resolved only for selected alias"}
         },
         "safety": "No auto commits, auto offset storage, topic auto-creation or group subscriptions. Explicit numeric assignment; auto.offset.reset=error; read_committed. Internal session group ID is not an application group. No generic native configuration overrides.",
+        "permissions": "Topic Read and Describe; group Describe for the private onetui- prefix used by native coordinator lookup. No group Read permission is needed; the browser never joins or commits.",
         "unsupported": ["query_page", "live following", "cross-partition merging", "production", "consumer-group administration", "schema registry", "client TLS certificates", "OAuth", "GSSAPI"]
     })
 }

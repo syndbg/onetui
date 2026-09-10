@@ -1418,10 +1418,12 @@ name = "onetui-kafka"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nix",
  "onetui-core",
  "rdkafka",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml",
  "url",

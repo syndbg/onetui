@@ -13,7 +13,7 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 | PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, SQL query editor, cached field detail, headless checks | Query parameters, writes |
 | Qdrant | Implemented, read-only | Collections and metadata, point ID paging, filtered Scroll JSON editor, on-demand payload and dense/sparse/multivector detail, headless checks | Advanced/nested filters, similarity search, writes |
 | DynamoDB | Planned | None | Connector and all datasource operations |
-| Kafka | [In development](docs/kafka.md) | Topic/partition metadata, bounded read-committed record paging, byte-value inspection and headless checks; local broker tested | Authenticated transport validation, live following, publishing, group administration, schema registry |
+| Kafka | [In development](docs/kafka.md) | Topic/partition metadata, bounded read-committed record paging, byte-value inspection, headless checks, verified TLS and SASL PLAIN/SCRAM; local broker tested | Live following, publishing, group administration, schema registry; full integration/release validation pending |
 | NATS | Planned | None | Connector and all datasource operations |
 | RabbitMQ | Planned | None | Connector and all datasource operations |
 
@@ -102,6 +102,7 @@ Selected sessions connect lazily and retain healthy transports. PostgreSQL finis
 | [`onetui-core`](crates/core/README.md) | Configuration, shared display/resource contracts and actions; no database SDKs |
 | [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, row/metadata queries, descriptors and PostgreSQL-only tests |
 | [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, collection/point/detail reads, descriptors and Qdrant-only tests |
+| [`onetui-kafka`](crates/kafka/README.md) | Kafka TLS/SASL, native client lifetime, metadata/record reads, offset bookmarks and Kafka-only tests |
 | [`onetui-tui`](crates/tui/README.md) | Navigation, request lifecycle, rendering and terminal tests |
 | [`onetui-theme`](crates/theme/README.md) | Built-in theme names and semantic RGB palettes; no terminal or datasource dependencies |
 
@@ -230,7 +231,7 @@ Invalid UTF-8 never becomes replacement characters. Hex/binary expose retained b
 
 ## Disposable local fixtures and tests
 
-The [hack setup](hack/README.md) uses PostgreSQL 16.13 and Qdrant 1.18.2, binds only to loopback ports 15432/16334 (plus 16335 for a separate Qdrant TLS fixture), and stores data in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `onetui-fixtures`; don't reuse it for valuable data.
+The [hack setup](hack/README.md) uses PostgreSQL 16.13, Qdrant 1.18.2 and Apache Kafka 4.2.0. It binds only to loopback: PostgreSQL 15432, Qdrant 16334/16335 and Kafka 19092/19093/19094 (plaintext/TLS/SASL over TLS). Data lives in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `onetui-fixtures`; don't reuse it for valuable data.
 
 ```sh
 make help

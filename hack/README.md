@@ -2,6 +2,8 @@
 
 Run these commands from the repository root. Requirements: rustup, Make, Bash, CMake, a C/C++ compiler, Perl, Docker Engine/Desktop and Docker Compose with `up --wait` support. Kafka's native libraries build through Cargo. The OpenSSL command is also required for TLS fixtures. macOS and Linux are the initial targets. No database installation, manual secret exports or RTK installation is required.
 
+Linux builds also require CURL development headers (`libcurl4-openssl-dev` on Debian/Ubuntu) for the pinned librdkafka CMake build, even though its CURL runtime feature is disabled. See [contributor setup](../CONTRIBUTING.md#local-setup) for build prerequisites.
+
 ```sh
 make dev-up        # builds, starts databases, waits for reads, seeds demos
 make dev-seed      # adds demos to running fixtures without resetting them
@@ -16,6 +18,8 @@ make dev-down      # removes this fixture project and its temporary data
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`; Apache Kafka 4.2.0 listens on `127.0.0.1:19092`. Kafka runs one combined KRaft broker/controller with auto topic creation disabled and no authentication on the local development listener. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 
 A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` checks the normal PostgreSQL, Qdrant and Kafka connection aliases.
+
+Kafka also binds verified TLS on `127.0.0.1:19093` and SASL over TLS on `127.0.0.1:19094`, advertised as `localhost`. Its self-signed localhost certificate and keys live in container tmpfs for two days. Tests copy only the public certificate into a temporary `ca_file`; the OS trust store is unchanged. `kafka-security.sh` sets fixture-only PLAIN/SCRAM credentials and grants `fixture-reader` topic `Read`/`Describe` on `demo_*` and group `Describe` on `onetui-*`. It grants no group `Read`. `fixture-denied` has no ACLs. These accounts and the unauthenticated development listener are only for this disposable broker, not a deployment template.
 
 The scripts set fixture-only credentials in their own process and do not modify your shell/config. `connections.toml` contains the theme, connection aliases, endpoint and environment references. Press `T` or use `:themes` to preview all palettes with `j`/`k` or arrows; Enter keeps for this session, Esc or Ctrl-C restores the previous theme. To persist a startup preference, edit top-level `theme` in that file; the menu never writes it. `onetui schema` lists known settings and actions. A bare `onetui --check --config hack/connections.toml` still needs `--connection` and the referenced environment variables; use `make check-local` to supply them automatically.
 

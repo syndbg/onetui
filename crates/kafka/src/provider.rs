@@ -7,7 +7,7 @@ use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
 use rdkafka::client::ClientContext;
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext};
-use rdkafka::error::KafkaError;
+use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use rdkafka::{ClientConfig, Message, Offset, TopicPartitionList};
 use std::sync::{
     Arc, Mutex as StdMutex,
@@ -149,9 +149,6 @@ impl KafkaExecutor {
                             }
                             *last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
                             let result = run(client.as_ref().unwrap(), &job, identity);
-                            if result.is_err() {
-                                let _ = client.as_ref().unwrap().poll(Duration::ZERO);
-                            }
                             job.remaining()?;
                             result
                         })();
@@ -234,10 +231,48 @@ impl Executor for KafkaExecutor {
     }
 }
 
+fn native_request<T>(
+    client: &BaseConsumer<NativeContext>,
+    job: &Job,
+    mut request: impl FnMut(Duration) -> Result<T, KafkaError>,
+) -> Result<T> {
+    loop {
+        // Metadata/watermark waits do not service the consumer's error queue. Poll between
+        // bounded attempts so certificate/authentication failures reach the UI before timeout.
+        let result = request(job.remaining()?.min(Duration::from_millis(250)));
+        match result {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                if let Some(Err(native)) =
+                    client.poll(job.remaining()?.min(Duration::from_millis(50)))
+                    && !transient(&native)
+                {
+                    return Err(native.into());
+                }
+                if !transient(&error) {
+                    return Err(error.into());
+                }
+            }
+        }
+    }
+}
+
+fn transient(error: &KafkaError) -> bool {
+    !matches!(error, KafkaError::MessageConsumptionFatal(_))
+        && matches!(
+            error.rdkafka_error_code(),
+            Some(
+                RDKafkaErrorCode::BrokerTransportFailure
+                    | RDKafkaErrorCode::AllBrokersDown
+                    | RDKafkaErrorCode::OperationTimedOut
+            )
+        )
+}
+
 fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result<Response> {
     let request = match &job.operation {
         Operation::Check => {
-            let metadata = client.fetch_metadata(None, job.remaining()?)?;
+            let metadata = native_request(client, job, |wait| client.fetch_metadata(None, wait))?;
             return Ok(Response::Check(CheckResult {
                 summary: format!(
                     "Kafka metadata readable ({} brokers, {} topics)",
@@ -250,10 +285,9 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
     };
     let position = crate::browse::validate(request, identity)?;
     if request.resource.id != "kafka.records" {
-        let metadata = client.fetch_metadata(
-            request.resource.path.first().map(String::as_str),
-            job.remaining()?,
-        )?;
+        let metadata = native_request(client, job, |wait| {
+            client.fetch_metadata(request.resource.path.first().map(String::as_str), wait)
+        })?;
         return crate::browse::metadata(
             &request.resource,
             &metadata,
@@ -264,7 +298,32 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
     }
     let topic = &request.resource.path[0];
     let partition: i32 = request.resource.path[1].parse()?;
-    let (low, stable_end) = client.fetch_watermarks(topic, partition, job.remaining()?)?;
+    // Watermark lookup may report UnknownPartition while authentication/metadata is still
+    // pending. Resolve the selected topic first so its actual authorization error survives.
+    let metadata = native_request(client, job, |wait| client.fetch_metadata(Some(topic), wait))?;
+    let topic_metadata = metadata
+        .topics()
+        .iter()
+        .find(|t| t.name() == topic)
+        .ok_or_else(|| anyhow!("Kafka topic missing from metadata; refresh its parent"))?;
+    ensure!(
+        topic_metadata.error().is_none(),
+        "Kafka topic metadata: {:?}",
+        topic_metadata.error()
+    );
+    let partition_metadata = topic_metadata
+        .partitions()
+        .iter()
+        .find(|p| p.id() == partition)
+        .ok_or_else(|| anyhow!("Kafka partition missing from metadata; refresh its parent"))?;
+    ensure!(
+        partition_metadata.error().is_none(),
+        "Kafka partition metadata: {:?}",
+        partition_metadata.error()
+    );
+    let (low, stable_end) = native_request(client, job, |wait| {
+        client.fetch_watermarks(topic, partition, wait)
+    })?;
     let (start, end) = position.map_or((low, stable_end), |p| (p.offset, p.end.unwrap()));
     ensure!(
         start >= low && start <= end && end <= stable_end,
@@ -326,6 +385,9 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                         "Kafka read-committed end is below the captured offset {end}; transaction or log state changed; refresh"
                     );
                 }
+                // A failed bootstrap address can remain queued after another address connects.
+                // Let librdkafka reconnect within the same request deadline.
+                Some(Err(error)) if transient(&error) => {}
                 Some(Err(error)) => return Err(error.into()),
                 None => {}
             }
@@ -442,6 +504,32 @@ mod tests {
             Offset::Invalid
         );
         drop(observer);
+        cluster.broker_down(1).unwrap();
+        for _ in 0..5 {
+            let started = Instant::now();
+            let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+            let (result, ()) = tokio::join!(executor.check(context), async {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                let _ = cancel.send(());
+            });
+            assert!(
+                result
+                    .err()
+                    .expect("cancelled request")
+                    .to_string()
+                    .contains("cancelled")
+            );
+            assert!(started.elapsed() < Duration::from_millis(500));
+            executor
+                .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+                .await
+                .unwrap();
+            assert_eq!(NATIVE_OWNER.available_permits(), 1);
+            executor = KafkaProvider.configure(&options, &|_| None).unwrap();
+        }
+        cluster.broker_up(1).unwrap();
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        executor.check(context).await.unwrap();
         executor
             .shutdown(ShutdownContext::new(Duration::from_secs(2)))
             .await

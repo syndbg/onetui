@@ -4,12 +4,16 @@ Kafka provider, strict configuration, metadata and bounded record browsing throu
 
 The native build uses CMake, a C/C++ toolchain, Make and Perl. Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source; do not install a system librdkafka for this build. TLS uses OpenSSL rather than the other connectors' Rustls stack.
 
+On Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev`. The pinned librdkafka CMake template defines a disabled OIDC macro as zero, but one source include checks whether it exists; CURL headers are therefore needed even though CURL linking and OAuth are disabled. macOS supplies these headers through its SDK. Recheck this prerequisite when updating librdkafka.
+
 ```sh
 cargo test -p onetui-kafka --locked
 ```
 
-The default native protocol test starts librdkafka's loopback mock cluster. It does not need Docker or an external broker. It covers topic/partition traversal, 250-record paging, backward offset bookmarks, binary values, empty partitions, untouched committed offsets and shutdown. Mocks do not prove real-broker security or transaction behavior.
+The default native protocol test starts librdkafka's loopback mock cluster. It does not need Docker or an external broker. It covers topic/partition traversal, 250-record paging, backward offset bookmarks, binary values, empty partitions, untouched committed offsets, repeated cancellation after broker loss, owner-slot release and reconnection. Mocks do not prove real-broker security or transaction behavior.
 
-`cargo test -p onetui-kafka --test fixtures --locked -- --ignored --test-threads=1` runs the Kafka-only fixture suite after `make dev-up`. It checks seeded data, transactions, native group state and size limits. The transaction test creates a uniquely named topic/group on the fixed disposable broker and removes them afterward, including after assertion failures. Never point fixture tests at production.
+`cargo test -p onetui-kafka --test fixtures --locked -- --ignored --test-threads=1` runs the Kafka-only fixture suite after `make dev-up`. It checks seeded data, transactions, native group state, size limits and retention-invalidated bookmarks. Security cases verify TLS trust/hostnames, PLAIN and both SCRAM mechanisms, native password/ACL failures and redaction. The transaction test creates a uniquely named topic/group on the fixed disposable broker and removes them afterward, including after assertion failures. The Unix terminal test drives the built CLI through pages, byte inspection, alias switching and terminal-mode restoration. It uses `target/debug/onetui` unless test-only `ONETUI_TEST_BIN` names another built binary. Never point fixture tests at production.
 
-See [Kafka usage/configuration](../../docs/kafka.md) and [ADR-0006](../../docs/adr/0006-browse-kafka-with-rust-rdkafka.md). Authenticated transport, terminal journeys and release validation remain in progress.
+The broker-stall test pauses only the disposable Kafka container, checks repeated cancellation and a request deadline, then unpauses it before propagating assertion failures. It verifies reconnection and another record page afterward. Do not run it alongside another fixture user.
+
+See [Kafka usage/configuration](../../docs/kafka.md), [ADR-0006](../../docs/adr/0006-browse-kafka-with-rust-rdkafka.md).

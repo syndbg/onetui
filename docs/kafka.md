@@ -1,6 +1,6 @@
 # Kafka browsing
 
-Kafka support is in development. Local Kafka 4.2.0 tests cover browsing, transactions, byte values, limits and unchanged application offsets. Authenticated transport, terminal journeys and release validation are still pending. The connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources.
+Kafka support is in development. Local Kafka 4.2.0 tests cover browsing, transactions, byte values, limits, retention-invalidated bookmarks, verified TLS, SASL PLAIN/SCRAM and unchanged application offsets. Full integration and release validation are still pending. The connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources.
 
 ## Configuration
 
@@ -58,6 +58,8 @@ Each page contains at most 100 records and 1 MiB of retained page data. The firs
 Metadata has no native page API: OneTUI re-reads the bounded response, sorts topics/partitions and shows a page. No browsing mode promises a cross-page snapshot. Native receiving is capped at 4 MiB, with 1 MiB of configured prefetch. The larger native cap allows Zstandard's stepped buffer growth to decode a near-1-MiB value; the retained page still must fit 1 MiB. These limits do not guarantee process RSS limits.
 
 `check` fetches metadata only. Record reads use manual assignment and explicit offsets, never a topic subscription. Auto-commit, automatic offset storage and topic auto-creation are disabled. OneTUI generates an internal session group ID for the client API; it does not use an application group or commit its offsets. No user override can enable these side effects.
+
+For authenticated browsing, grant `Read` and `Describe` on the selected topics, plus `Describe` on groups prefixed `onetui-`. The native client requires that private group ID even with manual assignment and asks for its coordinator. Group `Read` permission is unnecessary: OneTUI does not join the group or commit offsets. Metadata listing alone does not prove record-reading permission; Kafka can omit unauthorized topics from a listing.
 
 Native work stays outside the UI and Tokio async worker threads. Cancellation stops waiting; a native call or destructor may still be finishing. One process permits only one native owner, including cleanup, so repeated switches cannot accumulate blocked workers. A replacement waits within its request deadline. The native client is reused within the selected session and released on disconnect, switch or quit.
 
