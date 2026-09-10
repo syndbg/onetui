@@ -5,6 +5,8 @@ date: 2026-09-09
 
 # ADR-0004: Preserve values and select display formats
 
+The Auto byte-display rule was later superseded. The remaining decisions below still apply. The format table records the original choice.
+
 ## Decision
 
 Keep retained values separate from their terminal representation. Let users select text, JSON, hexadecimal or binary-digit views through built-in enum dispatch. Pretty printing, data highlighting and word wrapping are independent settings. Word wrapping defaults to on throughout the app.

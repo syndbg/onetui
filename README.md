@@ -227,7 +227,7 @@ unicode = "literal"
 
 The table and every field are optional. Omission uses the listed defaults. Unknown fields, empty/unknown names and wrong types fail validation, including `--check`. String values are case-sensitive and are not environment-expanded. TOML booleans are `true`/`false`; commands such as `:display word-wrap off` use `on`/`off`. Existing config discovery and relative-path rules apply; there is no display file, CLI override flag, file watching or merge layer. Runtime switches override startup defaults in memory. Restart to reread the file.
 
-Invalid UTF-8 never becomes replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping.
+Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling back to hex for invalid UTF-8. Invalid bytes never become replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping. Protobuf/Avro decoding is [planned separately](docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md), not included in Auto.
 
 ## Disposable local fixtures and tests
 

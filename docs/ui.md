@@ -117,7 +117,9 @@ Press `v` or enter `:display` to open formats and settings. Move with `j/k` or a
 :display format binary
 ```
 
-`auto` uses JSON for declared JSON or complete JSON objects/arrays in text, plain text otherwise, and hex for binary values. Explicit `json` also accepts JSON scalars. `text` requires valid UTF-8; invalid bytes are never replaced or discarded. Hex shows two digits per byte; binary shows eight digits, most significant bit first. Both show byte offsets. Null, empty text and empty bytes remain distinct.
+`auto` validates UTF-8 for both text and byte values. It uses JSON for declared JSON or complete JSON objects/arrays, plain text otherwise, and hex when UTF-8 is invalid. A malformed JSON-looking byte value remains readable as escaped text. Explicit `json` also accepts JSON scalars. `text` requires valid UTF-8; invalid bytes are never replaced or discarded. Hex shows two digits per byte; binary shows eight digits, most significant bit first. Both show byte offsets. Null, empty text and empty bytes remain distinct.
+
+This changes presentation only. Byte fields still use their stable `\x...` hexadecimal projection for page-local filter/sort, even when Auto renders readable text. Protobuf/Avro interpretation requires planned schema-driven decoders, not UTF-8 detection; see [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
 
 Pretty printing defaults to on and adds two-space JSON indentation. Off preserves retained JSON whitespace except that terminal controls such as tabs and carriage returns remain visibly escaped; it does not minify. JSON key order, duplicate keys, number text and existing string escapes are preserved. Plain text is not parsed recursively or converted into another format. Data highlighting defaults to on; turning it off retains selection, focus, error colors and UI key hints. Highlight/wrap changes retain the current detail chunk; changing format, indentation or Unicode rendering rebuilds detail from its first chunk.
 

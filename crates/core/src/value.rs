@@ -65,7 +65,7 @@ pub const FORMATS: &[FormatDescriptor] = &[
     FormatDescriptor {
         id: ValueFormat::Auto,
         name: "auto",
-        description: "JSON objects/arrays or declared JSON; text otherwise; opaque bytes use hex",
+        description: "Strict UTF-8 as JSON objects/arrays or declared JSON, otherwise text; invalid UTF-8 uses hex",
     },
     FormatDescriptor {
         id: ValueFormat::Text,

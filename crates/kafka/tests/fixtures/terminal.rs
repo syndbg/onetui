@@ -220,7 +220,7 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
         .spawn()
         .unwrap();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pty.wait(&["LIVE", "2retained"]);
+        pty.wait(&["LIVE", "2retained", "demo", "\"message\""]);
         assert!(
             started.elapsed() >= Duration::from_secs(15),
             "producer must not burst both records"
@@ -228,7 +228,7 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
         pty.send(b"\x03");
         pty.wait(&["Followingstopped", "2retained"]);
         pty.send(b"\r");
-        pty.wait(&["Rowdata", "value", "headers"]);
+        pty.wait(&["Rowdata", "value", "headers", "demo", "\"message\""]);
         pty.send(b"\x1b");
         pty.wait(&["kafka.records", "Followingstopped"]);
         pty.send(b"r");

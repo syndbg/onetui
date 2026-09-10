@@ -27,6 +27,8 @@ If you ran the previous `bpearl-fixtures` project, it remains untouched by this 
 
 ## Kafka traffic
 
+Auto display shows the demo key as `demo` and the value as JSON; invalid UTF-8 in the other datasets remains hex. Retained bytes are unchanged. Open a field and use `v` to select hex/binary explicitly.
+
 After `make dev-up`, run `make dev-traffic` in a separate terminal. This opt-in producer sends one JSON record immediately, then one every 15 seconds until Ctrl-C. It connects only to the fixed disposable broker at `127.0.0.1:19092`, creates `demo_live` with one partition if absent and appends without resetting existing data. Newly created topics use a one-hour / 64 MiB retention policy; Kafka applies retention asynchronously. Existing topic settings are preserved. The four seeded Kafka datasets are unchanged.
 
 In another terminal run `make run`, select `local_kafka`, open `demo_live` and partition `0`, then press `f` in the record view. `f` or Ctrl-C stops following and keeps the displayed window. Navigation/inspection also stops it. Starting again reads only from a new current end. `r` returns to historical browsing.

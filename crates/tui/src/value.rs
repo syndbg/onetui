@@ -163,7 +163,7 @@ pub fn prepare(value: Option<&Value>, options: DisplayOptions, declared_json: bo
     };
     let source = std::str::from_utf8(value.bytes());
     let format = if options.format == ValueFormat::Auto {
-        if matches!(value, Value::Bytes(_)) {
+        if source.is_err() {
             ValueFormat::Hex
         } else if declared_json
             || matches!(value, Value::Json(_))
@@ -330,6 +330,50 @@ mod tests {
         .unwrap();
         assert!(safe.contains("\\r\n\\t"));
         assert!(!safe.chars().any(|c| c.is_control() && c != '\n'));
+    }
+
+    #[test]
+    fn auto_decodes_readable_bytes_without_changing_the_source() {
+        let options = DisplayOptions::default();
+        for (source, format, expected) in [
+            ("demo", ValueFormat::Text, "demo"),
+            ("", ValueFormat::Text, ""),
+            ("42", ValueFormat::Text, "42"),
+            ("{incomplete", ValueFormat::Text, "{incomplete"),
+            ("София 🌊\x1b", ValueFormat::Text, "София 🌊\\u{1b}"),
+            ("{\"x\":1}", ValueFormat::Json, "{\n  \"x\": 1\n}"),
+            ("[1]", ValueFormat::Json, "[\n  1\n]"),
+        ] {
+            let value = Value::Bytes(source.as_bytes().to_vec());
+            let prepared = prepare(Some(&value), options, false);
+            assert_eq!(prepared.format, format, "{source:?}");
+            assert_eq!(prepared.text, expected, "{source:?}");
+            assert_eq!(value.bytes(), source.as_bytes());
+            for format in [ValueFormat::Hex, ValueFormat::Binary] {
+                assert_eq!(
+                    prepare(Some(&value), DisplayOptions { format, ..options }, false).format,
+                    format
+                );
+            }
+        }
+        let json = Value::Bytes(br#"{"x":1}"#.to_vec());
+        assert_eq!(
+            prepare(
+                Some(&json),
+                DisplayOptions {
+                    pretty_print: false,
+                    ..options
+                },
+                false
+            )
+            .text,
+            r#"{"x":1}"#
+        );
+        assert_eq!(prepare(None, options, false).notice, "SQL NULL; no bytes");
+        assert_ne!(
+            prepare(Some(&Value::Bytes(vec![])), options, false).notice,
+            "SQL NULL; no bytes"
+        );
     }
 
     #[test]
