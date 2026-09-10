@@ -1,5 +1,6 @@
 mod app;
 mod query;
+mod row_value;
 #[cfg(test)]
 mod test_provider;
 mod ui;

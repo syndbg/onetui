@@ -197,6 +197,8 @@ pub struct App {
     pub help: bool,
     pub detail: bool,
     pub row_detail: bool,
+    pub(crate) row_value: Option<crate::value::Prepared>,
+    pub(crate) row_scroll: usize,
     pub detail_text: String,
     pub detail_chunk: usize,
     pub detail_chunks: usize,
@@ -235,6 +237,8 @@ impl App {
             help: false,
             detail: false,
             row_detail: false,
+            row_value: None,
+            row_scroll: 0,
             detail_text: String::new(),
             detail_chunk: 0,
             detail_chunks: 0,
@@ -319,6 +323,8 @@ impl App {
     fn load(&mut self, offset: i64, reset: bool) {
         self.invalidate();
         self.row_detail = false;
+        self.row_value = None;
+        self.row_scroll = 0;
         self.loading = true;
         self.request = Some(Request {
             follow: false,
@@ -615,6 +621,8 @@ impl App {
     }
 
     fn clear_detail(&mut self) {
+        self.row_value = None;
+        self.row_scroll = 0;
         self.detail_override = None;
         self.detail_prepared.clear();
         self.detail_ranges.clear();
@@ -628,6 +636,31 @@ impl App {
             && !self.view.page.next
             && self.view.page.rows[0].target.is_none()
             && !self.view.visible.is_empty()
+    }
+
+    fn prepare_row_value(&mut self) {
+        let cell = self.view.page.rows[self.view.selected_index().expect("selected row")].cells
+            [self.view.column]
+            .as_ref();
+        let declared = self
+            .view
+            .page
+            .columns
+            .get(self.view.column)
+            .is_some_and(|c| matches!(c.datatype.as_str(), "json" | "jsonb"));
+        let mut prepared = crate::value::prepare(
+            cell,
+            DisplayOptions {
+                format: ValueFormat::Auto,
+                ..self.config.display
+            },
+            declared,
+        );
+        if cell.is_none() {
+            prepared.text = "NULL".into();
+        }
+        self.row_value = Some(prepared);
+        self.row_scroll = 0;
     }
 
     fn prepare_detail(&mut self) {
@@ -846,6 +879,8 @@ impl App {
                 self.help = false;
                 self.detail = false;
                 self.row_detail = false;
+                self.row_value = None;
+                self.row_scroll = 0;
             }
             Action::Display => {
                 self.help = false;
@@ -900,6 +935,7 @@ impl App {
                 self.view.reindex(selected);
             }
             Action::Left | Action::Right => {
+                let previous = self.view.column;
                 self.view.column = if action == Action::Left {
                     self.view.column.saturating_sub(1)
                 } else {
@@ -907,6 +943,8 @@ impl App {
                 };
                 if self.detail {
                     self.prepare_detail();
+                } else if self.row_detail && previous != self.view.column {
+                    self.prepare_row_value();
                 }
             }
             Action::Columns => {
@@ -922,6 +960,18 @@ impl App {
             Action::PageUp | Action::PageDown | Action::HalfPageUp | Action::HalfPageDown => {
                 let down = matches!(action, Action::PageDown | Action::HalfPageDown);
                 let half = matches!(action, Action::HalfPageUp | Action::HalfPageDown);
+                if self.row_detail && !self.detail && !self.help {
+                    let (height, lines) = crate::ui::row_value_extent(self);
+                    if lines > height {
+                        let step = if half { height / 2 } else { height }.max(1);
+                        self.row_scroll = if down {
+                            self.row_scroll.saturating_add(step).min(lines - height)
+                        } else {
+                            self.row_scroll.saturating_sub(step).min(lines - height)
+                        };
+                        return;
+                    }
+                }
                 for _ in 0..crate::ui::page_step(self, down, half) {
                     self.act(if down { Action::Down } else { Action::Up });
                 }
@@ -963,6 +1013,7 @@ impl App {
                     } else {
                         self.row_detail = true;
                         self.horizontal_scroll = 0;
+                        self.prepare_row_value();
                     }
                     return;
                 };
@@ -977,12 +1028,17 @@ impl App {
                     self.detail = false;
                     self.detail_text.clear();
                     self.clear_detail();
+                    if self.row_detail {
+                        self.prepare_row_value();
+                    }
                     if !self.row_detail && self.single_value() {
                         self.act(Action::Back);
                     }
                 } else if self.row_detail {
                     self.row_detail = false;
                     self.horizontal_scroll = 0;
+                    self.row_value = None;
+                    self.row_scroll = 0;
                 } else if let Some(parent) = self.parents.pop() {
                     self.invalidate();
                     self.view = parent;
@@ -1273,6 +1329,12 @@ impl App {
         }
         if content_changed {
             self.view.prepare_previews(self.config.display);
+            if self.row_detail {
+                self.prepare_row_value();
+            }
+        }
+        if before.word_wrap != self.config.display.word_wrap {
+            self.row_scroll = 0;
         }
         if self.config.display.word_wrap {
             self.horizontal_scroll = 0;

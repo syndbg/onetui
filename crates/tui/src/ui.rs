@@ -738,16 +738,21 @@ pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
     let mut steps = 0;
     while index < count && budget > 0 {
         let height = if app.row_detail {
-            let available = body.width.saturating_sub(6);
-            let width = usize::from(available - available / 4 * 2).max(1);
-            wrap_preview(
-                &app.view.previews[app.view.selected_index().unwrap()][index],
-                width,
-                app,
-            )
-            .lines()
-            .count()
-            .clamp(1, 3)
+            if index == app.view.column {
+                let (height, lines) = row_value_extent(app);
+                lines.min(height)
+            } else {
+                let available = body.width.saturating_sub(6);
+                let width = usize::from(available - available / 4 * 2).max(1);
+                wrap_preview(
+                    &app.view.previews[app.view.selected_index().unwrap()][index],
+                    width,
+                    app,
+                )
+                .lines()
+                .count()
+                .clamp(1, 3)
+            }
         } else {
             let start = app.view.column / 4 * 4;
             let end = (start + 4).min(app.column_count());
@@ -774,6 +779,27 @@ pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
         index = if down { index + 1 } else { index - 1 };
     }
     steps
+}
+
+pub(crate) fn row_value_extent(app: &App) -> (usize, usize) {
+    let body = query_panels(panels(app.viewport, app)[2], app)[1];
+    let available = body.width.saturating_sub(6);
+    let width = usize::from(available - available / 4 * 2).max(1);
+    let height = usize::from(body.height.saturating_sub(3)).max(1);
+    let Some(prepared) = &app.row_value else {
+        return (height, 1);
+    };
+    let cell = &app.view.page.rows[app.view.selected_index().expect("selected row")].cells
+        [app.view.column];
+    let (_, lines) = crate::row_value::viewport(
+        prepared,
+        cell.as_ref().map_or(&[], onetui_core::Value::bytes),
+        width,
+        app.config.display.word_wrap,
+        0,
+        0,
+    );
+    (height, lines)
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -918,8 +944,39 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let value_width = available - metadata_width * 2;
         let width = usize::from(value_width).max(1);
         let rows = (0..app.column_count()).map(|column| {
-            let preview = wrap_preview(&app.view.previews[index][column], width, app);
-            let height = preview.lines().count().clamp(1, 3) as u16;
+            let preview = if column == app.view.column
+                && let Some(prepared) = &app.row_value
+            {
+                let bytes = app.view.page.rows[index].cells[column]
+                    .as_ref()
+                    .map_or(&[][..], onetui_core::Value::bytes);
+                let height = usize::from(body.height.saturating_sub(3)).max(1);
+                let (_, lines) = crate::row_value::viewport(
+                    prepared,
+                    bytes,
+                    width,
+                    app.config.display.word_wrap,
+                    0,
+                    0,
+                );
+                let scroll = app.row_scroll.min(lines.saturating_sub(height));
+                let (text, _) = crate::row_value::viewport(
+                    prepared,
+                    bytes,
+                    width,
+                    app.config.display.word_wrap,
+                    scroll,
+                    height,
+                );
+                horizontal(&text, app)
+            } else {
+                wrap_preview(&app.view.previews[index][column], width, app)
+            };
+            let height = if column == app.view.column {
+                preview.split('\n').count().max(1)
+            } else {
+                preview.split('\n').count().clamp(1, 3)
+            } as u16;
             Row::new([
                 Cell::from(app.column_name(column).to_owned())
                     .style(Style::new().fg(color(p.identifier))),
@@ -950,7 +1007,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .block(panel(
                 p,
                 format!(
-                    " Row data | {} fields | Enter full value, Esc back ",
+                    " Row data | {} fields | PgUp/PgDn value | Enter full value, Esc back ",
                     app.column_count()
                 ),
             ))
@@ -1143,6 +1200,126 @@ pub fn draw(frame: &mut Frame, app: &App) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn focused_row_value_expands_and_scrolls_without_changing_records() {
+        use super::*;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use onetui_core::{Column, Page, Resource, Row as DataRow, Value, catalog::Action};
+        use ratatui::backend::TestBackend;
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, Some("sample"));
+        app.view.resource = Resource::new("fake.rows", vec![]);
+        let request = app.request.take().unwrap();
+        let value = Value::Bytes(
+            serde_json::to_vec(
+                &(0..100)
+                    .map(|i| format!("entry_{i:03}"))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: vec![
+                    Column {
+                        name: "payload".into(),
+                        datatype: "bytes".into(),
+                    },
+                    Column {
+                        name: "other".into(),
+                        datatype: "text".into(),
+                    },
+                ],
+                rows: vec![DataRow {
+                    cells: vec![Some(value.clone()), Some("other field".into())],
+                    target: None,
+                }],
+                ..Page::default()
+            }),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let render = |app: &mut App, terminal: &mut Terminal<TestBackend>| {
+            terminal
+                .draw(|frame| {
+                    app.viewport = frame.area();
+                    draw(frame, app)
+                })
+                .unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+        assert!(!render(&mut app, &mut terminal).contains("entry_004"));
+        app.act(Action::Open);
+        let shown = render(&mut app, &mut terminal);
+        assert!(
+            shown.contains("Row data") && shown.contains("entry_004"),
+            "{shown}"
+        );
+        assert!(!shown.contains('…'));
+        let cached = app.row_value.as_ref().unwrap().text.as_ptr();
+        app.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        let halfway = app.row_scroll;
+        assert!(halfway > 0);
+        app.key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert!(app.row_scroll > halfway);
+        for _ in 0..100 {
+            app.act(Action::PageDown);
+        }
+        assert!(render(&mut app, &mut terminal).contains("entry_099"));
+        assert_eq!(app.row_value.as_ref().unwrap().text.as_ptr(), cached);
+        assert_eq!(app.view.column, 0);
+        assert_eq!(app.view.selected, 0);
+        assert_eq!(app.view.page.rows[0].cells[0], Some(value));
+        app.act(Action::Left);
+        assert!(
+            app.row_scroll > 0,
+            "field boundary must not reset value scrolling"
+        );
+        for (command, pretty) in [
+            ("display pretty-print off", false),
+            ("display pretty-print on", true),
+        ] {
+            for c in format!(":{command}").chars() {
+                app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+            }
+            app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert_eq!(app.row_value.as_ref().unwrap().text.contains('\n'), pretty);
+            assert_eq!(app.row_scroll, 0);
+        }
+        app.act(Action::Open);
+        assert!(app.detail);
+        app.act(Action::Back);
+        assert!(app.row_detail && !app.detail && app.row_value.is_some());
+        for _ in 0..100 {
+            app.act(Action::PageUp);
+        }
+        assert!(render(&mut app, &mut terminal).contains("entry_000"));
+        app.act(Action::Down);
+        assert_eq!(app.view.column, 1);
+        assert_eq!(app.row_scroll, 0);
+        assert!(render(&mut app, &mut terminal).contains("other field"));
+        app.act(Action::Up);
+        app.act(Action::PageDown);
+        for width in [1, 20, 60, 160] {
+            let mut resized = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            render(&mut app, &mut resized);
+            app.act(Action::PageUp);
+        }
+        app.act(Action::Back);
+        assert!(!app.row_detail && app.row_value.is_none());
+        assert!(app.request.is_none());
+    }
+
+    #[test]
     fn row_inspector_lists_fields_beyond_the_four_column_window() {
         use super::*;
         use onetui_core::catalog::Action;
@@ -1186,6 +1363,9 @@ mod tests {
         assert!(text.contains("65 fields") && text.contains("field_0") && text.contains("value_0"));
         app.view.page.columns[0].datatype = "timestamp with time zone".into();
         app.view.previews[0][0] = "x".repeat(120);
+        app.view.page.rows[0].cells[0] = Some("x".repeat(120).into());
+        app.act(Action::Right);
+        app.act(Action::Left);
         for width in [160, 240] {
             let mut wide = Terminal::new(TestBackend::new(width, 24)).unwrap();
             wide.draw(|frame| draw(frame, &app)).unwrap();
@@ -1203,8 +1383,8 @@ mod tests {
             assert!(row.contains("timestamp with time zone"), "{row}");
             assert_eq!(row.chars().nth(usize::from(width - 2)), Some('x'));
         }
-        assert_eq!(page_step(&app, true, false), 9);
-        assert_eq!(page_step(&app, true, true), 3);
+        assert_eq!(page_step(&app, true, false), 8);
+        assert_eq!(page_step(&app, true, true), 2);
         app.config.display.word_wrap = false;
         assert_eq!(page_step(&app, true, false), 11);
         app.config.display.word_wrap = true;

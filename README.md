@@ -206,6 +206,8 @@ OneTUI replaces occurrences of the selected PostgreSQL DSN/password or Qdrant AP
 
 Press `v` or enter `:display` for text, JSON, hex and binary views and independent display switches. `j/k` selects, Enter applies, Esc closes. Format selection requires field detail and lasts until detail closes. Other switches last for the session across connections; no config writes or datasource reads occur. Run `onetui schema` for supported settings, defaults and command syntax.
 
+In Row data, the focused field expands vertically without preview truncation. PageUp/PageDown or Ctrl-U/Ctrl-D scrolls long values in place; `j/k` selects another field. Main record tables and unfocused fields keep compact previews. See [row inspection](docs/ui.md) for scrolling and display limits.
+
 Put startup defaults in the same configuration file, for example `~/onetui.toml` selected with `onetui --config "$HOME/onetui.toml"`:
 
 ```toml

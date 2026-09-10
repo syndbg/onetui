@@ -229,6 +229,8 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
         pty.wait(&["Followingstopped", "2retained"]);
         pty.send(b"\r");
         pty.wait(&["Rowdata", "value", "headers", "demo", "\"message\""]);
+        pty.send(b"jjj");
+        pty.wait(&["Rowdata", "\"source\"", "onetuifixtureproducer"]);
         pty.send(b"\x1b");
         pty.wait(&["kafka.records", "Followingstopped"]);
         pty.send(b"r");
