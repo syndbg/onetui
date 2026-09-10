@@ -1,5 +1,30 @@
 name: onetui-fixtures
 services:
+  nats: &nats_fixture
+    build:
+      context: ./fixtures
+      dockerfile: nats.Dockerfile
+    entrypoint: ["/bin/sh", "/nats-tls.sh"]
+    ports:
+      - "127.0.0.1:14222:4222"
+    tmpfs:
+      - /data
+      - /tls
+    volumes:
+      - ./fixtures/nats.conf:/nats.conf:ro
+      - ./fixtures/nats-tls.sh:/nats-tls.sh:ro
+      - ./fixtures/nats-server.ext:/server.ext:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  nats-tls:
+    <<: *nats_fixture
+    ports:
+      - "127.0.0.1:14223:4222"
+    environment:
+      ONETUI_NATS_TLS: "true"
   kafka:
     image: apache/kafka:4.2.0
     entrypoint: ["/bin/sh", "/onetui-kafka-tls.sh"]

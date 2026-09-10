@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    RequestContext, ShutdownContext,
+    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
 };
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
 use rdkafka::client::ClientContext;
@@ -26,10 +26,15 @@ static NATIVE_OWNER: Semaphore = Semaphore::const_new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resource: Some("kafka.records"),
-    query: None,
+    query: Some(QueryDescriptor {
+        resource: "kafka.query",
+        language: "Kafka replay JSON",
+        example: "{}",
+        path_depth: 2,
+    }),
     kind: "kafka",
-    entry_resource: Some("kafka.topics"),
-    browsing: "topics / partitions / read-committed records",
+    entry_resource: Some("kafka.resources"),
+    browsing: "topics / partitions / records; brokers; groups / members",
     resources: crate::browse::RESOURCES,
     documentation: crate::capabilities,
 };
@@ -78,6 +83,7 @@ enum Operation {
     Check,
     Page(PageRequest),
     Follow(PageRequest),
+    Query(QueryRequest),
 }
 
 enum Response {
@@ -200,6 +206,13 @@ impl KafkaExecutor {
 }
 
 impl Executor for KafkaExecutor {
+    async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
+        crate::query::prepare(&request, self.identity)?;
+        match self.execute(Operation::Query(request), context).await? {
+            Response::Page(page) => Ok(page),
+            _ => unreachable!(),
+        }
+    }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status.subscribe()
     }
@@ -210,7 +223,20 @@ impl Executor for KafkaExecutor {
         }
     }
     async fn fetch_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
-        crate::browse::validate(&request, self.identity, false)?;
+        let position = crate::browse::validate(&request, self.identity, false)?;
+        if request.resource.id == "kafka.resources" {
+            ensure!(!self.closed, "Kafka session is closed");
+            let mut context = context;
+            return context
+                .run(async {
+                    crate::browse::resources(
+                        &request.resource,
+                        position.map_or(0, |p| p.offset),
+                        self.identity,
+                    )
+                })
+                .await?;
+        }
         match self.execute(Operation::Page(request), context).await? {
             Response::Page(page) => Ok(page),
             _ => unreachable!(),
@@ -279,6 +305,7 @@ fn transient(error: &KafkaError) -> bool {
 }
 
 fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result<Response> {
+    let prepared;
     let request = match &job.operation {
         Operation::Check => {
             let metadata = native_request(client, job, |wait| client.fetch_metadata(None, wait))?;
@@ -291,9 +318,29 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
             }));
         }
         Operation::Page(request) | Operation::Follow(request) => request,
+        Operation::Query(request) => {
+            prepared = crate::query::prepare(request, identity)?;
+            &prepared.1
+        }
     };
     let following = matches!(job.operation, Operation::Follow(_));
     let position = crate::browse::validate(request, identity, following)?;
+    if matches!(request.resource.id, "kafka.groups" | "kafka.members") {
+        let groups = native_request(client, job, |wait| {
+            crate::groups::Groups::fetch(
+                client.client(),
+                request.resource.path.first().map(String::as_str),
+                wait,
+            )
+        })?;
+        return groups
+            .page(
+                &request.resource,
+                position.map_or(0, |p| p.offset),
+                identity,
+            )
+            .map(Response::Page);
+    }
     if request.resource.id != "kafka.records" {
         let metadata = native_request(client, job, |wait| {
             client.fetch_metadata(request.resource.path.first().map(String::as_str), wait)
@@ -343,7 +390,41 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
         );
         (position.map_or(stable_end, |p| p.offset), stable_end)
     } else {
-        position.map_or((low, stable_end), |p| (p.offset, p.end.unwrap()))
+        if let Some(position) = position {
+            (position.offset, position.end.unwrap())
+        } else if let Operation::Query(query) = &job.operation {
+            let (replay, _) = crate::query::prepare(query, identity)?;
+            let end = replay.end_offset.unwrap_or(stable_end);
+            ensure!(
+                end >= low && end <= stable_end,
+                "Kafka replay end_offset {end} outside available [{low}, {stable_end}]"
+            );
+            let start = if let Some(timestamp) = replay.timestamp_ms {
+                let offsets = native_request(client, job, |wait| {
+                    let mut timestamps = TopicPartitionList::new();
+                    timestamps.add_partition_offset(topic, partition, Offset::Offset(timestamp))?;
+                    client.offsets_for_times(timestamps, wait)
+                })?;
+                let result = offsets
+                    .find_partition(topic, partition)
+                    .ok_or_else(|| anyhow!("Kafka timestamp lookup returned no partition"))?;
+                result.error()?;
+                // A timestamp after the last record has no match. A match beyond the
+                // requested read-committed window also yields an empty replay.
+                match result.offset() {
+                    Offset::Offset(offset) if offset >= 0 => offset.min(end),
+                    Offset::End => end,
+                    offset => {
+                        anyhow::bail!("Kafka timestamp lookup returned invalid offset {offset:?}")
+                    }
+                }
+            } else {
+                replay.offset.unwrap_or(low)
+            };
+            (start, end)
+        } else {
+            (low, stable_end)
+        }
     };
     ensure!(
         start >= low && start <= end && end <= stable_end,
@@ -356,14 +437,14 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
         ),
     );
     if start == end {
-        return crate::browse::finish(
+        let page = crate::browse::finish(
             page,
             &request.resource,
             identity,
             following.then_some((end, Some(end))),
             following,
-        )
-        .map(Response::Page);
+        )?;
+        return response(page, job);
     }
     let mut assignment = TopicPartitionList::new();
     assignment.add_partition_offset(topic, partition, Offset::Offset(start))?;
@@ -436,7 +517,14 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
     let unassigned = client.unassign();
     let page = result?;
     unassigned?;
-    Ok(Response::Page(page))
+    response(page, job)
+}
+
+fn response(page: Page, job: &Job) -> Result<Response> {
+    Ok(Response::Page(match &job.operation {
+        Operation::Query(query) => crate::query::finish(page, query.text.clone())?,
+        _ => page,
+    }))
 }
 
 #[cfg(test)]
@@ -510,6 +598,16 @@ mod tests {
             .configure(&options, &|_| panic!("no credentials"))
             .unwrap();
         assert_eq!(*executor.status().borrow(), ConnectionStatus::Configured);
+        let menu = fetch(&executor, Resource::new("kafka.resources", vec![]), None).await;
+        assert_eq!(menu.rows.len(), 3);
+        assert_eq!(
+            menu.rows[0].target,
+            Some(Resource::new("kafka.topics", vec![]))
+        );
+        assert!(
+            executor.owner.lock().await.is_none(),
+            "local resource menu must not start a native client"
+        );
         let (cancel, context) = RequestContext::new(Duration::from_secs(5));
         cancel.send(()).unwrap();
         assert!(executor.check(context).await.is_err());
@@ -521,6 +619,9 @@ mod tests {
         let check = executor.check(context).await.unwrap();
         assert!(check.summary.contains("metadata readable"));
         let topics = fetch(&executor, Resource::new("kafka.topics", vec![]), None).await;
+        let brokers = fetch(&executor, Resource::new("kafka.brokers", vec![]), None).await;
+        assert_eq!(brokers.rows.len(), 1);
+        assert_eq!(brokers.rows[0].cells[0], Some("1".into()));
         assert_eq!(topics.rows.len(), 1);
         let partitions = fetch(&executor, topics.rows[0].target.clone().unwrap(), None).await;
         assert_eq!(partitions.rows.len(), 2);
@@ -542,6 +643,28 @@ mod tests {
         assert_eq!(previous.rows[0].cells[0], Some("100".into()));
         let beginning = fetch(&executor, resource.clone(), None).await;
         assert_eq!(beginning.rows[0].cells[0], Some("0".into()));
+        let replay_text = r#"{"offset":125,"end_offset":240}"#;
+        let mut continuation = None;
+        for (offset, count) in [(125, 100), (225, 15)] {
+            let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+            let page = executor
+                .query_page(
+                    QueryRequest {
+                        page: PageRequest {
+                            resource: Resource::new("kafka.query", resource.path.clone()),
+                            continuation,
+                        },
+                        text: replay_text.into(),
+                    },
+                    context,
+                )
+                .await
+                .unwrap();
+            assert_eq!(page.rows.len(), count);
+            assert_eq!(page.rows[0].cells[0], Some(offset.to_string().into()));
+            continuation = page.continuation;
+        }
+        assert!(continuation.is_none());
         let empty = fetch(&executor, partitions.rows[1].target.clone().unwrap(), None).await;
         assert!(empty.rows.is_empty() && !empty.next);
         let tail = follow(&executor, resource.clone(), None).await;

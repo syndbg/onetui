@@ -1,14 +1,16 @@
 mod browse;
 mod config;
+mod groups;
 mod provider;
+mod query;
 pub use provider::{KafkaExecutor, KafkaProvider};
 
 fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "operations": ["check", "fetch_page", "follow_page"],
+        "operations": ["check", "fetch_page", "follow_page", "query_page"],
         "session": "One lazy native owner thread per process; client retained for the selected alias. Native cleanup retains its slot until complete, even after a foreground cancellation. No periodic metadata checks or consumer-group subscription.",
-        "limits": {"page_rows": 100, "display_page_bytes": 1048576, "native_receive_bytes": 4194304, "prefetch_kib": 1024, "rss_guarantee": false},
-        "paths": {"kafka.topics": [], "kafka.partitions": ["topic"], "kafka.records": ["topic", "partition number"]},
+        "limits": {"page_rows": 100, "display_page_bytes": 1048576, "native_receive_bytes": 4194304, "group_array_bytes": 4194304, "group_name_bytes": 1024, "prefetch_kib": 1024, "rss_guarantee": false},
+        "paths": {"kafka.resources": [], "kafka.topics": [], "kafka.brokers": [], "kafka.groups": [], "kafka.members": ["group name, 1..1024 UTF-8 bytes without controls"], "kafka.partitions": ["topic"], "kafka.records": ["topic", "partition number"], "kafka.query": ["topic", "partition number"]},
         "paging": "Metadata is re-read and locally paged; records read one partition from its earliest available offset to the native read-committed stable end. Open transactions and later records are outside that window. Continuations bind session, resource, partition, next offset and window end. Refresh or refetching the first page opens a new window. No retained snapshot; unavailable positions and request errors retain the displayed page and bookmark.",
         "values": "Key and value are nullable bytes; empty bytes differ from tombstones. Headers are ordered JSON entries with names and nullable byte arrays, preserving duplicates. No schema-registry decoding.",
         "following": {"start": "current read-committed stable end of the selected partition", "poll_interval_ms": 1000, "buffer_rows": 100, "buffer_bytes": 1048576, "overflow": "evict oldest displayed rows with a visible count; do not skip the broker cursor", "stop": "f, Ctrl-C, navigation or inspection; errors stop with retained data; restart explicitly from current end", "continuation": "follow-only, session/resource/partition scoped; empty batches retain a cursor; no commits or group subscription"},
@@ -23,6 +25,8 @@ fn capabilities() -> serde_json::Value {
         },
         "safety": "No auto commits, auto offset storage, topic auto-creation or group subscriptions. Explicit numeric assignment; auto.offset.reset=error; read_committed. Internal session group ID is not an application group. No generic native configuration overrides.",
         "permissions": "Topic Read and Describe; group Describe for the private onetui- prefix used by native coordinator lookup. No group Read permission is needed; the browser never joins or commits.",
-        "unsupported": ["query_page", "cross-partition merging", "publishing from the app", "consumer-group administration", "schema registry", "client TLS certificates", "OAuth", "GSSAPI"]
+        "group_inspection": "Read-only group state/protocol/member listing via native metadata. Requires Describe on inspected groups; unauthorized groups may be omitted by the broker. Metadata/assignments remain nullable protocol bytes. No lag or committed-offset view yet.",
+        "replay": {"offset": "Optional nonnegative i64; omitted/null starts at earliest available offset", "timestamp_ms": "Optional nonnegative i64 Unix milliseconds; mutually exclusive with offset; resolves a starting offset, not a per-record time filter", "end_offset": "Optional nonnegative i64 exclusive end; omitted/null captures current read-committed end", "behavior": "JSON query editor for the selected partition; unknown fields rejected, no commits or writes"},
+        "unsupported": ["cross-partition merging", "publishing from the app", "consumer-group administration", "schema registry", "client TLS certificates", "OAuth", "GSSAPI"]
     })
 }

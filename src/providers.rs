@@ -5,6 +5,7 @@ use onetui_core::provider::{
     QueryRequest, RequestContext, ShutdownContext,
 };
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
+use onetui_nats::{NatsExecutor, NatsProvider};
 use onetui_postgres::{PostgresExecutor, PostgresProvider};
 use onetui_qdrant::{QdrantExecutor, QdrantProvider};
 use tokio::sync::watch;
@@ -13,18 +14,21 @@ pub enum BuiltinProvider {
     Postgres(PostgresProvider),
     Qdrant(QdrantProvider),
     Kafka(KafkaProvider),
+    Nats(NatsProvider),
 }
 
 pub const BUILTINS: &[BuiltinProvider] = &[
     BuiltinProvider::Postgres(PostgresProvider),
     BuiltinProvider::Qdrant(QdrantProvider),
     BuiltinProvider::Kafka(KafkaProvider),
+    BuiltinProvider::Nats(NatsProvider),
 ];
 
 pub enum BuiltinExecutor {
     Postgres(PostgresExecutor),
     Qdrant(QdrantExecutor),
     Kafka(KafkaExecutor),
+    Nats(NatsExecutor),
 }
 
 impl Provider for BuiltinProvider {
@@ -35,6 +39,7 @@ impl Provider for BuiltinProvider {
             Self::Postgres(p) => p.descriptor(),
             Self::Qdrant(p) => p.descriptor(),
             Self::Kafka(p) => p.descriptor(),
+            Self::Nats(p) => p.descriptor(),
         }
     }
 
@@ -43,6 +48,7 @@ impl Provider for BuiltinProvider {
             Self::Postgres(p) => p.validate_config(options),
             Self::Qdrant(p) => p.validate_config(options),
             Self::Kafka(p) => p.validate_config(options),
+            Self::Nats(p) => p.validate_config(options),
         }
     }
 
@@ -55,6 +61,7 @@ impl Provider for BuiltinProvider {
             Self::Postgres(p) => p.configure(options, env).map(BuiltinExecutor::Postgres),
             Self::Qdrant(p) => p.configure(options, env).map(BuiltinExecutor::Qdrant),
             Self::Kafka(p) => p.configure(options, env).map(BuiltinExecutor::Kafka),
+            Self::Nats(p) => p.configure(options, env).map(BuiltinExecutor::Nats),
         }
     }
 }
@@ -65,6 +72,7 @@ impl Executor for BuiltinExecutor {
             Self::Postgres(e) => e.follow_page(request, context).await,
             Self::Qdrant(e) => e.follow_page(request, context).await,
             Self::Kafka(e) => e.follow_page(request, context).await,
+            Self::Nats(e) => e.follow_page(request, context).await,
         }
     }
     async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
@@ -72,6 +80,7 @@ impl Executor for BuiltinExecutor {
             Self::Postgres(e) => e.query_page(request, context).await,
             Self::Qdrant(e) => e.query_page(request, context).await,
             Self::Kafka(e) => e.query_page(request, context).await,
+            Self::Nats(e) => e.query_page(request, context).await,
         }
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
@@ -79,6 +88,7 @@ impl Executor for BuiltinExecutor {
             Self::Postgres(e) => e.status(),
             Self::Qdrant(e) => e.status(),
             Self::Kafka(e) => e.status(),
+            Self::Nats(e) => e.status(),
         }
     }
 
@@ -87,6 +97,7 @@ impl Executor for BuiltinExecutor {
             Self::Postgres(e) => e.check(context).await,
             Self::Qdrant(e) => e.check(context).await,
             Self::Kafka(e) => e.check(context).await,
+            Self::Nats(e) => e.check(context).await,
         }
     }
 
@@ -95,6 +106,7 @@ impl Executor for BuiltinExecutor {
             Self::Postgres(e) => e.fetch_page(request, context).await,
             Self::Qdrant(e) => e.fetch_page(request, context).await,
             Self::Kafka(e) => e.fetch_page(request, context).await,
+            Self::Nats(e) => e.fetch_page(request, context).await,
         }
     }
 
@@ -103,6 +115,7 @@ impl Executor for BuiltinExecutor {
             Self::Postgres(e) => e.shutdown(context).await,
             Self::Qdrant(e) => e.shutdown(context).await,
             Self::Kafka(e) => e.shutdown(context).await,
+            Self::Nats(e) => e.shutdown(context).await,
         }
     }
 }
@@ -114,9 +127,50 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
+    async fn nats_variant_delegates_lazy_configuration_cancellation_and_shutdown() {
+        let provider = find_provider(BUILTINS, "nats").unwrap();
+        let options = toml::from_str("servers=['nats://localhost:4222']").unwrap();
+        let mut executor = provider
+            .configure(&options, &|_| panic!("no configured secret"))
+            .unwrap();
+        assert!(matches!(executor, BuiltinExecutor::Nats(_)));
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Configured);
+        let (cancel, context) = RequestContext::new(Duration::from_secs(1));
+        cancel.send(()).unwrap();
+        assert!(
+            executor
+                .check(context)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("cancelled")
+        );
+        let (cancel, context) = RequestContext::new(Duration::from_secs(1));
+        cancel.send(()).unwrap();
+        assert!(
+            executor
+                .follow_page(
+                    PageRequest {
+                        resource: onetui_core::Resource::new("nats.messages", vec!["DEMO".into()]),
+                        continuation: None,
+                    },
+                    context
+                )
+                .await
+                .is_err()
+        );
+        executor
+            .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+            .await
+            .unwrap();
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Closed);
+    }
+
+    #[tokio::test]
     async fn postgres_variant_delegates_configuration_status_cancel_and_shutdown() {
         validate_catalog(BUILTINS).unwrap();
-        assert_eq!(BUILTINS.len(), 3);
+        assert_eq!(BUILTINS.len(), 4);
         let provider = find_provider(BUILTINS, "postgres").unwrap();
         let options = toml::from_str("url_env='DSN'").unwrap();
         provider.validate_config(&options).unwrap();
@@ -194,14 +248,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn kafka_variant_delegates_without_connecting_or_exposing_queries() {
+    async fn kafka_variant_delegates_replay_without_connecting() {
         let provider = find_provider(BUILTINS, "kafka").unwrap();
         let options =
             toml::from_str("bootstrap_servers=['localhost:19092']\nsecurity_protocol='PLAINTEXT'")
                 .unwrap();
         provider.validate_config(&options).unwrap();
-        assert_eq!(provider.descriptor().entry_resource, Some("kafka.topics"));
-        assert!(provider.descriptor().query.is_none());
+        assert_eq!(
+            provider.descriptor().entry_resource,
+            Some("kafka.resources")
+        );
+        assert_eq!(provider.descriptor().query.unwrap().resource, "kafka.query");
         assert_eq!(provider.descriptor().follow_resource, Some("kafka.records"));
         let mut executor = provider
             .configure(&options, &|_| panic!("no secret configured"))
@@ -211,6 +268,28 @@ mod tests {
         let (cancel, context) = RequestContext::new(Duration::from_secs(1));
         cancel.send(()).unwrap();
         assert!(executor.check(context).await.is_err());
+        let (cancel, context) = RequestContext::new(Duration::from_secs(1));
+        cancel.send(()).unwrap();
+        assert!(
+            executor
+                .query_page(
+                    QueryRequest {
+                        page: PageRequest {
+                            resource: onetui_core::Resource::new(
+                                "kafka.query",
+                                vec!["demo_events".into(), "0".into()]
+                            ),
+                            continuation: None,
+                        },
+                        text: "{}".into(),
+                    },
+                    context
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
         let (cancel, context) = RequestContext::new(Duration::from_secs(1));
         cancel.send(()).unwrap();
         assert!(

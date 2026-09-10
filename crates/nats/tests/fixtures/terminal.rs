@@ -181,175 +181,92 @@ impl Pty {
 }
 
 #[test]
-#[ignore = "writes demo_live through the fixture producer; actual CLI follow and stop"]
-fn actual_cli_kafka_live_follow_with_fixture_producer() {
+#[ignore = "seeded disposable NATS; actual CLI paging, byte inspection, live producer and terminal restoration"]
+fn actual_cli_nats_browsing_and_following() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let producer_binary = root.join("target/debug/examples/produce_demo");
-    let seed = Command::new(&producer_binary)
-        .args(["--count", "1"])
-        .output()
-        .unwrap();
-    assert!(
-        seed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&seed.stderr)
-    );
     let mut config = tempfile::NamedTempFile::new().unwrap();
-    write!(config, "[connections.kafka]\nkind='kafka'\nbootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'").unwrap();
+    write!(config, "[connections.nats]\nkind='nats'\nservers=['nats://127.0.0.1:14222']\ntls=false\nusername_env='NATS_USER'\npassword_env='NATS_PASS'\n[connections.second]\nkind='nats'\nservers=['nats://127.0.0.1:14222']\ntls=false\nusername_env='NATS_USER'\npassword_env='NATS_PASS'").unwrap();
     let binary = std::env::var_os("ONETUI_TEST_BIN")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| root.join("target/debug/onetui"));
-    let mut command = Command::new(binary);
+    // Keep the PTY owner alive until the parent checks restored terminal flags.
+    let mut command = Command::new("sh");
     command
-        .arg("--config")
+        .args(["-c", "\"$1\" --config \"$2\"; status=$?; printf '\\nONETUI_DONE\\n'; read -r finish; exit \"$status\"", "nats-pty"])
+        .arg(binary)
         .arg(config.path())
-        .args(["--connection", "kafka"]);
-    let (mut pty, _) = Pty::spawn(command);
-    pty.wait(&[
-        "kafka.resources",
-        "kafka.topics",
-        "kafka.brokers",
-        "kafka.groups",
-    ]);
-    pty.send(b"\r");
-    pty.wait(&["kafka.topics", "demo_live"]);
-    pty.open_filtered("demo_live");
-    pty.wait(&["kafka.partitions", "1shown/1loaded"]);
-    pty.send(b"\r");
-    pty.wait(&["kafka.records", "Page1"]);
-    pty.send(b"f");
-    pty.wait(&["LIVE", "0retained"]);
-    let started = Instant::now();
-    let mut producer = Command::new(&producer_binary)
-        .args(["--count", "2"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pty.wait(&["LIVE", "2retained", "demo", "\"message\""]);
-        assert!(
-            started.elapsed() >= Duration::from_secs(15),
-            "producer must not burst both records"
-        );
-        pty.send(b"\x03");
-        pty.wait(&["Followingstopped", "2retained"]);
-        pty.send(b"\r");
-        pty.wait(&["Rowdata", "value", "headers", "demo", "\"message\""]);
-        pty.send(b"jjj");
-        pty.wait(&["Rowdata", "\"source\"", "onetuifixtureproducer"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.records", "Followingstopped"]);
-        pty.send(b"r");
-        pty.wait(&["Page1", "kafka.records"]);
-        pty.send(b"f");
-        pty.wait(&["LIVE", "0retained"]);
-        pty.send(b"c");
-        pty.wait(&["connections", "kafka"]);
-        pty.send(b"q");
-        pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
-    }));
-    if result.is_err() {
-        let _ = producer.kill();
-    }
-    let produced = producer.wait_with_output().unwrap();
-    result.unwrap();
-    assert!(
-        produced.status.success(),
-        "{}",
-        String::from_utf8_lossy(&produced.stderr)
-    );
-    let output = String::from_utf8_lossy(&produced.stdout);
-    assert_eq!(output.lines().count(), 2);
-    assert!(output.contains("sequence=0") && output.contains("sequence=1"));
-}
-
-#[test]
-#[ignore = "requires seeded Kafka and the built CLI; read-only, child-owned PTY"]
-fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
-    let mut config = tempfile::NamedTempFile::new().unwrap();
-    write!(config, "[connections.kafka]\nkind='kafka'\nbootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'\n[connections.second]\nkind='kafka'\nbootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'").unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-        });
-    let mut command = Command::new(binary);
-    command.arg("--config").arg(config.path());
+        .env("NATS_USER", "fixture-reader")
+        .env("NATS_PASS", "fixture-reader-only");
     let (mut pty, slave) = Pty::spawn(command);
-    pty.wait_token("\x1b[>1u", Duration::from_secs(3));
-    pty.wait(&["connections", "kafka", "second"]);
+    pty.wait(&["connections", "nats", "second"]);
     assert!(
         !tcgetattr(&slave)
             .unwrap()
             .local_flags
             .contains(LocalFlags::ICANON)
     );
-    // Returning to the first alias must release the previous native owner.
-    for alias in ["kafka", "second", "kafka"] {
+    for alias in ["nats", "second"] {
         pty.open_filtered(alias);
-        pty.wait(&[
-            "kafka.resources",
-            "kafka.topics",
-            "kafka.brokers",
-            "kafka.groups",
-        ]);
-        pty.send(b"j\r");
-        pty.wait(&["kafka.brokers", "1shown/1loaded", "host", "port"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.resources", "kafka.groups"]);
-        pty.send(b"k\r");
-        pty.wait(&["kafka.topics", "demo_events"]);
-        pty.open_filtered("demo_events");
-        pty.wait(&["kafka.partitions", "3shown/3loaded"]);
-        pty.send(b"\r");
-        pty.wait(&["kafka.records", "100shown/100loaded", "Page1"]);
+        pty.wait(&["nats.streams", "DEMO_EVENTS"]);
+        pty.open_filtered("DEMO_EVENTS");
+        pty.wait(&["nats.messages", "100shown/100loaded", "Page1"]);
         for page in 2..=5 {
             pty.send(b"n");
-            pty.wait(&["kafka.records", &format!("Page{page}")]);
+            pty.wait(&["nats.messages", &format!("Page{page}")]);
         }
         for page in (1..5).rev() {
             pty.send(b"p");
-            pty.wait(&["kafka.records", &format!("Page{page}")]);
+            pty.wait(&["nats.messages", &format!("Page{page}")]);
         }
-        pty.send(b"e");
-        pty.wait(&["KafkareplayJSON", "retaineddata"]);
-        pty.send(b"\x15{\"offset\":123,\"end_offset\":250}\r");
-        pty.wait(&["kafka.query", "executed", "100shown/100loaded", "[123,250)"]);
-        pty.send(b"n");
-        pty.wait(&["kafka.query", "Page2", "27shown/27loaded", "[223,250)"]);
-        pty.send(b"p");
-        pty.wait(&["kafka.query", "Page1", "[123,250)"]);
-        pty.send(b"e\x15{\"offset\":-1}\r");
-        pty.wait(&["nonnegativesigned64-bitintegers", "retaineddata"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.query", "executed"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.records", "Page1"]);
         pty.send(b"\r");
-        pty.wait(&["Rowdata", "timestamp_ms", "headers", "value"]);
+        pty.wait(&["Rowdata", "sequence", "subject", "data", "headers"]);
+        pty.send(b"jjj\r");
+        pty.wait(&["Field4/5", "category"]);
         pty.send(b":display format hex\r");
-        pty.wait(&["Rowdata", "00000000"]);
+        pty.wait(&["00000000"]);
         pty.send(b"c");
         pty.wait(&["connections", "second"]);
     }
-    pty.send(b"q");
-    let until = Instant::now() + Duration::from_secs(3);
-    loop {
-        pty.read();
-        if let Some(status) = pty.child.try_wait().unwrap() {
-            assert!(status.success());
-            break;
-        }
-        assert!(Instant::now() < until, "CLI failed to exit");
-        std::thread::sleep(Duration::from_millis(10));
+    pty.open_filtered("nats");
+    pty.wait(&["nats.streams"]);
+    pty.open_filtered("DEMO_LIVE");
+    pty.wait(&["nats.messages", "Page1"]);
+    pty.send(b"f");
+    pty.wait(&["LIVE", "0retained"]);
+    let started = Instant::now();
+    let mut producer = Command::new(root.join("target/debug/examples/produce_nats"))
+        .args(["--count", "2"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let tested = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pty.wait(&["LIVE", "2retained", "message"]);
+        assert!(started.elapsed() >= Duration::from_secs(15));
+        pty.send(b"\x03");
+        pty.wait(&["Followingstopped", "2retained"]);
+        pty.send(b"c");
+        pty.wait(&["connections"]);
+        pty.send(b"q");
+        pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
+        pty.wait_token("ONETUI_DONE", Duration::from_secs(3));
+    }));
+    if tested.is_err() {
+        let _ = producer.kill();
     }
-    pty.read();
-    let output = String::from_utf8_lossy(&pty.output);
-    for restored in ["\x1b[?1049l", "\x1b[?25h", "\x1b[?2004l", "\x1b[<1u"] {
-        assert!(
-            output.contains(restored),
-            "terminal mode not restored: {restored:?}"
-        );
-    }
+    let produced = producer.wait_with_output().unwrap();
+    tested.unwrap();
+    assert!(
+        produced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&produced.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&produced.stdout).lines().count(), 2);
+    assert!(
+        tcgetattr(&slave)
+            .unwrap()
+            .local_flags
+            .contains(LocalFlags::ICANON)
+    );
+    pty.send(b"\n");
 }

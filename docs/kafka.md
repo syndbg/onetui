@@ -49,7 +49,41 @@ Unknown settings are rejected. Broker metadata can advertise endpoints other tha
 
 ## Navigation and values
 
-Enter on a connection opens topics. Enter on a topic opens partitions; Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
+Enter on a connection opens a local resource menu with Topics, Brokers and Groups. The menu does not connect to Kafka; selecting an entry starts its native read. Topics opens topic metadata, then partitions; Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
+
+Brokers lists IDs, hosts and ports advertised by Kafka. Groups lists names, state, protocol and member counts; Enter opens member IDs, client IDs/hosts, metadata and assignment bytes. Assignments remain raw protocol bytes, available in the value viewer; OneTUI does not claim they are decoded partition assignments. Group names must fit 1..1024 UTF-8 bytes without control characters. These views do not join, rebalance or commit for any inspected group. They re-read and locally page metadata, so membership may change between pages. Committed-offset/lag views and broker/topic configuration inspection are not implemented yet.
+
+Group inspection requires `Describe` on the inspected groups. Kafka can omit unauthorized groups; an empty listing is not proof that no groups exist. The resource menu adds no permissions or connection settings by itself. Esc returns through retained parent views to the menu.
+
+Group/member arrays are limited to 4 MiB of native structures during conversion, and each retained page is limited to 100 rows and 1 MiB including its continuation. These are not process-memory guarantees. Per-group broker errors remain errors, not empty membership. Missing or hidden groups cannot be distinguished from an omitted metadata entry.
+
+### Replay from an offset or timestamp
+
+Select a partition or open its records, then press `e` or use `:query`. Ctrl-U clears the draft; Enter or F5 executes JSON such as:
+
+```json
+{"offset":123,"end_offset":250}
+```
+
+This reads offsets `[123, 250)` in the selected partition. Use a Unix timestamp in milliseconds instead of `offset` to resolve a starting position:
+
+```json
+{"timestamp_ms":1750000000369}
+```
+
+| Field | Values and default |
+| --- | --- |
+| `offset` | Optional nonnegative signed 64-bit integer. Omitted or null starts at the earliest available offset, unless `timestamp_ms` is supplied. |
+| `timestamp_ms` | Optional nonnegative signed 64-bit integer, milliseconds since the Unix epoch. Cannot be combined with a non-null `offset`. Kafka resolves the first offset at or after this time. This chooses a start position; it does not filter every record by timestamp. |
+| `end_offset` | Optional nonnegative signed 64-bit integer, exclusive. Omitted or null captures the current read-committed end. An explicit end must lie within the available partition window and cannot precede an explicit start. |
+
+`{}` replays from the earliest available offset. Unknown fields, fractions, negative values and out-of-range integers fail before a broker request. A timestamp with no matching record, or whose matching offset lies beyond the selected end, returns an empty page. Explicit offsets outside the available window fail rather than silently jumping elsewhere.
+
+The existing 100-row and 1 MiB limits apply. `n/p` uses bookmarks bound to the exact query text, partition and session; changing the query starts a new window. Records keep their native bytes and headers. Replay never joins a group or commits offsets. The query stays above its results; Esc returns to ordinary browsing. Following is available in the ordinary `kafka.records` view, not query results.
+
+Replay adds no connection settings or CLI flags. `onetui schema --datasource kafka` lists its inputs and result resource. See [editor keys](queries.md).
+
+### Record values and bounds
 
 Records include the partition offset, millisecond timestamp when available, key, value and headers. Keys and values remain bytes, even if valid UTF-8. Auto display shows valid UTF-8 as text or complete JSON objects/arrays; invalid UTF-8 falls back to hex. For example, `make dev-traffic` produces the readable key `demo` and a JSON value. Use `v` in field detail to choose text, JSON, hex or binary explicitly. Decoding never replaces invalid bytes or changes retained data. A tombstone has a null value; empty bytes remain an empty value. Headers use an ordered JSON list of names and nullable byte arrays, so duplicate names survive.
 
@@ -88,6 +122,6 @@ make dev-traffic
 make run
 ```
 
-Choose `local_kafka`, `demo_live`, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
+Choose `local_kafka`, Topics, `demo_live`, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
 
 SQL, publishing from the app, consumer-group administration, schema-registry decoding, mutual TLS, OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.

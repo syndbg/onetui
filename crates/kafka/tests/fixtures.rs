@@ -1,4 +1,6 @@
-use onetui_core::provider::{Executor, PageRequest, Provider, RequestContext, ShutdownContext};
+use onetui_core::provider::{
+    Executor, PageRequest, Provider, QueryRequest, RequestContext, ShutdownContext,
+};
 use onetui_core::{Page, Resource, Value};
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
 use std::time::Duration;
@@ -264,6 +266,31 @@ async fn kafka_verified_tls_sasl_and_native_auth_errors() {
                 context,
             )
             .await;
+        if expected.is_none() && mechanism.is_some() {
+            let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+            let denied = executor
+                .fetch_page(
+                    PageRequest {
+                        resource: Resource::new(
+                            "kafka.members",
+                            vec!["fixture-protected-group".into()],
+                        ),
+                        continuation: None,
+                    },
+                    context,
+                )
+                .await
+                .unwrap_err();
+            // ListGroups hides unauthorized names before DescribeGroups can return
+            // a per-group error. Absence must not become a successful empty view.
+            assert!(
+                denied
+                    .to_string()
+                    .contains("Kafka group missing from metadata"),
+                "omitted group must not look like an empty membership: {denied:#}"
+            );
+            assert!(!denied.to_string().contains(password));
+        }
         executor
             .shutdown(ShutdownContext::new(Duration::from_secs(2)))
             .await
@@ -284,6 +311,94 @@ async fn kafka_verified_tls_sasl_and_native_auth_errors() {
 
 #[tokio::test]
 #[ignore = "requires the disposable seeded Kafka fixture; read-only"]
+async fn kafka_replays_offsets_timestamps_and_exclusive_ranges() {
+    let mut executor = executor();
+    let request = |text: &str, continuation: Option<String>| QueryRequest {
+        page: PageRequest {
+            resource: Resource::new("kafka.query", vec!["demo_events".into(), "0".into()]),
+            continuation,
+        },
+        text: text.into(),
+    };
+    let text = r#"{"offset":123,"end_offset":250}"#;
+    let mut token = None;
+    let mut bookmark = None;
+    for (start, count) in [(123, 100), (223, 27)] {
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let page = executor
+            .query_page(request(text, token), context)
+            .await
+            .unwrap();
+        assert_eq!(page.rows.len(), count);
+        assert_eq!(page.rows[0].cells[0], Some(start.to_string().into()));
+        if start == 123 {
+            bookmark = page.continuation.clone();
+        }
+        token = page.continuation;
+    }
+    assert!(token.is_none());
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let again = executor
+        .query_page(request(text, bookmark.clone()), context)
+        .await
+        .unwrap();
+    assert_eq!(again.rows[0].cells[0], Some("223".into()));
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    assert!(
+        executor
+            .query_page(request("{}", bookmark), context)
+            .await
+            .is_err()
+    );
+    // The fixture assigns event n to partition n % 3 with timestamp base + n.
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let timed = executor
+        .query_page(
+            request(r#"{"timestamp_ms":1750000000369,"end_offset":130}"#, None),
+            context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(timed.rows.len(), 7);
+    assert_eq!(timed.rows[0].cells[0], Some("123".into()));
+    for text in [
+        r#"{"timestamp_ms":1750009999999}"#,
+        r#"{"offset":250,"end_offset":250}"#,
+        r#"{"timestamp_ms":1750000000369,"end_offset":100}"#,
+    ] {
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let page = executor
+            .query_page(request(text, None), context)
+            .await
+            .unwrap();
+        assert!(page.rows.is_empty() && !page.next);
+    }
+    for text in [r#"{"offset":501}"#, r#"{"end_offset":501}"#] {
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let error = executor
+            .query_page(request(text, None), context)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("available"), "{error:#}");
+    }
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    cancel.send(()).unwrap();
+    assert!(
+        executor
+            .query_page(request("{}", None), context)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("cancelled")
+    );
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable seeded Kafka fixture; read-only"]
 async fn kafka_browses_seeded_partitions_and_refetches_old_bookmarks() {
     let mut executor = executor();
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
@@ -296,6 +411,10 @@ async fn kafka_browses_seeded_partitions_and_refetches_old_bookmarks() {
             .contains("metadata readable")
     );
     let topics = fetch(&executor, Resource::new("kafka.topics", vec![]), None).await;
+    let brokers = fetch(&executor, Resource::new("kafka.brokers", vec![]), None).await;
+    assert_eq!(brokers.rows.len(), 1);
+    assert_eq!(brokers.rows[0].cells[0], Some("1".into()));
+    assert_eq!(brokers.rows[0].cells[2], Some("19092".into()));
     let target = topics
         .rows
         .iter()
@@ -530,6 +649,31 @@ async fn kafka_transactions_limits_and_application_offsets() {
             .add_partition_offset(&test_topic, 0, Offset::Offset(7))
             .unwrap();
         observer.commit(&offsets, CommitMode::Sync).unwrap();
+        observer.subscribe(&[&test_topic]).unwrap();
+        let joined_by = std::time::Instant::now() + Duration::from_secs(10);
+        while observer.assignment().unwrap().count() == 0 {
+            let _ = observer.poll(Duration::from_millis(100));
+            assert!(
+                std::time::Instant::now() < joined_by,
+                "fixture consumer did not join its own test group"
+            );
+        }
+        let groups = fetch(&executor, Resource::new("kafka.groups", vec![]), None).await;
+        let group_name = format!("{test_topic}_application");
+        let group = groups
+            .rows
+            .iter()
+            .find(|row| row.cells[0] == Some(group_name.clone().into()))
+            .expect("fixture application group");
+        let members = fetch(&executor, group.target.clone().unwrap(), None).await;
+        assert_eq!(members.rows.len(), 1);
+        assert!(
+            matches!(&members.rows[0].cells[3], Some(Value::Bytes(value)) if !value.is_empty())
+        );
+        assert!(
+            matches!(&members.rows[0].cells[4], Some(Value::Bytes(value)) if !value.is_empty())
+        );
+        observer.unsubscribe();
         let live_first = follow(&executor, resource.clone(), tail.continuation.clone()).await;
         let live_second = follow(&executor, resource.clone(), live_first.continuation).await;
         assert_eq!(live_first.rows.len() + live_second.rows.len(), 120);

@@ -8,6 +8,8 @@ compose=(docker compose --project-name onetui-fixtures --env-file /dev/null -f "
 # Never inherit real database credentials for fixture commands.
 export ONETUI_POSTGRES_URL='postgresql://onetui_reader:fixture-reader-only@127.0.0.1:15432/onetui_fixture?sslmode=disable'
 export ONETUI_QDRANT_API_KEY='fixture-reader-only'
+export ONETUI_NATS_USERNAME='fixture-reader'
+export ONETUI_NATS_PASSWORD='fixture-reader-only'
 
 check_connection() {
     ./target/debug/onetui --check --config hack/connections.toml --connection "$1" --timeout 2
@@ -30,6 +32,7 @@ up() {
     wait_for_connection local_pg
     wait_for_connection local_qdrant
     wait_for_connection local_kafka
+    wait_for_connection local_nats
     seed
 }
 
@@ -38,6 +41,7 @@ seed() {
     "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
     cargo run -p onetui-qdrant --example seed_demo --locked
     cargo run -p onetui-kafka --example seed_demo --locked
+    cargo run -p onetui-nats --example seed_nats --locked
 }
 
 cleanup() {
@@ -50,15 +54,55 @@ cleanup() {
     exit "$status"
 }
 
+stop_traffic() {
+    local status=$?
+    trap - EXIT INT TERM
+    # Use the job table even if a signal arrives before a new PID is recorded.
+    local pids
+    pids=$(jobs -pr)
+    if [[ -n $pids ]]; then
+        kill -TERM $pids 2>/dev/null || true
+    fi
+    wait 2>/dev/null || true
+    exit "$status"
+}
+
+traffic() {
+    check_connection local_kafka
+    check_connection local_nats
+    cargo build -p onetui-kafka --example produce_demo --locked
+    cargo build -p onetui-nats --example produce_nats --locked
+    traffic_pids=()
+    trap stop_traffic EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    ./target/debug/examples/produce_demo &
+    traffic_pids+=("$!")
+    ./target/debug/examples/produce_nats &
+    traffic_pids+=("$!")
+    # macOS ships Bash 3.2, without wait -n. Notice either producer exiting.
+    while true; do
+        for pid in "${traffic_pids[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                local status=0
+                wait "$pid" || status=$?
+                printf 'Traffic producer exited (status %s); stopping both.\n' "$status" >&2
+                return "$status"
+            fi
+        done
+        sleep 0.2
+    done
+}
+
 case "${1:-}" in
-    up|check|test|run|seed|traffic)
+    up|check|test|run|seed|traffic|traffic-kafka|traffic-nats)
         if [[ ! -x target/debug/onetui ]]; then
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
         ;;
     down|logs) ;;
-    *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|traffic|down|logs}\n' >&2; exit 2 ;;
+    *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|traffic|traffic-kafka|traffic-nats|down|logs}\n' >&2; exit 2 ;;
 esac
 
 if [[ "$1" == run ]]; then
@@ -80,11 +124,16 @@ docker info >/dev/null
 case "$1" in
     up) up ;;
     seed) seed ;;
-    traffic)
+    traffic) traffic ;;
+    traffic-kafka)
         check_connection local_kafka
         exec cargo run -p onetui-kafka --example produce_demo --locked
         ;;
-    check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka ;;
+    traffic-nats)
+        check_connection local_nats
+        exec cargo run -p onetui-nats --example produce_nats --locked
+        ;;
+    check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka; check_connection local_nats ;;
     down) "${compose[@]}" down --timeout 10 ;;
     logs) "${compose[@]}" logs --no-color --tail 100 ;;
     test)
@@ -97,6 +146,7 @@ case "$1" in
         trap 'exit 143' TERM
         up
         cargo build -p onetui-kafka --example produce_demo --locked
+        cargo build -p onetui-nats --example produce_nats --locked
         cargo test --workspace --locked --test fixtures -- --ignored --test-threads=1
         ;;
 esac

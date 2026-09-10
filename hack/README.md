@@ -7,17 +7,17 @@ Linux builds also require CURL development headers (`libcurl4-openssl-dev` on De
 ```sh
 make dev-up        # builds, starts databases, waits for reads, seeds demos
 make dev-seed      # adds demos to running fixtures without resetting them
-make check-local   # checks PostgreSQL, Qdrant and Kafka with fixture settings
+make check-local   # checks PostgreSQL, Qdrant, Kafka and NATS with fixture settings
 make run           # connection picker; uses existing fixtures, q quits
 make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
 
-`make run` builds and supplies fake PostgreSQL and Qdrant credentials; it does not start/recreate containers. It opens the connection picker without contacting a datasource. Choose `local_pg`, `local_qdrant` or `local_kafka` and press Enter. PostgreSQL opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables, a Qdrant `demo_*` collection, or a Kafka `demo_*` topic and partition. Press `c` to return to the picker. Only an explicit CLI `--connection <alias>` skips the picker. See [PostgreSQL usage](../docs/postgres.md), [Qdrant usage](../docs/qdrant.md) and [Kafka usage](../docs/kafka.md).
+`make run` builds and supplies fake PostgreSQL, Qdrant and NATS credentials; it does not start/recreate containers. It opens the connection picker without contacting a datasource. Choose `local_pg`, `local_qdrant`, `local_kafka` or `local_nats` and press Enter. PostgreSQL opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables, a Qdrant `demo_*` collection, or a Kafka `demo_*` topic and partition. Press `c` to return to the picker. Only an explicit CLI `--connection <alias>` skips the picker. See [PostgreSQL usage](../docs/postgres.md), [Qdrant usage](../docs/qdrant.md) [Kafka usage](../docs/kafka.md) and [NATS usage](../docs/nats.md).
 
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`; Apache Kafka 4.2.0 listens on `127.0.0.1:19092`. Kafka runs one combined KRaft broker/controller with auto topic creation disabled and no authentication on the local development listener. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 
-A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` checks the normal PostgreSQL, Qdrant and Kafka connection aliases.
+A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` checks the normal PostgreSQL, Qdrant, Kafka and NATS connection aliases.
 
 Kafka also binds verified TLS on `127.0.0.1:19093` and SASL over TLS on `127.0.0.1:19094`, advertised as `localhost`. Its self-signed localhost certificate and keys live in container tmpfs for two days. Tests copy only the public certificate into a temporary `ca_file`; the OS trust store is unchanged. `kafka-security.sh` sets fixture-only PLAIN/SCRAM credentials and grants `fixture-reader` topic `Read`/`Describe` on `demo_*` and group `Describe` on `onetui-*`. It grants no group `Read`. `fixture-denied` has no ACLs. These accounts and the unauthenticated development listener are only for this disposable broker, not a deployment template.
 
@@ -25,11 +25,28 @@ The scripts set fixture-only credentials in their own process and do not modify 
 
 If you ran the previous `bpearl-fixtures` project, it remains untouched by this rename and may still occupy the same ports. When ready to discard its temporary data, run `docker compose --project-name bpearl-fixtures -f hack/compose.yaml down`, then `make dev-up` for the new `onetui-fixtures` project. Configuration now defaults to `~/.config/onetui/config.toml`; old configuration is not moved automatically. Environment references are explicit TOML values, so existing custom variable names still work when explicitly configured.
 
+## Shared traffic
+
+Run `make dev-traffic` after `make dev-up` to produce Kafka and NATS traffic together. It checks both connections and builds both package-owned producers before starting either. Each producer sends immediately, then every 15 seconds. Output identifies Kafka's `demo_live` partition/offset or NATS's `DEMO_LIVE` stream sequence.
+
+Ctrl-C or SIGTERM stops and reaps both producers. If either exits, the command stops the other and returns the exited producer's status. It does not restart producers or remove fixtures. Both brokers must be ready; a failed preflight/build starts neither producer. No new TOML settings or environment variables are needed.
+
+```sh
+make dev-up
+make dev-traffic         # Kafka and NATS together
+make dev-traffic-kafka   # Kafka only, instead of the shared command
+make dev-traffic-nats    # NATS only, instead of the shared command
+```
+
+These commands append to disposable fixtures without reading user connection configuration. Do not run multiple traffic commands unless you want multiple independent producers.
+
 ## Kafka traffic
+
+In OneTUI, choose `local_kafka`, Topics, `demo_live`, partition `0`, then `f` to follow. The Kafka resource menu also exposes broker metadata and consumer-group members. To replay seeded data, open Topics → `demo_events` → partition `0`, press `e`, clear with Ctrl-U and execute `{"offset":123,"end_offset":250}`. [Kafka usage](../docs/kafka.md) documents the inputs, limits and permissions. No connection configuration changes are required.
 
 Auto display shows the demo key as `demo` and the value as JSON; invalid UTF-8 in the other datasets remains hex. Retained bytes are unchanged. Open a field and use `v` to select hex/binary explicitly.
 
-After `make dev-up`, run `make dev-traffic` in a separate terminal. This opt-in producer sends one JSON record immediately, then one every 15 seconds until Ctrl-C. It connects only to the fixed disposable broker at `127.0.0.1:19092`, creates `demo_live` with one partition if absent and appends without resetting existing data. Newly created topics use a one-hour / 64 MiB retention policy; Kafka applies retention asynchronously. Existing topic settings are preserved. The four seeded Kafka datasets are unchanged.
+After `make dev-up`, run `make dev-traffic` (both brokers) or `make dev-traffic-kafka` (Kafka only) in a separate terminal. The Kafka producer sends one JSON record immediately, then one every 15 seconds until Ctrl-C. It connects only to the fixed disposable broker at `127.0.0.1:19092`, creates `demo_live` with one partition if absent and appends without resetting existing data. Newly created topics use a one-hour / 64 MiB retention policy; Kafka applies retention asynchronously. Existing topic settings are preserved. The four seeded Kafka datasets are unchanged.
 
 In another terminal run `make run`, select `local_kafka`, open `demo_live` and partition `0`, then press `f` in the record view. `f` or Ctrl-C stops following and keeps the displayed window. Navigation/inspection also stops it. Starting again reads only from a new current end. `r` returns to historical browsing.
 
@@ -43,7 +60,23 @@ cargo run -p onetui-kafka --example produce_demo --locked -- --count 2
 
 The integration runner builds the example. Kafka's live CLI test runs the two-record producer and checks timed arrival, stop, retained row inspection, restart and connection switching. It uses only the disposable fixture.
 
+## NATS traffic
+
+NATS 2.12.15 runs on `127.0.0.1:14222`; a separate verified-TLS fixture uses `127.0.0.1:14223`. Their local Docker build adds OpenSSL to generate two-day fixture certificates in tmpfs. No host trust-store changes. Monitoring stays inside the containers. JetStream memory is capped at 256 MiB per server. Fake `fixture-reader` credentials permit only account/stream metadata and stored-message GET requests plus private replies—not application publishing, consumer creation or ACKs. `fixture-admin` is used only by setup/tests; `fixture-denied` denies all publishing. This is not a deployment template.
+
+`hack/dev.sh` sets child-process `ONETUI_NATS_USERNAME=fixture-reader` and `ONETUI_NATS_PASSWORD=fixture-reader-only` for the `local_nats` alias. These names are fixture references, not automatically discovered application settings. `ONETUI_NATS_TLS=true` is a container-entrypoint switch for the separate TLS server; unset/false selects its plaintext listener, not an app setting.
+
+After `make dev-up`, run `make dev-traffic` (both brokers) or `make dev-traffic-nats` (NATS only) in a separate terminal. It sends one JSON message immediately, then every 15 seconds until Ctrl-C. In `make run`, choose `local_nats`, open `DEMO_LIVE` and press `f`. Existing messages are browsable before following; `f` starts at the current end. Stop with `f` or Ctrl-C; navigation/inspection also stops updates.
+
+```sh
+cargo run -p onetui-nats --example produce_nats --locked -- --count 2
+```
+
+The optional `--count` is a positive integer message count; omission runs until interrupted. Invalid/unknown arguments fail. Two messages take at least 15 seconds. Endpoint `127.0.0.1:14222`, subject `demo.live`, fixture credentials and interval are fixed; no application config or environment credentials are read. `DEMO_LIVE` must already exist from setup. This example does not make publishing available inside OneTUI.
+
 ## Demo data
+
+NATS streams are `DEMO_EVENTS` (1,205 nested JSON messages), `DEMO_BINARY` (260 invalid-UTF-8, empty, Unicode and JSON payloads), `DEMO_WIDE` (110 messages with 40 nested fields), `DEMO_EMPTY` and `DEMO_LIVE`. Headers include duplicate `X-Demo` values. Each stream has a 32 MiB memory-storage limit. The NATS seeder only connects to the fixed fixture and never purges data; an existing nonempty stream is preserved, including a partial seed. Reset fixtures explicitly if a seed was interrupted. Tests create their own streams for sparse sequences, retention, consumer-state checks and oversized data.
 
 Kafka includes `demo_events` (1,500 JSON records across three partitions), `demo_binary` (512 records across two partitions), `demo_tombstones` (64 null/empty/JSON values) and `demo_empty`. Records include exact timestamps, binary keys, duplicate headers, invalid UTF-8 and terminal-control bytes. Retention is disabled for this disposable broker so historical fixture timestamps do not expire. The seeder uses Zstandard compression and only connects to `127.0.0.1:19092`. Repeated seeding preserves topics with the expected partition/offset counts; a mismatch fails without replacing data. It never targets a user-supplied broker.
 
@@ -88,6 +121,8 @@ To retain containers for debugging, use `make dev-up` followed by:
 ```sh
 cargo test -p onetui-postgres --locked --test fixtures -- --ignored --test-threads=1
 cargo test -p onetui-qdrant --locked --test fixtures -- --ignored --test-threads=1
+cargo build -p onetui-nats --example produce_nats --locked
+cargo test -p onetui-nats --locked --test fixtures -- --ignored --test-threads=1
 ```
 
 Keep these package-owned suites separate; do not parameterize a harness over both backends. `make verify` runs workspace-wide build/lint/default tests. For non-Docker package tests, run `make build` followed by `cargo test -p onetui-postgres --locked` or `cargo test -p onetui-qdrant --locked`. CLI tests use `target/debug/onetui`; test-only `ONETUI_TEST_BIN` optionally selects another prebuilt binary path (prefer an absolute path for custom target directories).

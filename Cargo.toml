@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/postgres", "crates/qdrant", "crates/kafka", "crates/theme", "crates/tui"]
+members = ["crates/core", "crates/postgres", "crates/qdrant", "crates/kafka", "crates/nats", "crates/theme", "crates/tui"]
 resolver = "3"
 
 [workspace.package]
@@ -10,6 +10,8 @@ rust-version = "1.98.1"
 
 [workspace.dependencies]
 anyhow = "1"
+async-nats = { version = "0.50", default-features = false, features = ["ring", "jetstream"] }
+base64 = "0.22"
 clap = { version = "4.6", features = ["derive"] }
 # The polling backend avoids stranded PTY input during concurrent Unix resize events.
 crossterm = { version = "0.29", features = ["event-stream", "use-dev-tty"] }
@@ -51,6 +53,7 @@ onetui-core = { path = "crates/core" }
 onetui-postgres = { path = "crates/postgres" }
 onetui-qdrant = { path = "crates/qdrant" }
 onetui-kafka = { path = "crates/kafka" }
+onetui-nats = { path = "crates/nats" }
 onetui-tui = { path = "crates/tui" }
 onetui-theme = { path = "crates/theme" }
 toml.workspace = true

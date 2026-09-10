@@ -1,6 +1,6 @@
 # Native queries
 
-Press `e` or type `:query` on a connected datasource to open its query editor. PostgreSQL accepts SQL. Qdrant accepts filtered Scroll JSON for the current collection, or the selected collection in the collection list. `/` remains a filter over the displayed page; it never sends a query.
+Press `e` or type `:query` on a connected datasource to open its query editor. PostgreSQL accepts SQL. Qdrant accepts filtered Scroll JSON for the current collection, or the selected collection in the collection list. Kafka accepts replay JSON for the current or selected partition. `/` remains a filter over the displayed page; it never sends a query.
 
 | Editor key | Purpose |
 | --- | --- |
@@ -74,6 +74,16 @@ The supported JSON is a subset of Qdrant's Scroll request:
 
 Each condition needs exactly one of `match` or `range`. Unknown fields are errors, including misspelled filter keys. Nested conditions, match-any/except/text, geo/datetime conditions, custom ordering and vector similarity queries are not supported. Offset and payload/vector selectors are not editor inputs. OneTUI owns native Scroll offsets and leaves payloads/vectors unloaded until you open a point. `{}` browses unfiltered point IDs. The RPC response and retained page each have a 1 MiB limit.
 
+## Kafka
+
+Select a partition or open its records, press `e`, then Ctrl-U and paste:
+
+```json
+{"offset":123,"end_offset":250}
+```
+
+Enter or F5 reads offsets `[123, 250)` without commits. Use `timestamp_ms` instead of `offset` to resolve a starting position by Unix milliseconds. `{}` starts at the earliest available offset. Results use the same bounded pages, query-scoped bookmarks and value viewer as other queries. See [Kafka replay inputs and limits](kafka.md#replay-from-an-offset-or-timestamp).
+
 ## Provider contract and configuration
 
 [ADR-0005](adr/0005-run-native-queries-through-providers.md) records the provider-owned query decision and rejected alternatives.
@@ -85,4 +95,5 @@ This feature adds no configuration keys or CLI flags. Inspect the compiled capab
 ```sh
 onetui schema --datasource postgres
 onetui schema --datasource qdrant
+onetui schema --datasource kafka
 ```

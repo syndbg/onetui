@@ -18,7 +18,7 @@ The local databases contain disposable test data. `make dev-down` removes their 
 
 ## Changes and pull requests
 
-Keep each change focused. Implement connector behavior and tests in its owning package; core and TUI code must not gain backend-specific branches. PostgreSQL, Qdrant and Kafka have separate test suites, not a shared backend test loop.
+Keep each change focused. Implement connector behavior and tests in its owning package; core and TUI code must not gain backend-specific branches. PostgreSQL, Qdrant, Kafka and NATS have separate test suites, not a shared backend test loop.
 
 Add regression coverage for bugs and relevant boundary/error tests for features. Update documentation and configuration examples with the code. Describe each setting's purpose, supported values, default and usage; distinguish implemented behavior from planned support.
 

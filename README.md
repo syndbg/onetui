@@ -4,7 +4,7 @@ Explore databases and streams from your terminal.
 
 OneTUI brings k9s-style navigation to databases and streams: connection switching, a command palette, tables, filtering, and drill-down inspection.
 
-The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are implemented; write operations and additional datasources are planned for later versions. See [validation and release status](CONTRIBUTING.md#validation-status).
+The initial version, v0.1.0, is read-only. PostgreSQL, Qdrant, Kafka and NATS JetStream browsing are implemented; write operations and additional datasources are planned for later versions. See [validation and release status](CONTRIBUTING.md#validation-status).
 
 ## Features and datasource support
 
@@ -13,15 +13,15 @@ The initial version, v0.1.0, is read-only. PostgreSQL and Qdrant browsing are im
 | PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, SQL query editor, cached field detail, headless checks | Query parameters, writes |
 | Qdrant | Implemented, read-only | Collections and metadata, point ID paging, filtered Scroll JSON editor, on-demand payload and dense/sparse/multivector detail, headless checks | Advanced/nested filters, similarity search, writes |
 | DynamoDB | Planned | None | Connector and all datasource operations |
-| Kafka | [Implemented](docs/kafka.md) | Topic/partition metadata, read-committed record paging and live following, byte-value inspection, headless checks, verified TLS and SASL PLAIN/SCRAM | Cross-partition following, publishing, group administration, schema registry; hosted release validation pending |
-| NATS | Planned | None | Connector and all datasource operations |
+| Kafka | [Implemented](docs/kafka.md) | Resource menu, broker/topic/partition metadata, consumer groups and members, read-committed record paging and live following, offset/timestamp replay JSON editor, byte-value inspection, headless checks, verified TLS and SASL PLAIN/SCRAM | Lag/committed offsets, broker/topic configuration, cross-partition following, publishing, group administration, schema registry; hosted release validation pending |
+| NATS | [Implemented, read-only](docs/nats.md) | JetStream streams and configuration/state, sequence-based message paging and bookmarks, live following, byte/header inspection, headless checks, TLS and token/username-password configuration | Core NATS subscriptions, KV/object-store views, native queries, publishing, consumer administration, NKEY/JWT, schema registry |
 | RabbitMQ | Planned | None | Connector and all datasource operations |
 
 Qdrant browsing means opening a collection, paging through its point IDs, then opening a point's payload or vectors. Those are existing reads, not a similarity search. See [Qdrant usage](docs/qdrant.md) for navigation and limits.
 
-PostgreSQL and Qdrant share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings are planned.
+All implemented datasources share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings are planned.
 
-Press `e` or use `:query` for native querying: SQL on PostgreSQL, filtered Scroll JSON on the selected Qdrant collection. The compact editor sits above retained rows. Enter or F5 executes; Shift+Enter adds a line; Ctrl-U clears the draft; Esc returns to rows. Ctrl-R also executes. After execution, the query stays visible above its results; press `e` to edit again. Drafts stay in memory, and `/` stays page-local. See [query examples, supported syntax and terminal requirements](docs/queries.md).
+Press `e` or use `:query` for native querying: SQL on PostgreSQL, filtered Scroll JSON on the selected Qdrant collection, offset/timestamp replay JSON on a Kafka partition. The compact editor sits above retained rows. Enter or F5 executes; Shift+Enter adds a line; Ctrl-U clears the draft; Esc returns to rows. Ctrl-R also executes. After execution, the query stays visible above its results; press `e` to edit again. Drafts stay in memory, and `/` stays page-local. See [query examples, supported syntax and terminal requirements](docs/queries.md).
 
 Use `n/p` to move between datasource pages. Previous pages come from the row cache or are refetched from in-memory bookmarks, so cache eviction does not prevent returning to page 1. Refetched data may have changed. [Navigation and bookmark limits](docs/ui.md#navigation) describe the behavior; `onetui schema` prints the limits.
 
@@ -33,7 +33,7 @@ Read and write support is the direction for OneTUI, not a capability of the init
 - Ratatui and Crossterm for terminal rendering, keyboard input and terminal lifecycle.
 - Tokio for asynchronous requests, cancellation and connection tasks.
 - `tokio-postgres` with Rustls for PostgreSQL; `qdrant-client` and Tonic for Qdrant gRPC.
-- `rdkafka` with native librdkafka/OpenSSL for Kafka.
+- `rdkafka` with native librdkafka/OpenSSL for Kafka; `async-nats` with Rustls for NATS JetStream.
 - Clap for CLI arguments; Serde, JSON and TOML for configuration and the offline catalog.
 
 Datasources are compiled into the binary using static enum dispatch. Adding one requires a connector package and a rebuild; runtime plugins are not planned.
@@ -80,9 +80,11 @@ onetui --config "$HOME/onetui.toml" --connection local_qdrant
 onetui schema
 onetui schema --datasource postgres
 onetui schema --datasource qdrant
+onetui schema --datasource kafka
+onetui schema --datasource nats
 ```
 
-Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `/` filters this page's cached text; `s` cycles lexical sort on the selected field; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts only `postgres` or `qdrant`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
+Interactive mode navigates schemas → tables/views → row pages → field/type detail. `Enter` opens rows/detail; `m` opens column metadata; `h/l` selects fields; `/` filters this page's cached text; `s` cycles lexical sort on the selected field; `n/p` pages (or text chunks inside detail). Row pages use eligible unique bigint/text keysets, otherwise visibly best-effort OFFSET. Both use short independent reads, not a cross-page snapshot. `schema` prints implemented resources, columns, action IDs/default keys, configuration fields, defaults and examples without loading config, resolving secrets, connecting, or taking over the terminal. Its optional `--datasource` accepts `postgres`, `qdrant`, `kafka` or `nats`. An explicit `--config` before `schema` is ignored, so the config-based `ot` alias works; `--check` and `--connection` cannot be combined with `schema`.
 
 Qdrant navigation opens collections, then a choice of points or metadata. Point pages fetch IDs only. Open a point, then select payload or vectors for a separate read. Dense, sparse and multivectors retain their values and names; limits reject oversized detail explicitly. `make run` opens the connection picker with fixture credentials supplied; select `local_qdrant` to browse the seeded demo collections.
 
@@ -103,6 +105,7 @@ Selected sessions connect lazily and retain healthy transports. PostgreSQL finis
 | [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, row/metadata queries, descriptors and PostgreSQL-only tests |
 | [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, collection/point/detail reads, descriptors and Qdrant-only tests |
 | [`onetui-kafka`](crates/kafka/README.md) | Kafka TLS/SASL, native client lifetime, metadata/record reads, live batches, offset bookmarks and Kafka-only tests |
+| [`onetui-nats`](crates/nats/README.md) | NATS TLS/authentication, native client lifetime, JetStream metadata/message reads, live batches, sequence bookmarks and NATS-only tests |
 | [`onetui-tui`](crates/tui/README.md) | Navigation, request lifecycle, rendering and terminal tests |
 | [`onetui-theme`](crates/theme/README.md) | Built-in theme names and semantic RGB palettes; no terminal or datasource dependencies |
 
@@ -140,11 +143,13 @@ Start with the CLI dump when configuring OneTUI. It describes the settings, defa
 onetui schema
 onetui schema --datasource postgres
 onetui schema --datasource qdrant
+onetui schema --datasource kafka
+onetui schema --datasource nats
 ```
 
 The commands print JSON offline without reading your config, resolving secrets or connecting to a datasource. This is OneTUI's configuration and capability catalog, not the schema of a live database or a dump of your current settings. Use it as the version-specific reference; the table below summarizes the connection settings.
 
-Top-level settings are the optional `theme` string, optional `[display]` table and required `[connections]` table, containing named `[connections.<alias>]` entries. Use an empty `[connections]` table when no aliases are configured. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Both support headless checks. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
+Top-level settings are the optional `theme` string, optional `[display]` table and required `[connections]` table, containing named `[connections.<alias>]` entries. Use an empty `[connections]` table when no aliases are configured. PostgreSQL supports row/metadata browsing; Qdrant supports collections, metadata, point IDs and separate payload/vector reads. Kafka browses partition records; NATS browses JetStream messages. All four support headless checks. See [Kafka settings](docs/kafka.md) and [NATS settings](docs/nats.md#configuration) for broker authentication and limits. There are no built-in connection aliases or default endpoints; pass `--connection <alias>` or use the interactive picker.
 
 `theme` colors every TUI screen. Accepted names are exactly `catppuccin`, `gruvbox`, `solarized`, `nord`, `dracula`, `tokyo-night`, `one-dark`, `rose-pine`, `monokai` and `flexoki`. Omission selects `catppuccin`; each name selects one fixed dark palette. Names are case-sensitive. Empty/unknown names and non-string values fail validation, including with `--check`, without echoing the supplied value. Theme names are not environment-expanded. There is no separate theme file, CLI override or file watching; restart to read configuration changes. Existing files without `theme` keep the original colors. See [palette variants and sources](crates/theme/README.md#palettes).
 
@@ -152,11 +157,15 @@ Press `T` or type `:themes` and Enter to list all themes inside the app. `j`/`k`
 
 | Field | Applies to | Required / default |
 | --- | --- | --- |
-| `kind` | Every connection | Required: exactly `"postgres"` or `"qdrant"` |
+| `kind` | Every connection | Required: exactly `"postgres"`, `"qdrant"`, `"kafka"` or `"nats"` |
 | `url_env` | PostgreSQL | Required: name of the environment variable containing the connection string; no inline `url` field |
 | `ca_file` | PostgreSQL | Optional absolute path to a regular PEM file, at most 1 MiB (1,048,576 bytes); omitted uses the native-root loader. An explicit file replaces those roots and cannot be combined with `sslmode=disable` |
 | `url` | Qdrant | Required: explicit HTTP(S) gRPC endpoint; no default server is supplied |
 | `api_key_env` | Qdrant | Optional environment-variable name; omitted sends no API key. If configured, its value must be present and nonempty |
+| `bootstrap_servers`, `security_protocol` | Kafka | Explicit broker addresses required; verified `SSL` by default. [TLS/SASL settings, values and examples](docs/kafka.md#configuration) |
+| `servers`, `tls` | NATS | Explicit server URLs required; verified TLS by default. `tls=false` only for loopback development |
+| `ca_file` | NATS | Optional absolute regular PEM file, at most 1 MiB; replaces native roots |
+| `token_env` or paired `username_env` / `password_env` | NATS | Optional secret references, resolved on selection; mutually exclusive. [Values, validation and examples](docs/nats.md#configuration) |
 
 Connection aliases and environment-reference names must contain only ASCII letters, digits, underscores or hyphens, and cannot be empty. Only the selected connection's environment references are resolved. The names `ONETUI_POSTGRES_URL` and `ONETUI_QDRANT_API_KEY` below are examples, not automatically read variables; you may explicitly reference other names. Store credentials in those environment variables, not inline password/API-key fields.
 
@@ -233,15 +242,15 @@ Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling
 
 ## Disposable local fixtures and tests
 
-The [hack setup](hack/README.md) uses PostgreSQL 16.13, Qdrant 1.18.2 and Apache Kafka 4.2.0. It binds only to loopback: PostgreSQL 15432, Qdrant 16334/16335 and Kafka 19092/19093/19094 (plaintext/TLS/SASL over TLS). Data lives in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `onetui-fixtures`; don't reuse it for valuable data.
+The [hack setup](hack/README.md) uses PostgreSQL 16.13, Qdrant 1.18.2, Apache Kafka 4.2.0 and NATS 2.12.15. It binds only to loopback: PostgreSQL 15432, Qdrant 16334/16335 and Kafka 19092/19093/19094 (plaintext/TLS/SASL over TLS), and NATS 14222/14223 (plaintext/TLS). Data lives in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `onetui-fixtures`; don't reuse it for valuable data.
 
-For live Kafka traffic, run `make dev-traffic` after `make dev-up`. In another terminal, `make run`, choose `local_kafka`, open `demo_live` and partition `0`, then press `f`. The fixture producer sends one record immediately and every 15 seconds. `f` or Ctrl-C stops following and retains data; navigation/inspection also pauses it. Restart begins at a new current end. See [traffic setup](hack/README.md#kafka-traffic) and [following limits](docs/kafka.md#live-following). Following adds no configuration keys.
+For live Kafka and NATS traffic, run `make dev-traffic` after `make dev-up`. Both producers send immediately and every 15 seconds; Ctrl-C stops both. Use `make dev-traffic-kafka` or `make dev-traffic-nats` to run only one. In another terminal, `make run`, choose `local_kafka`, open `demo_live` and partition `0`, then press `f`. The fixture producer sends one record immediately and every 15 seconds. `f` or Ctrl-C stops following and retains data; navigation/inspection also pauses it. Restart begins at a new current end. See [traffic setup](hack/README.md#kafka-traffic) and [following limits](docs/kafka.md#live-following). Following adds no configuration keys.
 
 ```sh
 make help
 make dev-up              # start local fixtures and seed browsing demos
 make dev-seed            # add demos to already-running fixtures; no reset
-make run                 # choose local_pg or local_qdrant from the picker
+make run                 # choose local_pg, local_qdrant, local_kafka or local_nats
 make verify              # build, formatting, Clippy, shell syntax, non-Docker tests
 make test-integration    # fresh databases -> readiness -> all fixture tests -> cleanup
 make workflow-lint       # workflow gate; requires Go to run pinned actionlint
@@ -252,6 +261,8 @@ No manual secret exports or startup retries are needed. Readiness requires a suc
 The demo includes 8,750 PostgreSQL rows across typed, wide and relational tables, plus 3,062 Qdrant points covering dense, named, sparse and multivectors. Open PostgreSQL's `demo` schema or a Qdrant `demo_*` collection. See the [dataset inventory](hack/README.md#demo-data) for counts and types. The small `public.sample_rows`/`sample_view` fixtures remain separate: SQL NULL, empty text, literal `"NULL"`, Unicode and escaped controls test display correctness, not realistic browsing volume.
 
 The opt-in fixture tests use only the fixed loopback fixture endpoints. They exercise authentication failures, independent PostgreSQL offset/keyset paging, transaction-free reading pauses, TLS CA/hostname verification, cancel-over-TLS, connection loss and oversized fields. Qdrant tests cover numeric/UUID paging, lazy payload retrieval, named dense/sparse/multivectors, point deletion and oversized payload rejection. The PostgreSQL tests mutate only a dedicated fixture table and terminate only their own reader session; Qdrant tests create and remove their own collections using the fixture admin key. Default tests also check oversized metadata and sanitized gRPC errors through a local server. Historical fixed-query experiments remain separate from the production PostgreSQL row/metadata tests. Connector-specific tests live under their own packages; the TUI package owns its keyboard/request-state PostgreSQL journey. Production coverage includes typed composite keysets, server-side size guards, cancellation and connection cleanup. `dev-down` removes the fixture containers/network and their temporary data; it does not touch external databases.
+
+For NATS traffic, use the same `make dev-traffic` command after setup. `make dev-traffic-nats` runs only NATS. Choose `local_nats`, open `DEMO_LIVE`, then press `f` to follow future arrivals. `DEMO_EVENTS` has 1,205 messages; `DEMO_BINARY` has 260 byte/Unicode cases, and `DEMO_WIDE` has 110 nested 40-field messages. An empty stream is included. See [NATS usage and limits](docs/nats.md) and [fixture traffic](hack/README.md#nats-traffic). No consumer is created or acknowledged.
 
 ## Contributing
 

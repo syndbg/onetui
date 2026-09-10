@@ -1,5 +1,20 @@
 use std::process::Command;
 
+#[test]
+fn nats_catalog_is_offline_and_exposes_only_jetstream_read_operations() {
+    let output = dump(&["--datasource", "nats"]);
+    assert!(output.status.success());
+    let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let nats = &schema["datasources"][0];
+    assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
+    assert_eq!(nats["entry_resource"], "nats.streams");
+    assert_eq!(nats["follow_resource"], "nats.messages");
+    assert!(nats["query"].is_null());
+    assert_eq!(nats["resources"].as_array().unwrap().len(), 3);
+    assert_eq!(nats["configuration"]["tls"]["default"], true);
+    assert_eq!(nats["limits"]["page_rows"], 100);
+}
+
 fn dump(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_onetui"))
         .arg("schema")
@@ -183,15 +198,18 @@ fn qdrant_catalog_filter() {
 }
 
 #[test]
-fn kafka_catalog_filter_is_offline_and_does_not_advertise_queries() {
+fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
     let output = dump(&["--datasource", "kafka"]);
     assert!(output.status.success());
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
     let kafka = &schema["datasources"][0];
     assert_eq!(kafka["id"], "kafka");
-    assert_eq!(kafka["entry_resource"], "kafka.topics");
-    assert!(kafka["query"].is_null());
+    assert_eq!(kafka["entry_resource"], "kafka.resources");
+    assert_eq!(kafka["query"]["resource"], "kafka.query");
+    assert_eq!(kafka["query"]["path_depth"], 2);
+    assert_eq!(kafka["query_max_bytes"], 16384);
+    assert!(kafka["replay"]["timestamp_ms"].is_string());
     assert_eq!(kafka["follow_resource"], "kafka.records");
     assert!(
         kafka["operations"]
@@ -203,7 +221,7 @@ fn kafka_catalog_filter_is_offline_and_does_not_advertise_queries() {
     assert_eq!(kafka["following"]["poll_interval_ms"], 1000);
     assert_eq!(kafka["following"]["buffer_rows"], 100);
     assert_eq!(kafka["following"]["buffer_bytes"], 1048576);
-    assert_eq!(kafka["resources"].as_array().unwrap().len(), 3);
+    assert_eq!(kafka["resources"].as_array().unwrap().len(), 8);
     assert_eq!(
         kafka["configuration"]["security_protocol"]["default"],
         "SSL"

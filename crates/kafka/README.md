@@ -1,6 +1,6 @@
 # onetui-kafka
 
-Kafka provider, strict configuration, metadata, bounded record browsing and live follow batches through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
+Kafka provider, strict configuration, metadata, bounded record browsing, offset/timestamp replay and live follow batches through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
 
 The native build uses CMake, a C/C++ toolchain, Make and Perl. Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source; do not install a system librdkafka for this build. TLS uses OpenSSL rather than the other connectors' Rustls stack.
 
@@ -15,6 +15,8 @@ The default native protocol test starts librdkafka's loopback mock cluster. It d
 `cargo test -p onetui-kafka --test fixtures --locked -- --ignored --test-threads=1` runs the Kafka-only fixture suite after `make dev-up`. It checks seeded data, transactions, native group state, size limits and retention-invalidated bookmarks. Security cases verify TLS trust/hostnames, PLAIN and both SCRAM mechanisms, native password/ACL failures and redaction. The transaction test creates a uniquely named topic/group on the fixed disposable broker and removes them afterward, including after assertion failures. The Unix terminal test drives the built CLI through pages, byte inspection, alias switching and terminal-mode restoration. It uses `target/debug/onetui` unless test-only `ONETUI_TEST_BIN` names another built binary. Never point fixture tests at production.
 
 The broker-stall test pauses only the disposable Kafka container, checks repeated cancellation and a request deadline, then unpauses it before propagating assertion failures. It verifies reconnection and another record page afterward. Do not run it alongside another fixture user.
+
+The replay fixture test checks offset ranges, timestamp lookup, an empty result after the latest timestamp, query-bound bookmarks and cancellation. The CLI browsing test also executes replay JSON, pages its results, retains data after an invalid draft and returns to historical browsing.
 
 The live CLI test also needs `cargo build -p onetui-kafka --example produce_demo --locked`; the full integration runner builds it automatically. It sends two records 15 seconds apart to `demo_live` and verifies live arrival, stop, inspection, restart and connection switching. The example is a fixture-only producer; `make dev-traffic` runs it continuously after `make dev-up`.
 

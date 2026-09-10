@@ -9,6 +9,34 @@ use serde::{Deserialize, Serialize};
 
 pub static RESOURCES: &[&ResourceDescriptor] = &[
     &ResourceDescriptor {
+        id: "kafka.resources",
+        description: "Choose topics, brokers or consumer groups; no broker mutation",
+        columns: &["resource", "description"],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
+        id: "kafka.brokers",
+        description: "Broker IDs and advertised addresses from cluster metadata",
+        columns: &["id", "host", "port"],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
+        id: "kafka.groups",
+        description: "Consumer group state and protocol; Enter opens members without joining",
+        columns: &["name", "state", "protocol_type", "protocol", "members"],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
+        id: "kafka.members",
+        description: "Consumer group members with unmodified metadata and assignment bytes",
+        columns: &["id", "client_id", "client_host", "metadata", "assignment"],
+        paging: true,
+        actions: &[],
+    },
+    &ResourceDescriptor {
         id: "kafka.topics",
         description: "Topic metadata; Enter opens partitions without joining a consumer group",
         columns: &["name", "partitions"],
@@ -29,6 +57,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
         paging: true,
         actions: &[],
     },
+    &crate::query::RESOURCE,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +80,8 @@ pub(crate) fn validate(
         "Live following requires a Kafka partition record view"
     );
     let valid = match (request.resource.id, request.resource.path.as_slice()) {
-        ("kafka.topics", []) => true,
+        ("kafka.resources" | "kafka.topics" | "kafka.brokers" | "kafka.groups", []) => true,
+        ("kafka.members", [group]) => valid_group(group),
         ("kafka.partitions", [topic]) => valid_topic(topic),
         ("kafka.records", [topic, partition]) => {
             valid_topic(topic)
@@ -100,6 +130,33 @@ fn valid_topic(topic: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+pub(crate) fn valid_group(group: &str) -> bool {
+    !group.is_empty() && group.len() <= 1024 && !group.chars().any(char::is_control)
+}
+
+pub(crate) fn resources(resource: &Resource, offset: i64, identity: u64) -> Result<Page> {
+    let mut page = page(
+        resource,
+        "Choose a Kafka resource. All operations are read-only.",
+    );
+    let rows = [
+        (
+            "kafka.topics",
+            "Topic partitions and record replay/following",
+        ),
+        ("kafka.brokers", "Broker IDs and advertised addresses"),
+        ("kafka.groups", "Consumer group state and members"),
+    ];
+    ensure!(offset <= rows.len() as i64, "Invalid Kafka resource offset");
+    for (id, description) in rows.into_iter().skip(usize::try_from(offset)?) {
+        page.rows.push(Row {
+            cells: vec![Some(id.into()), Some(description.into())],
+            target: Some(Resource::new(id, vec![])),
+        });
+    }
+    finish(page, resource, identity, None, false)
+}
+
 pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
     let descriptor = RESOURCES
         .iter()
@@ -112,9 +169,11 @@ pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
             .map(|name| Column {
                 name: (*name).into(),
                 datatype: match *name {
-                    "key" | "value" => "bytes",
+                    "key" | "value" | "metadata" | "assignment" => "bytes",
                     "headers" => "JSON (ordered header names and nullable byte arrays)",
-                    "offset" | "timestamp_ms" | "partition" | "leader" | "partitions" => "integer",
+                    "offset" | "timestamp_ms" | "partition" | "leader" | "partitions" | "port"
+                    | "members" => "integer",
+                    "id" if resource.id == "kafka.brokers" => "integer",
                     _ => "text",
                 }
                 .into(),
@@ -164,7 +223,21 @@ pub(crate) fn metadata(
     );
     let offset = usize::try_from(offset)?;
     let total;
-    if resource.id == "kafka.topics" {
+    if resource.id == "kafka.brokers" {
+        let mut brokers: Vec<_> = metadata.brokers().iter().collect();
+        brokers.sort_by_key(|broker| broker.id());
+        total = brokers.len();
+        for broker in brokers.into_iter().skip(offset).take(PAGE_SIZE as usize) {
+            page.rows.push(Row {
+                cells: vec![
+                    Some(broker.id().to_string().into()),
+                    Some(broker.host().into()),
+                    Some(broker.port().to_string().into()),
+                ],
+                target: None,
+            });
+        }
+    } else if resource.id == "kafka.topics" {
         let mut topics: Vec<_> = metadata.topics().iter().collect();
         topics.sort_by_key(|t| t.name());
         total = topics.len();
@@ -291,6 +364,54 @@ pub(crate) fn record(message: &impl Message) -> Result<Row> {
 mod tests {
     use super::*;
     use rdkafka::message::{Header, OwnedHeaders, OwnedMessage, Timestamp};
+
+    #[test]
+    fn resource_menu_and_group_paths_are_bounded() {
+        let resource = Resource::new("kafka.resources", vec![]);
+        let menu = resources(&resource, 0, 1).unwrap();
+        assert_eq!(menu.rows.len(), 3);
+        assert!(!menu.next);
+        assert!(resources(&resource, 4, 1).is_err());
+        for row in menu.rows {
+            let target = row.target.unwrap();
+            assert!(RESOURCES.iter().any(|d| d.id == target.id));
+            assert!(
+                validate(
+                    &PageRequest {
+                        resource: target,
+                        continuation: None
+                    },
+                    1,
+                    false
+                )
+                .is_ok()
+            );
+        }
+        for group in ["", "bad\nname", &"g".repeat(1025)] {
+            assert!(
+                validate(
+                    &PageRequest {
+                        resource: Resource::new("kafka.members", vec![group.into()]),
+                        continuation: None
+                    },
+                    1,
+                    false
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            validate(
+                &PageRequest {
+                    resource: Resource::new("kafka.members", vec!["София".into()]),
+                    continuation: None
+                },
+                1,
+                false
+            )
+            .is_ok()
+        );
+    }
 
     #[test]
     fn bytes_tombstones_and_duplicate_headers_survive_conversion() {
