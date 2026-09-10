@@ -34,8 +34,16 @@ pub(crate) fn decode(schema: &Schema, bytes: &[u8]) -> Result<apache_avro::types
 }
 
 fn long(input: &mut &[u8]) -> Result<i64> {
-    let n = prost::encoding::decode_varint(input)?;
-    Ok((n >> 1) as i64 ^ -((n & 1) as i64))
+    let mut n = 0u64;
+    for shift in (0..64).step_by(7) {
+        let byte = take(input, 1)?[0];
+        ensure!(shift != 63 || byte <= 1, "Avro long overflow");
+        n |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok((n >> 1) as i64 ^ -((n & 1) as i64));
+        }
+    }
+    anyhow::bail!("Avro long overflow")
 }
 
 fn bytes(input: &mut &[u8]) -> Result<()> {

@@ -13,13 +13,15 @@ This replaces only the opaque-bytes-always-use-hex rule in [ADR-0004](0004-prese
 
 Protobuf and Avro decoding will require explicit schema and framing choices. Auto is a display convenience, not serialization detection: binary messages can happen to be valid UTF-8. A successful decode also cannot prove that the selected schema is correct.
 
-Readable Auto display and the raw Protobuf/Avro decoder library are implemented. App bindings and registry access remain planned. [The codec guide](../../crates/codec/README.md) describes the library's bounds and unsupported types. The app has no codec settings yet.
+Readable Auto display and the raw Protobuf/Avro decoder libraries are implemented. App bindings and registry access remain planned. The [Protobuf](../../crates/protobuf/README.md) and [Avro](../../crates/avro/README.md) guides describe each library's bounds and unsupported types. The app has no codec settings yet.
 
 ## Decoder boundary
 
 Keep message decoding separate from value formatting. A decoder interprets retained bytes using a schema; the existing TUI formatter controls pretty printing, highlighting, wrapping and Unicode display of the result.
 
-When implementing codecs, put schema parsing and pure decoding in `onetui-codec`, without Ratatui or datasource SDK dependencies. Use built-in enum dispatch for Protobuf and Avro, following [ADR-0002](0002-use-static-enum-dispatch-for-built-in-providers.md). Loading user schemas does not require loading user code or dynamic plugins.
+Keep schema parsing and pure decoding in independent `onetui-protobuf` and `onetui-avro` packages. Each owns its native library dependencies, result types, bounds, tests and examples. Neither depends on the other, Ratatui, core or datasource SDKs. Small bounds helpers remain package-local so format-specific validation can evolve independently.
+
+When app bindings are implemented, select these concrete decoders through a built-in enum at the composition layer, following [ADR-0002](0002-use-static-enum-dispatch-for-built-in-providers.md). Keep native codec types out of core. The standalone libraries need no dispatch facade, shared trait or boxed future. Loading user schemas does not require loading user code or dynamic plugins.
 
 Bind a decoder to an exact connection, resource/topic and field. Kafka keys and values need separate bindings; a text key must not inherit an Avro value decoder. Omitted bindings retain Auto. Framing and schema source are explicit, not inferred from topic names or a few leading bytes. Reject conflicting bindings during configuration validation.
 
@@ -59,4 +61,5 @@ Unknown schemas, unavailable registries, invalid framing and decode-limit failur
 - Always-hex Auto preserves bytes but makes ordinary text/JSON messages unnecessarily difficult to read. Strict UTF-8 plus an unchanged raw view provides both.
 - Guessing Protobuf/Avro from successful parsing can produce plausible but incorrect fields. Require a binding.
 - Generated Rust structs fit application-owned schemas, not an inspector loading arbitrary user schemas.
+- A combined codec package couples unrelated native dependencies and tests. Separate packages let callers use either format independently.
 - Runtime plugins and codec-specific UI panels duplicate machinery already covered by static dispatch and the shared value viewer.

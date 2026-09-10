@@ -1,6 +1,4 @@
-use onetui_codec::{
-    Decoder, MAX_DEPTH, MAX_NODES, MAX_PAYLOAD_BYTES, MAX_SCHEMA_BYTES, TypedValue,
-};
+use onetui_protobuf::{Decoder, MAX_DEPTH, MAX_NODES, MAX_PAYLOAD_BYTES, MAX_SCHEMA_BYTES};
 use prost::Message;
 use prost_types::{
     DescriptorProto, EnumDescriptorProto, EnumValueDescriptorProto, FieldDescriptorProto,
@@ -64,7 +62,7 @@ fn schema() -> Vec<u8> {
 
 #[test]
 fn raw_typed_fields_unknown_enum_and_unknown_fields_survive() {
-    let decoder = Decoder::protobuf(&schema(), "demo.Event").unwrap();
+    let decoder = Decoder::new(&schema(), "demo.Event").unwrap();
     let mut raw = vec![
         8, 7, 18, 2, b'H', b'i', 26, 2, 255, 0, 32, 99, 42, 3, 1, 2, 3,
     ];
@@ -74,9 +72,7 @@ fn raw_typed_fields_unknown_enum_and_unknown_fields_survive() {
     assert_eq!(decoded.raw(), raw);
     assert_eq!(decoded.schema_id(), decoder.schema_id());
     assert!(decoded.schema_id().starts_with("protobuf:sha256:"));
-    let TypedValue::Protobuf(message) = decoded.value() else {
-        panic!("wrong codec")
-    };
+    let message = decoded.value();
     assert_eq!(
         message
             .get_field_by_name("data")
@@ -101,14 +97,14 @@ fn raw_typed_fields_unknown_enum_and_unknown_fields_survive() {
 #[test]
 fn exact_schema_names_missing_imports_empty_and_malformed_input() {
     let bytes = schema();
-    assert!(Decoder::protobuf(&bytes, "Event").is_err());
-    assert!(Decoder::protobuf(&bytes, "").is_err());
-    assert!(Decoder::protobuf(&[255], "demo.Event").is_err());
-    assert!(Decoder::protobuf(&vec![0; MAX_SCHEMA_BYTES + 1], "demo.Event").is_err());
+    assert!(Decoder::new(&bytes, "Event").is_err());
+    assert!(Decoder::new(&bytes, "").is_err());
+    assert!(Decoder::new(&[255], "demo.Event").is_err());
+    assert!(Decoder::new(&vec![0; MAX_SCHEMA_BYTES + 1], "demo.Event").is_err());
     let mut missing = FileDescriptorSet::decode(bytes.as_slice()).unwrap();
     missing.file[0].dependency.push("missing.proto".into());
-    assert!(Decoder::protobuf(&missing.encode_to_vec(), "demo.Event").is_err());
-    let decoder = Decoder::protobuf(&bytes, "demo.Event").unwrap();
+    assert!(Decoder::new(&missing.encode_to_vec(), "demo.Event").is_err());
+    let decoder = Decoder::new(&bytes, "demo.Event").unwrap();
     assert_eq!(decoder.decode(&[]).unwrap().json().unwrap(), "{}");
     for raw in [
         &[8][..],
@@ -127,7 +123,7 @@ fn exact_schema_names_missing_imports_empty_and_malformed_input() {
 
 #[test]
 fn preflight_bounds_recursive_messages_unknown_groups_and_packed_values() {
-    let decoder = Decoder::protobuf(&schema(), "demo.Event").unwrap();
+    let decoder = Decoder::new(&schema(), "demo.Event").unwrap();
     let mut raw = Vec::new();
     for _ in 0..MAX_DEPTH + 1 {
         let mut outer = vec![50];
@@ -194,12 +190,21 @@ fn any_unpacked_json_is_an_error_without_losing_typed_or_raw_data() {
         }],
     }
     .encode_to_vec();
-    let decoder = Decoder::protobuf(&descriptor, "google.protobuf.Any").unwrap();
+    let decoder = Decoder::new(&descriptor, "google.protobuf.Any").unwrap();
     let raw = [18, 2, 255, 0];
     let decoded = decoder.decode(&raw).unwrap();
     assert!(decoded.json().unwrap_err().to_string().contains("Any JSON"));
     assert_eq!(decoded.raw(), raw);
-    assert!(matches!(decoded.value(), TypedValue::Protobuf(_)));
+    assert_eq!(
+        decoded
+            .value()
+            .get_field_by_name("value")
+            .unwrap()
+            .as_bytes()
+            .unwrap()
+            .as_ref(),
+        &[255, 0]
+    );
 }
 
 #[test]
@@ -207,7 +212,7 @@ fn json_output_expansion_is_bounded_before_allocation() {
     let mut descriptor = FileDescriptorSet::decode(schema().as_slice()).unwrap();
     descriptor.file[0].message_type[0].field[1].name = Some("x".repeat(2000));
     descriptor.file[0].message_type[0].field[5].label = Some(Label::Repeated as i32);
-    let decoder = Decoder::protobuf(&descriptor.encode_to_vec(), "demo.Event").unwrap();
+    let decoder = Decoder::new(&descriptor.encode_to_vec(), "demo.Event").unwrap();
     let raw: Vec<_> = (0..1000).flat_map(|_| [50, 3, 18, 1, b'a']).collect();
     let decoded = decoder.decode(&raw).unwrap();
     assert!(decoded.json().unwrap_err().to_string().contains("1 MiB"));

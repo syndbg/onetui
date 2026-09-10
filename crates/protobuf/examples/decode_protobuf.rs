@@ -1,15 +1,11 @@
 use anyhow::{Result, bail, ensure};
-use onetui_codec::{Decoder, MAX_PAYLOAD_BYTES, MAX_SCHEMA_BYTES};
+use onetui_protobuf::{Decoder, MAX_PAYLOAD_BYTES, MAX_SCHEMA_BYTES};
 use std::{fs::File, io::Read};
 
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let (codec, path, message, hex) = match args.as_slice() {
-        [codec, path, hex] if codec == "avro" => (codec, path, None, hex),
-        [codec, path, message, hex] if codec == "protobuf" => (codec, path, Some(message), hex),
-        _ => bail!(
-            "Usage: decode avro WRITER_SCHEMA HEX | decode protobuf DESCRIPTOR_SET FULL_MESSAGE_NAME HEX"
-        ),
+    let [path, message, hex] = args.as_slice() else {
+        bail!("Usage: decode_protobuf DESCRIPTOR_SET FULL_MESSAGE_NAME HEX");
     };
     ensure!(
         hex.len() <= MAX_PAYLOAD_BYTES * 2 && hex.len().is_multiple_of(2),
@@ -30,11 +26,7 @@ fn main() -> Result<()> {
         schema.len() <= MAX_SCHEMA_BYTES,
         "Schema file exceeds 256 KiB"
     );
-    let decoder = if codec == "avro" {
-        Decoder::avro(std::str::from_utf8(&schema)?)?
-    } else {
-        Decoder::protobuf(&schema, message.unwrap())?
-    };
+    let decoder = Decoder::new(&schema, message)?;
     let decoded = decoder.decode(&raw)?;
     eprintln!(
         "Schema: {:?}; raw bytes: {}",

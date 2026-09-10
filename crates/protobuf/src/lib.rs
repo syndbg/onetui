@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-mod avro;
 mod bounds;
 mod protobuf;
 
@@ -14,30 +13,19 @@ pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
 pub struct Decoder {
     schema_id: String,
-    inner: Codec,
+    descriptor: prost_reflect::MessageDescriptor,
 }
 
-enum Codec {
-    Protobuf(prost_reflect::MessageDescriptor),
-    Avro(apache_avro::Schema),
-}
-
-/// Native typed values retain bytes, unknown fields, enum numbers and logical types.
-/// JSON is only a presentation; it does not replace these values or the wire bytes.
-pub enum TypedValue {
-    Protobuf(prost_reflect::DynamicMessage),
-    Avro(apache_avro::types::Value),
-}
-
+/// Retains the native typed value and original bytes; JSON is only a presentation.
 pub struct Decoded {
     raw: Vec<u8>,
     schema_id: String,
-    value: TypedValue,
+    value: prost_reflect::DynamicMessage,
 }
 
 impl Decoder {
     /// Load a binary FileDescriptorSet including imports and select an exact full name.
-    pub fn protobuf(descriptor_set: &[u8], message_name: &str) -> Result<Self> {
+    pub fn new(descriptor_set: &[u8], message_name: &str) -> Result<Self> {
         ensure!(
             descriptor_set.len() <= MAX_SCHEMA_BYTES,
             "Descriptor set exceeds 256 KiB"
@@ -52,20 +40,7 @@ impl Decoder {
                 "protobuf:sha256:{}:{message_name}",
                 fingerprint(descriptor_set)
             ),
-            inner: Codec::Protobuf(descriptor),
-        })
-    }
-
-    /// Parse a self-contained writer schema. Reader-schema resolution is not implicit.
-    pub fn avro(writer_schema: &str) -> Result<Self> {
-        ensure!(
-            writer_schema.len() <= MAX_SCHEMA_BYTES,
-            "Avro schema exceeds 256 KiB"
-        );
-        let schema = avro::schema(writer_schema)?;
-        Ok(Self {
-            schema_id: format!("avro:sha256:{}", fingerprint(writer_schema.as_bytes())),
-            inner: Codec::Avro(schema),
+            descriptor,
         })
     }
 
@@ -73,17 +48,14 @@ impl Decoder {
         &self.schema_id
     }
 
-    /// Interpret one raw payload. On error the caller still owns the unchanged input.
-    /// This method never guesses framing or substitutes another codec.
+    /// Decode one raw payload without guessing framing or substituting another format.
+    /// On error the caller still owns the unchanged input.
     pub fn decode(&self, raw: &[u8]) -> Result<Decoded> {
         ensure!(
             raw.len() <= MAX_PAYLOAD_BYTES,
             "Message exceeds 64 KiB decode limit; inspect raw bytes"
         );
-        let value = match &self.inner {
-            Codec::Protobuf(descriptor) => TypedValue::Protobuf(protobuf::decode(descriptor, raw)?),
-            Codec::Avro(schema) => TypedValue::Avro(avro::decode(schema, raw)?),
-        };
+        let value = protobuf::decode(&self.descriptor, raw)?;
         Ok(Decoded {
             raw: raw.to_vec(),
             schema_id: self.schema_id.clone(),
@@ -106,22 +78,14 @@ impl Decoded {
     pub fn schema_id(&self) -> &str {
         &self.schema_id
     }
-    pub fn value(&self) -> &TypedValue {
+    pub fn value(&self) -> &prost_reflect::DynamicMessage {
         &self.value
     }
 
     /// Bounded, unformatted JSON presentation. Call outside rendering.
     /// Errors here do not discard the decoded value or original bytes.
     pub fn json(&self) -> Result<String> {
-        match &self.value {
-            TypedValue::Protobuf(value) => {
-                protobuf::check_json(value)?;
-                bounds::json(value)
-            }
-            TypedValue::Avro(value) => {
-                let json = serde_json::Value::try_from(value.clone())?;
-                bounds::json(&json)
-            }
-        }
+        protobuf::check_json(&self.value)?;
+        bounds::json(&self.value)
     }
 }

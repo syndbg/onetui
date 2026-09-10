@@ -1544,14 +1544,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "onetui-codec"
+name = "onetui-avro"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "apache-avro",
- "prost",
- "prost-reflect",
- "prost-types",
  "serde",
  "serde_json",
  "sha2",
@@ -1620,6 +1617,19 @@ dependencies = [
  "tokio-postgres",
  "tokio-postgres-rustls",
  "toml",
+]
+
+[[package]]
+name = "onetui-protobuf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "prost",
+ "prost-reflect",
+ "prost-types",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

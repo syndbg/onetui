@@ -42,7 +42,7 @@ These commands append to disposable fixtures without reading user connection con
 
 ## Kafka traffic
 
-Schema-bound messages are not wired into the app yet. For raw Protobuf/Avro decoding without a broker, use the [standalone codec example](../crates/codec/README.md#try-a-raw-message). The traffic producers continue to send their existing JSON/byte fixtures.
+Schema-bound messages are not wired into the app yet. For raw Protobuf/Avro decoding without a broker, use the standalone [Protobuf](../crates/protobuf/README.md#try-a-raw-message) or [Avro](../crates/avro/README.md#try-a-raw-message) example. The traffic producers continue to send their existing JSON/byte fixtures.
 
 To browse all seeded partitions together, choose `local_kafka` → Topics → `demo_events` → `kafka.records`. The extra `partition` column identifies each record's source; `n/p` replays pages and `f` follows the whole topic. The same entry under `demo_live` follows fixture traffic. Topic-wide reads allow up to 32 partitions, without global timestamp ordering; use Partitions for larger topics or offset/timestamp replay.
 
