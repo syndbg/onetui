@@ -180,6 +180,57 @@ impl Pty {
     }
 }
 
+pub(super) fn assert_avro_projection(mut options: toml::Table, topic: &str) {
+    options.insert("kind".into(), "kafka".into());
+    let mut config = tempfile::NamedTempFile::new().unwrap();
+    let document = toml::Table::from_iter([(
+        "connections".into(),
+        toml::Value::Table(toml::Table::from_iter([(
+            "kafka".into(),
+            toml::Value::Table(options),
+        )])),
+    )]);
+    write!(config, "{}", toml::to_string(&document).unwrap()).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let binary = std::env::var_os("ONETUI_TEST_BIN")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let checked = Command::new(&binary)
+        .arg("--config")
+        .arg(config.path())
+        .args(["--connection", "kafka", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let mut command = Command::new(binary);
+    command
+        .arg("--config")
+        .arg(config.path())
+        .args(["--connection", "kafka"]);
+    let (mut pty, _) = Pty::spawn(command);
+    pty.wait(&["kafka.resources"]);
+    pty.send(b"\r");
+    pty.wait(&["kafka.topics"]);
+    pty.open_filtered(topic);
+    pty.wait(&["kafka.topic", "kafka.topic_config"]);
+    pty.send(b"\r");
+    pty.wait(&["kafka.partitions"]);
+    pty.send(b"\r");
+    pty.wait(&["kafka.records", "100shown/100loaded"]);
+    pty.send(b"\r");
+    pty.wait(&["Rowdata", "8fields", "value_decoded", "avro:sha256:"]);
+    pty.send(b"jjj\r");
+    pty.send(b":display format hex\r");
+    pty.wait(&["00000000:0e"]);
+    pty.send(b"q");
+    pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
+    assert!(pty.child.wait().unwrap().success());
+}
+
 #[test]
 #[ignore = "writes demo_live through the fixture producer; actual CLI follow and stop"]
 fn actual_cli_kafka_live_follow_with_fixture_producer() {

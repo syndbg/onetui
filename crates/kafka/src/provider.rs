@@ -53,9 +53,11 @@ impl Provider for KafkaProvider {
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<KafkaExecutor> {
         let identity = NEXT_EXECUTOR.fetch_add(1, Ordering::Relaxed);
-        let (config, secrets) = crate::config::Config::parse(options)?.native(identity, env)?;
+        let options = crate::config::Config::parse(options)?;
+        let (config, secrets) = options.native(identity, env)?;
         Ok(KafkaExecutor {
             config,
+            decoders: options.decoders,
             secrets,
             identity,
             owner: Mutex::new(None),
@@ -67,6 +69,7 @@ impl Provider for KafkaProvider {
 
 pub struct KafkaExecutor {
     config: ClientConfig,
+    decoders: Vec<crate::decoding::Binding>,
     secrets: Vec<String>,
     identity: u64,
     owner: Mutex<Option<Owner>>,
@@ -136,15 +139,20 @@ impl KafkaExecutor {
             let status = self.status.clone();
             let secrets = self.secrets.clone();
             let identity = self.identity;
+            let bindings = self.decoders.clone();
             std::thread::Builder::new()
                 .name("onetui-kafka".into())
                 .spawn(move || {
                     let _permit = permit;
                     let mut client = None;
+                    let mut decoders = crate::decoding::Bindings::new(bindings);
                     let last_error = Arc::new(StdMutex::new(None));
                     while let Ok(job) = receive.recv() {
                         let result = (|| {
                             job.remaining()?;
+                            if matches!(job.operation, Operation::Check) {
+                                decoders.check(|| job.remaining().map(|_| ()))?;
+                            }
                             if client.is_none() {
                                 status.send_replace(ConnectionStatus::Connecting);
                                 client = Some(config.create_with_context::<_, BaseConsumer<_>>(
@@ -156,7 +164,37 @@ impl KafkaExecutor {
                                 )?);
                             }
                             *last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                            let result = run(client.as_ref().unwrap(), &job, identity);
+                            let topic = match &job.operation {
+                                Operation::Page(request) | Operation::Follow(request) => {
+                                    request.resource.path.first()
+                                }
+                                Operation::Query(request) => request.page.resource.path.first(),
+                                Operation::Check => None,
+                            };
+                            let raw_limit =
+                                topic.map_or(PAGE_BYTES, |topic| decoders.raw_page_limit(topic));
+                            let result = run(client.as_ref().unwrap(), &job, identity, raw_limit)
+                                .and_then(|mut response| {
+                                    let request = match &job.operation {
+                                        Operation::Page(request) | Operation::Follow(request) => {
+                                            Some(request)
+                                        }
+                                        Operation::Query(request) => Some(&request.page),
+                                        Operation::Check => None,
+                                    };
+                                    if let (Some(request), Response::Page(page)) =
+                                        (request, &mut response)
+                                        && matches!(
+                                            request.resource.id,
+                                            "kafka.records" | "kafka.query"
+                                        )
+                                        && let Some(topic) = request.resource.path.first()
+                                    {
+                                        decoders
+                                            .project(topic, page, || job.remaining().map(|_| ()))?;
+                                    }
+                                    Ok(response)
+                                });
                             job.remaining()?;
                             result
                         })();
@@ -179,6 +217,9 @@ impl KafkaExecutor {
                         let _ = job.reply.send(result);
                     }
                     drop(client);
+                    drop(decoders);
+                    // A completed shutdown must make its owner slot immediately reusable.
+                    drop(_permit);
                     status.send_replace(ConnectionStatus::Closed);
                     let _ = done.send(());
                 })?;
@@ -307,7 +348,12 @@ fn transient(error: &KafkaError) -> bool {
         )
 }
 
-fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result<Response> {
+fn run(
+    client: &BaseConsumer<NativeContext>,
+    job: &Job,
+    identity: u64,
+    raw_limit: usize,
+) -> Result<Response> {
     let prepared;
     let request = match &job.operation {
         Operation::Check => {
@@ -362,6 +408,7 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
             request,
             identity,
             following,
+            raw_limit,
             windows,
             |partition, window, limit| {
                 read_window(
@@ -374,6 +421,7 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                     window,
                     limit,
                     true,
+                    raw_limit,
                 )
             },
         )
@@ -509,6 +557,7 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
         start..end,
         PAGE_SIZE as usize,
         following,
+        raw_limit,
     )?;
     let page = crate::browse::finish(
         page,
@@ -527,6 +576,7 @@ fn read_window(
     window: std::ops::Range<i64>,
     limit: usize,
     split_bytes: bool,
+    raw_limit: usize,
 ) -> Result<(Page, i64)> {
     let topic = &resource.path[0];
     let partition = resource.path[1].parse::<i32>()?;
@@ -561,7 +611,10 @@ fn read_window(
                     }
                     let row = crate::browse::record(&message)?;
                     page.rows.push(row);
-                    if split_bytes && page.bytes() > PAGE_BYTES && page.rows.len() > 1 {
+                    if (split_bytes || raw_limit < PAGE_BYTES)
+                        && page.bytes() > raw_limit
+                        && page.rows.len() > 1
+                    {
                         page.rows.pop();
                         next = message.offset();
                         break;
@@ -571,8 +624,8 @@ fn read_window(
                         .checked_add(1)
                         .ok_or_else(|| anyhow!("Kafka offset overflow"))?;
                     ensure!(
-                        page.bytes() <= PAGE_BYTES,
-                        "Kafka page exceeds 1 MiB; current page and bookmark retained"
+                        page.bytes() <= raw_limit,
+                        "Kafka page exceeds {raw_limit} bytes; current page and bookmark retained"
                     );
                     if next >= end || page.rows.len() >= limit {
                         break;

@@ -1,0 +1,168 @@
+use super::*;
+use onetui_core::Row;
+
+fn binding(path: &Path) -> Binding {
+    Binding {
+        topic: "events".into(),
+        field: Field::Value,
+        format: Format::Avro,
+        framing: Framing::Raw,
+        schema_file: path.to_str().unwrap().into(),
+        message_name: None,
+    }
+}
+
+fn page(values: Vec<Option<Value>>) -> Page {
+    Page {
+        columns: vec![
+            Column {
+                name: "key".into(),
+                datatype: "bytes".into(),
+            },
+            Column {
+                name: "value".into(),
+                datatype: "bytes".into(),
+            },
+        ],
+        rows: values
+            .into_iter()
+            .map(|value| Row {
+                cells: vec![Some("key".into()), value],
+                target: None,
+            })
+            .collect(),
+        continuation: Some("unchanged-position".into()),
+        next: true,
+        ..Page::default()
+    }
+}
+
+#[test]
+fn avro_binding_is_strict_offline_and_scoped() {
+    let valid = binding(Path::new("/not-read-during-validation/event.avsc"));
+    validate(std::slice::from_ref(&valid)).unwrap();
+    assert!(validate(&[valid.clone(), valid.clone()]).is_err());
+    assert!(validate(&vec![valid.clone(); 33]).is_err());
+    for field in ["schema_file", "topic", "message_name"] {
+        let mut invalid = valid.clone();
+        match field {
+            "schema_file" => invalid.schema_file = "relative.avsc".into(),
+            "topic" => invalid.topic = "*".into(),
+            _ => invalid.message_name = Some("not-avro".into()),
+        }
+        assert!(validate(&[invalid]).is_err());
+    }
+    let prefix = "bootstrap_servers=['localhost:9092']\n";
+    for bad in [
+        "field='header'\nformat='avro'\nframing='raw'",
+        "field='value'\nformat='avro'\nframing='confluent'",
+        "field='value'\nformat='avro'",
+        "field='value'\nformat='avro'\nframing='raw'\nreader_schema='ignored'",
+    ] {
+        let options = toml::from_str(&format!(
+            "{prefix}[[decoders]]\ntopic='events'\nschema_file='/tmp/schema'\n{bad}"
+        ))
+        .unwrap();
+        assert!(crate::config::Config::parse(&options).is_err());
+    }
+    let mut bindings = Bindings::new(vec![valid]);
+    let mut other = page(vec![Some(Value::Bytes(vec![14]))]);
+    bindings.project("other", &mut other, || Ok(())).unwrap();
+    assert_eq!(other.columns.len(), 2);
+    assert_eq!(bindings.raw_page_limit("other"), PAGE_BYTES);
+}
+
+#[test]
+fn avro_projection_retains_raw_null_errors_and_session_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = dir.path().join("event.avsc");
+    std::fs::write(&schema, r#""long""#).unwrap();
+    let mut bindings = Bindings::new(vec![binding(&schema)]);
+    let mut data = page(vec![
+        Some(Value::Bytes(vec![14])),
+        None,
+        Some(Value::Bytes(vec![255])),
+        Some(Value::Bytes(vec![])),
+        Some(Value::Bytes(vec![16])),
+    ]);
+    let original = data
+        .rows
+        .iter()
+        .map(|r| r.cells.clone())
+        .collect::<Vec<_>>();
+    bindings.project("events", &mut data, || Ok(())).unwrap();
+    for (row, original) in data.rows.iter().zip(original) {
+        assert_eq!(row.cells[..2], original);
+    }
+    assert_eq!(data.rows[0].cells[2], Some(Value::Json("7".into())));
+    assert!(
+        data.rows[0].cells[3]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .starts_with("avro:sha256:")
+    );
+    assert!(data.rows[0].cells[4].is_none());
+    assert!(data.rows[1].cells[2].is_none() && data.rows[1].cells[4].is_none());
+    assert!(data.rows[2].cells[4].is_some() && data.rows[3].cells[4].is_some());
+    assert_eq!(data.rows[4].cells[2], Some(Value::Json("8".into())));
+    assert_eq!(data.continuation.as_deref(), Some("unchanged-position"));
+    assert!(data.next);
+    std::fs::write(&schema, r#""string""#).unwrap();
+    let mut again = page(vec![Some(Value::Bytes(vec![14]))]);
+    bindings.project("events", &mut again, || Ok(())).unwrap();
+    assert_eq!(again.rows[0].cells[2], Some(Value::Json("7".into())));
+    assert_eq!(again.rows[0].cells[3], data.rows[0].cells[3]);
+    assert!(bindings.check(|| anyhow::bail!("cancelled")).is_err());
+}
+
+#[test]
+fn avro_missing_files_limits_and_live_columns_are_stable() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = dir.path().join("event.avsc");
+    let mut missing = Bindings::new(vec![binding(&schema)]);
+    assert!(missing.check(|| Ok(())).is_err());
+    std::fs::write(&schema, r#""string""#).unwrap();
+    assert!(missing.check(|| Ok(())).is_err()); // Cached failure; a new session reloads.
+    let mut bindings = Bindings::new(vec![binding(&schema)]);
+    bindings.check(|| Ok(())).unwrap();
+    let mut small = page(vec![Some(Value::Bytes(vec![0]))]);
+    bindings.project("events", &mut small, || Ok(())).unwrap();
+    assert_eq!(small.rows[0].cells[2], Some(Value::Json("\"\"".into())));
+    let mut large = page(vec![Some(Value::Bytes(vec![
+        0;
+        bindings
+            .raw_page_limit("events")
+            - 100
+    ]))]);
+    bindings.project("events", &mut large, || Ok(())).unwrap();
+    assert_eq!(
+        small.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),
+        large.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
+    );
+    assert!(large.bytes() <= PAGE_BYTES);
+    assert!(large.rows[0].cells[4].is_some() || large.notice.contains("omitted"));
+    std::fs::write(&schema, vec![0; SCHEMA_BYTES + 1]).unwrap();
+    assert!(
+        Bindings::new(vec![binding(&schema)])
+            .check(|| Ok(()))
+            .is_err()
+    );
+    assert!(
+        Bindings::new(vec![binding(dir.path())])
+            .check(|| Ok(()))
+            .is_err()
+    );
+    #[cfg(unix)]
+    {
+        use nix::{sys::stat::Mode, unistd::mkfifo};
+        let fifo = dir.path().join("fifo");
+        mkfifo(&fifo, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+        assert!(
+            Bindings::new(vec![binding(&fifo)])
+                .check(|| Ok(()))
+                .is_err()
+        );
+    }
+}

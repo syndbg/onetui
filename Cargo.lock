@@ -1573,7 +1573,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "nix",
+ "onetui-avro",
  "onetui-core",
+ "onetui-protobuf",
+ "prost",
+ "prost-types",
  "rdkafka",
  "serde",
  "serde_json",

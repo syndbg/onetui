@@ -12,6 +12,11 @@ mod terminal;
 #[path = "fixtures/topic.rs"]
 mod topic;
 
+#[path = "fixtures/decoding_avro.rs"]
+mod decoding_avro;
+#[path = "fixtures/decoding_protobuf.rs"]
+mod decoding_protobuf;
+
 fn executor() -> KafkaExecutor {
     let options =
         toml::from_str("bootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'")

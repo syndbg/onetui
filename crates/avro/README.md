@@ -2,7 +2,7 @@
 
 Raw Avro decoding with an explicit writer schema, using `apache-avro` 0.22. The library performs no file or network access and has no Protobuf, datasource SDK or terminal dependency. `Decoder` returns original bytes, a schema identity and an `apache_avro::types::Value`. JSON is a separate, fallible presentation.
 
-The OneTUI app does not use this decoder yet. There are no codec settings in `onetui.toml`, and `onetui schema` does not advertise codec bindings. Kafka and NATS retain their existing Auto/text/hex behavior.
+The Kafka browser supports explicit [raw bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) in `onetui.toml`; `onetui schema --datasource kafka` lists their settings. Unbound fields and NATS retain Auto/text/hex behavior.
 
 ## Try a raw message
 
@@ -59,4 +59,4 @@ Reader-schema resolution, external schema references, registry requests, Conflue
 cargo test -p onetui-avro --locked
 ```
 
-This package owns its tests, bounds and example. Tests cover typed values, raw retention, schema identity, malformed/truncated input, recursive data, collection amplification and JSON failures. Connector fixtures remain independent and do not yet produce schema-bound messages for the app.
+This package owns its tests, bounds and example. Tests cover typed values, raw retention, schema identity, malformed/truncated input, recursive data, collection amplification and JSON failures. Kafka owns its separate binding and broker-fixture tests.

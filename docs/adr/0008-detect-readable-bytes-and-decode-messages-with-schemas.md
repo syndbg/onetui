@@ -11,9 +11,9 @@ Auto display validates UTF-8 for byte values, just as it does for text. Complete
 
 This replaces only the opaque-bytes-always-use-hex rule in [ADR-0004](0004-preserve-values-and-select-display-formats.md). Retained bytes, provenance, null/empty distinctions, terminal escaping and bounded caches remain unchanged. Filter/sort keep their stable projection; readable previews do not change byte-field matching.
 
-Protobuf and Avro decoding will require explicit schema and framing choices. Auto is a display convenience, not serialization detection: binary messages can happen to be valid UTF-8. A successful decode also cannot prove that the selected schema is correct.
+Protobuf and Avro decoding requires explicit schema and framing choices. Auto is a display convenience, not serialization detection: binary messages can happen to be valid UTF-8. A successful decode also cannot prove that the selected schema is correct.
 
-Readable Auto display and the raw Protobuf/Avro decoder libraries are implemented. App bindings and registry access remain planned. The [Protobuf](../../crates/protobuf/README.md) and [Avro](../../crates/avro/README.md) guides describe each library's bounds and unsupported types. The app has no codec settings yet.
+Readable Auto display, raw decoder libraries and Kafka JSON-preview bindings are implemented. Registry access, reader-schema resolution and native-type inspection remain planned. The [Protobuf](../../crates/protobuf/README.md) and [Avro](../../crates/avro/README.md) guides describe each library's bounds and unsupported types. [Kafka usage](../kafka.md#schema-bound-key-and-value-previews) documents the implemented settings.
 
 ## Decoder boundary
 
@@ -21,7 +21,7 @@ Keep message decoding separate from value formatting. A decoder interprets retai
 
 Keep schema parsing and pure decoding in independent `onetui-protobuf` and `onetui-avro` packages. Each owns its native library dependencies, result types, bounds, tests and examples. Neither depends on the other, Ratatui, core or datasource SDKs. Small bounds helpers remain package-local so format-specific validation can evolve independently.
 
-When app bindings are implemented, select these concrete decoders through a built-in enum at the composition layer, following [ADR-0002](0002-use-static-enum-dispatch-for-built-in-providers.md). Keep native codec types out of core. The standalone libraries need no dispatch facade, shared trait or boxed future. Loading user schemas does not require loading user code or dynamic plugins.
+Select these concrete decoders through a built-in enum in the connector's worker adapter, following [ADR-0002](0002-use-static-enum-dispatch-for-built-in-providers.md). Keep native codec types out of core. The standalone libraries need no dispatch facade, shared trait or boxed future. Loading user schemas does not require loading user code or dynamic plugins.
 
 Bind a decoder to an exact connection, resource/topic and field. Kafka keys and values need separate bindings; a text key must not inherit an Avro value decoder. Omitted bindings retain Auto. Framing and schema source are explicit, not inferred from topic names or a few leading bytes. Reject conflicting bindings during configuration validation.
 
@@ -29,7 +29,7 @@ The connector retains original bytes and message metadata. A worker resolves the
 
 ## Schema choices and examples
 
-These are planned bindings, not accepted TOML syntax:
+These examples describe schema choices; the registry variant remains planned:
 
 | Message | Explicit inputs | Decoding |
 | --- | --- | --- |

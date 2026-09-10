@@ -14,6 +14,8 @@ pub(crate) struct Config {
     pub sasl_mechanism: Option<String>,
     pub username_env: Option<String>,
     pub password_env: Option<String>,
+    #[serde(default)]
+    pub decoders: Vec<crate::decoding::Binding>,
 }
 
 fn default_security() -> String {
@@ -102,6 +104,7 @@ impl Config {
                 "Kafka SASL settings require SASL_SSL"
             );
         }
+        crate::decoding::validate(&config.decoders)?;
         Ok(config)
     }
 

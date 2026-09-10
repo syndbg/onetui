@@ -1,5 +1,7 @@
 # onetui-kafka
 
+Optional [raw decoder bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) select `onetui-avro` or `onetui-protobuf` through a static enum on the native worker. Kafka owns binding/file-cache tests and separate Avro/Protobuf broker fixtures; each codec package owns its format tests. Added JSON/schema/error columns preserve raw fields. Core and TUI import neither codec library.
+
 Kafka provider, strict configuration, metadata, bounded partition/topic-wide browsing and following, and single-partition offset/timestamp replay through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
 
 Topic-wide reads reuse the partition reader with independent cursors and rotating batches, limited to 32 partitions. Package-owned tests cover multi-page replay/bookmarks, sparse partitions, transactions, byte-budget splitting, cancellation and partition-set changes. See [topic-wide usage and limits](../../docs/kafka.md#browse-or-follow-a-whole-topic).

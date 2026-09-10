@@ -119,11 +119,58 @@ The existing 100-row and 1 MiB limits apply. `n/p` uses bookmarks bound to the e
 
 Replay adds no connection settings or CLI flags. `onetui schema --datasource kafka` lists its inputs and result resource. See [editor keys](queries.md).
 
+### Schema-bound key and value previews
+
+Use `onetui schema --datasource kafka` to dump supported settings and defaults. Bindings belong inside the selected connection in the same `onetui.toml`. Config discovery is unchanged, including `onetui --config "$HOME/onetui.toml"`; there is no separate decoder configuration file.
+
+```toml
+[connections.events]
+kind = "kafka"
+bootstrap_servers = ["127.0.0.1:19092"]
+security_protocol = "PLAINTEXT"
+
+[[connections.events.decoders]]
+topic = "events"
+field = "value"
+format = "avro"
+framing = "raw"
+schema_file = "/absolute/path/to/event.avsc"
+```
+
+Replace the schema path with your local writer-schema file and the topic with its exact name. The raw datum must use that schema. For Protobuf, set `format = "protobuf"`, point `schema_file` at a binary `FileDescriptorSet` including imports, and add `message_name = "demo.Event"`. The [Protobuf example](../crates/protobuf/README.md#try-a-raw-message) shows how to compile descriptors with `protoc`. [Example configuration](../hack/kafka-decoders.toml.example) includes independent Avro-value and Protobuf-key bindings.
+
+```sh
+onetui --config "$HOME/onetui.toml" --connection events --check
+onetui --config "$HOME/onetui.toml" --connection events
+```
+
+| Setting | Accepted values and behavior |
+| --- | --- |
+| `decoders` | Optional array of tables; default/empty `[]` adds no previews. At most 32 bindings per connection. |
+| `topic` | Required exact name, 1..249 ASCII letters/digits/dot/underscore/hyphen; not `.` or `..`. No wildcards. |
+| `field` | Required `"key"` or `"value"`. Each topic/field pair may appear once. |
+| `format` | Required `"avro"` or `"protobuf"`; case-sensitive. |
+| `framing` | Required `"raw"`. No prefix stripping, format guessing, containers or Confluent framing. |
+| `schema_file` | Required absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. Relative paths are rejected; neither `~` nor environment variables are expanded. |
+| `message_name` | Required only for Protobuf: exact full name, 1..1,024 UTF-8 bytes without controls. Forbidden for Avro. |
+
+Unknown keys, missing required fields, wrong types and duplicate bindings fail validation even for unselected aliases. Omitted bindings retain Auto display. Bindings apply to partition and topic-wide `kafka.records`, following, and `kafka.query` replay for that topic.
+
+The worker loads a schema on its first relevant read; `--check` loads every binding for the selected alias before checking broker metadata. Config parsing and offline catalog output do not read schema files. Successful schemas and load errors stay cached for the session. Reopen the connection to reread files; refresh reuses cached schemas. Restart after editing binding settings. There are no registry requests or automatic file reloads.
+
+Each bound field adds `FIELD_decoded`, `FIELD_schema` and `FIELD_decode_error` columns. Enter on a record lists all fields; Enter on a field opens its full value. The original `key` and `value` remain unchanged. Select those originals and use `v`, `:display format hex` or `:display format binary` to inspect wire bytes. Hex on a decoded JSON field shows serialized JSON bytes, not the original message.
+
+Null keys/tombstones are not decoded; empty bytes are decoded and may be valid or invalid for the chosen schema. Schema, decode and JSON-conversion errors appear per value without dropping records or stopping following. Error text keeps the library wording, capped at 512 UTF-8 bytes with `...`; the shared renderer escapes terminal controls.
+
+Previews use the library allocation/depth limits and accept at most 64 KiB of payload. JSON previews are capped at 64 KiB and must fit the remaining 1 MiB page budget. Bound topics reserve 2 KiB of raw-page capacity for column metadata; a raw record that cannot fit still fails the page explicitly. If preview metadata cannot fit, all preview cells are null and the page notice explains the omission. Columns stay stable across empty or budget-limited live batches. Omitting a preview does not change raw values or broker continuations.
+
+JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. The libraries retain native types during decoding, but the browser has no native-type inspector yet. Reader-schema resolution and Schema Registry remain unsupported. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
+
 ### Record values and bounds
 
 Records include the partition offset, millisecond timestamp when available, key, value and headers. Keys and values remain bytes, even if valid UTF-8. Auto display shows valid UTF-8 as text or complete JSON objects/arrays; invalid UTF-8 falls back to hex. For example, `make dev-traffic` produces the readable key `demo` and a JSON value. Use `v` in field detail to choose text, JSON, hex or binary explicitly. Decoding never replaces invalid bytes or changes retained data. A tombstone has a null value; empty bytes remain an empty value. Headers use an ordered JSON list of names and nullable byte arrays, so duplicate names survive.
 
-Protobuf/Avro bindings and Schema Registry decoding are not implemented in the Kafka browser. The independent [Protobuf](../crates/protobuf/README.md) and [Avro](../crates/avro/README.md) packages can decode raw messages against local schemas; [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md) defines the pending key/value bindings and schema lookup. Auto does not identify these binary formats. Page-local filter/sort still use the stable `\x...` hexadecimal projection for byte fields, independently of their readable display.
+Explicit [raw Protobuf/Avro bindings](#schema-bound-key-and-value-previews) add JSON previews alongside the original fields. Auto does not identify these binary formats. Page-local filter/sort still use the stable `\x...` hexadecimal projection for raw byte fields; added columns are independently searchable.
 
 Each page contains at most 100 records and 1 MiB of retained page data. The first page captures the native read-committed stable end; continuation tokens carry that end and the next partition offset. Open transactions and records beyond that boundary are excluded, even if committed later. Refetching page 1 or refreshing captures a new window. Retention and compaction can remove records; offsets are not consecutive row numbers. An unavailable position or expired request reports an error and keeps the displayed page/bookmark, rather than claiming the partition ended.
 
@@ -131,7 +178,7 @@ Metadata has no native page API: OneTUI re-reads the bounded response, sorts top
 
 The native client uses a 100 ms fetch-queue refill backoff with its one-message queue threshold. This avoids the default one-second refill delay while keeping prefetch bounded. It is a fixed connector setting, listed as `fetch_queue_backoff_ms` in the catalog, not an `onetui.toml` option or a latency guarantee.
 
-`check` fetches metadata only. Record reads use manual assignment and explicit offsets, never a topic subscription. Auto-commit, automatic offset storage and topic auto-creation are disabled. OneTUI generates an internal session group ID for the client API; it does not use an application group or commit its offsets. No user override can enable these side effects.
+`check` validates configured decoder files and fetches broker metadata; it does not read records. Record reads use manual assignment and explicit offsets, never a topic subscription. Auto-commit, automatic offset storage and topic auto-creation are disabled. OneTUI generates an internal session group ID for the client API; it does not use an application group or commit its offsets. No user override can enable these side effects.
 
 For authenticated browsing, grant `Read` and `Describe` on the selected topics, plus `Describe` on groups prefixed `onetui-`. The native client requires that private group ID even with manual assignment and asks for its coordinator. Group `Read` permission is unnecessary: OneTUI does not join the group or commit offsets. Metadata listing alone does not prove record-reading permission; Kafka can omit unauthorized topics from a listing.
 

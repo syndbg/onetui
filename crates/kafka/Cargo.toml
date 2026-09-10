@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 onetui-core = { path = "../core" }
+onetui-avro = { path = "../avro" }
+onetui-protobuf = { path = "../protobuf" }
 anyhow.workspace = true
 rdkafka.workspace = true
 serde.workspace = true
@@ -18,6 +20,8 @@ url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+prost = "0.14"
+prost-types = "0.14"
 
-[target.'cfg(unix)'.dev-dependencies]
+[target.'cfg(unix)'.dependencies]
 nix.workspace = true

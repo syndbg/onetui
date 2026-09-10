@@ -13,7 +13,7 @@ The initial version, v0.1.0, is read-only. PostgreSQL, Qdrant, Kafka and NATS Je
 | PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, SQL query editor, cached field detail, headless checks | Query parameters, writes |
 | Qdrant | Implemented, read-only | Collections and metadata, point ID paging, filtered Scroll JSON editor, on-demand payload and dense/sparse/multivector detail, headless checks | Advanced/nested filters, similarity search, writes |
 | DynamoDB | Planned | None | Connector and all datasource operations |
-| Kafka | [Implemented, read-only](docs/kafka.md) | Broker/topic/partition metadata, broker/topic configuration, consumer groups and members, committed offsets and read-committed lag, partition and topic-wide paging/following (up to 32 partitions), single-partition offset/timestamp replay JSON editor, byte-value inspection, headless checks, verified TLS and SASL PLAIN/SCRAM | Global timestamp ordering, publishing, group administration, schema registry, mutual TLS, OAuth, GSSAPI; hosted release validation pending |
+| Kafka | [Implemented, read-only](docs/kafka.md) | Broker/topic/partition metadata, broker/topic configuration, consumer groups and members, committed offsets and read-committed lag, partition and topic-wide paging/following (up to 32 partitions), single-partition offset/timestamp replay JSON editor, byte-value inspection, explicit raw Protobuf/Avro JSON previews, headless checks, verified TLS and SASL PLAIN/SCRAM | Global timestamp ordering, publishing, group administration, schema registry, mutual TLS, OAuth, GSSAPI; hosted release validation pending |
 | NATS | [Implemented, read-only](docs/nats.md) | JetStream streams and configuration/state, sequence-based message paging and bookmarks, live following, byte/header inspection, headless checks, TLS and token/username-password configuration | Core NATS subscriptions, KV/object-store views, native queries, publishing, consumer administration, NKEY/JWT, schema registry |
 | RabbitMQ | Planned | None | Connector and all datasource operations |
 
@@ -34,7 +34,7 @@ Read and write support is the direction for OneTUI, not a capability of the init
 - Tokio for asynchronous requests, cancellation and connection tasks.
 - `tokio-postgres` with Rustls for PostgreSQL; `qdrant-client` and Tonic for Qdrant gRPC.
 - `rdkafka` with native librdkafka/OpenSSL for Kafka; `async-nats` with Rustls for NATS JetStream.
-- `prost-reflect` in `onetui-protobuf` and `apache-avro` in `onetui-avro`; app integration is pending.
+- `prost-reflect` in `onetui-protobuf` and `apache-avro` in `onetui-avro` for schema-bound Kafka previews.
 - Clap for CLI arguments; Serde, JSON and TOML for configuration and the offline catalog.
 
 Datasources are compiled into the binary using static enum dispatch. Adding one requires a connector package and a rebuild; runtime plugins are not planned.
@@ -68,7 +68,7 @@ alias ot='onetui'
 
 Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. This is only a shell shortcut; the executable and configuration directory remain `onetui`.
 
-`--check` performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1-300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the TUI; displayed data does not expire while idle. See [PostgreSQL usage](docs/postgres.md) and [Qdrant usage](docs/qdrant.md).
+`--check` validates selected Kafka decoder files when configured, performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1-300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the TUI; displayed data does not expire while idle. See [PostgreSQL usage](docs/postgres.md) and [Qdrant usage](docs/qdrant.md).
 
 ## Browsing and offline catalog
 
@@ -103,8 +103,8 @@ Selected sessions connect lazily and retain healthy transports. PostgreSQL finis
 | --- | --- |
 | `onetui` (root) | CLI dispatch, catalog assembly and release/developer workflow tests |
 | [`onetui-core`](crates/core/README.md) | Configuration, shared display/resource contracts and actions; no database SDKs |
-| [`onetui-protobuf`](crates/protobuf/README.md) | Raw Protobuf decoding, native typed values and bounded JSON presentation; app integration pending |
-| [`onetui-avro`](crates/avro/README.md) | Raw Avro decoding, native typed values and bounded JSON presentation; app integration pending |
+| [`onetui-protobuf`](crates/protobuf/README.md) | Raw Protobuf decoding, native typed values and bounded JSON presentation; used by Kafka bindings |
+| [`onetui-avro`](crates/avro/README.md) | Raw Avro decoding, native typed values and bounded JSON presentation; used by Kafka bindings |
 | [`onetui-postgres`](crates/postgres/README.md) | PostgreSQL TLS/checks, row/metadata queries, descriptors and PostgreSQL-only tests |
 | [`onetui-qdrant`](crates/qdrant/README.md) | Qdrant TLS/checks, collection/point/detail reads, descriptors and Qdrant-only tests |
 | [`onetui-kafka`](crates/kafka/README.md) | Kafka TLS/SASL, native client lifetime, metadata/record reads, live batches, offset bookmarks and Kafka-only tests |
@@ -241,7 +241,7 @@ unicode = "literal"
 
 The table and every field are optional. Omission uses the listed defaults. Unknown fields, empty/unknown names and wrong types fail validation, including `--check`. String values are case-sensitive and are not environment-expanded. TOML booleans are `true`/`false`; commands such as `:display word-wrap off` use `on`/`off`. Existing config discovery and relative-path rules apply; there is no display file, CLI override flag, file watching or merge layer. Runtime switches override startup defaults in memory. Restart to reread the file.
 
-Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling back to hex for invalid UTF-8. Invalid bytes never become replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping. The independent [Protobuf](crates/protobuf/README.md) and [Avro](crates/avro/README.md) libraries and examples work with explicit local schemas; app bindings are [still planned](docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md). Auto does not use these codecs.
+Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling back to hex for invalid UTF-8. Invalid bytes never become replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping. The independent [Protobuf](crates/protobuf/README.md) and [Avro](crates/avro/README.md) libraries and examples work with explicit local schemas; [Kafka bindings](docs/kafka.md#schema-bound-key-and-value-previews) add JSON/schema/error columns without replacing raw keys or values. Registry access and native-type inspection remain planned. Auto does not use these codecs.
 
 ## Disposable local fixtures and tests
 

@@ -74,6 +74,7 @@ pub(crate) fn page(
     request: &PageRequest,
     identity: u64,
     following: bool,
+    byte_limit: usize,
     mut windows: Vec<(i32, i64, i64)>,
     mut read: impl FnMut(i32, Range<i64>, usize) -> Result<(Page, i64)>,
 ) -> Result<Page> {
@@ -163,7 +164,7 @@ pub(crate) fn page(
             );
             row.cells.insert(0, Some(p.id.to_string().into()));
             page.rows.push(row);
-            if page.bytes() > PAGE_BYTES {
+            if page.bytes() > byte_limit {
                 page.rows.pop();
                 ensure!(
                     !page.rows.is_empty(),
@@ -228,13 +229,22 @@ mod tests {
     #[test]
     fn rotating_pages_bookmarks_and_cursor_validation() {
         let windows: Vec<_> = (0..32).map(|id| (id, 0, 10)).collect();
-        let first = page(&request(None), 7, false, windows.clone(), records).unwrap();
+        let first = page(
+            &request(None),
+            7,
+            false,
+            PAGE_BYTES,
+            windows.clone(),
+            records,
+        )
+        .unwrap();
         assert_eq!(first.rows.len(), 100);
         assert_eq!(first.rows[0].cells[0], Some("0".into()));
         let second = page(
             &request(first.continuation.clone()),
             7,
             false,
+            PAGE_BYTES,
             windows.clone(),
             records,
         )
@@ -244,6 +254,7 @@ mod tests {
             &request(first.continuation.clone()),
             7,
             false,
+            PAGE_BYTES,
             windows.clone(),
             records,
         )
@@ -255,7 +266,15 @@ mod tests {
         let mut all = first.rows;
         let mut continuation = first.continuation;
         while continuation.is_some() {
-            let next = page(&request(continuation), 7, false, windows.clone(), records).unwrap();
+            let next = page(
+                &request(continuation),
+                7,
+                false,
+                PAGE_BYTES,
+                windows.clone(),
+                records,
+            )
+            .unwrap();
             all.extend(next.rows);
             continuation = next.continuation;
         }
@@ -273,12 +292,13 @@ mod tests {
         let request = request(second.continuation);
         assert!(validate(&request, 8, false).is_err());
         assert!(validate(&request, 7, true).is_err());
-        assert!(page(&request, 7, false, vec![(0, 0, 10)], records).is_err());
+        assert!(page(&request, 7, false, PAGE_BYTES, vec![(0, 0, 10)], records).is_err());
         assert!(
             page(
                 &request,
                 7,
                 false,
+                PAGE_BYTES,
                 (0..33).map(|id| (id, 0, 10)).collect(),
                 records
             )
@@ -292,6 +312,7 @@ mod tests {
             &request(None),
             7,
             true,
+            PAGE_BYTES,
             vec![(0, 0, 5), (1, 0, 7)],
             |_, _, _| panic!("initial follow only captures ends"),
         )
@@ -301,6 +322,7 @@ mod tests {
             &request(initial.continuation.clone()),
             7,
             true,
+            PAGE_BYTES,
             vec![(0, 0, 8), (1, 0, 9)],
             records,
         )
@@ -311,6 +333,7 @@ mod tests {
                 &request(initial.continuation.clone()),
                 7,
                 true,
+                PAGE_BYTES,
                 vec![(0, 6, 8), (1, 0, 9)],
                 records
             )
@@ -321,6 +344,7 @@ mod tests {
                 &request(initial.continuation),
                 7,
                 true,
+                PAGE_BYTES,
                 vec![(0, 0, 4), (1, 0, 9)],
                 records
             )
@@ -341,19 +365,28 @@ mod tests {
                 window.end,
             ))
         };
-        let first = page(&request(None), 7, false, vec![(0, 0, 1), (1, 0, 1)], big).unwrap();
+        let first = page(
+            &request(None),
+            7,
+            false,
+            PAGE_BYTES,
+            vec![(0, 0, 1), (1, 0, 1)],
+            big,
+        )
+        .unwrap();
         assert_eq!(first.rows.len(), 1);
         let second = page(
             &request(first.continuation),
             7,
             false,
+            PAGE_BYTES,
             vec![(0, 0, 1), (1, 0, 1)],
             big,
         )
         .unwrap();
         assert_eq!(second.rows[0].cells[0], Some("1".into()));
         assert!(!second.next);
-        let empty = page(&request(None), 7, true, vec![], records).unwrap();
+        let empty = page(&request(None), 7, true, PAGE_BYTES, vec![], records).unwrap();
         assert!(empty.rows.is_empty() && empty.continuation.is_some());
     }
 }
