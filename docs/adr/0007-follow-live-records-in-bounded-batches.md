@@ -11,7 +11,9 @@ Add a native async `Executor::follow_page(PageRequest, RequestContext)` operatio
 
 Each call returns a finite batch and an opaque continuation, including when no records are available. The TUI runs at most one request at a time and schedules another one second after completion. This reuses the existing worker, request deadlines, cancellation and generation checks without adding a permanent streaming task or an unbounded channel.
 
-Kafka starts at the selected partition's current read-committed stable end. Later calls read forward from the last successful cursor to a newly captured stable end. Follow cursors are separate from historical page bookmarks and belong to one executor, resource and partition. Manual assignment, disabled offset storage/commits and the private session group remain unchanged from [ADR-0006](0006-browse-kafka-with-rust-rdkafka.md). Following never joins an application consumer group.
+Kafka starts at the current read-committed stable end of the selected partition, or at independent ends for every partition in a selected topic. Later calls read forward from each successful cursor to a newly captured stable end. Follow cursors are separate from historical page bookmarks and belong to one executor, resource and partition set. Topic-wide reads rotate bounded partition batches, preserving offset order within each partition without promising global timestamp order. A changed partition set requires an explicit refresh or restart; it must not silently reset existing positions. Both modes reuse the same native reader and request deadline.
+
+Manual assignment, disabled offset storage/commits and the private session group remain unchanged from [ADR-0006](0006-browse-kafka-with-rust-rdkafka.md). Following never joins an application consumer group.
 
 ## Display and lifetime
 

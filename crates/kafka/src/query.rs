@@ -30,7 +30,7 @@ struct Position {
 pub(crate) fn prepare(request: &QueryRequest, identity: u64) -> Result<(Replay, PageRequest)> {
     request.validate()?;
     ensure!(
-        request.page.resource.id == RESOURCE.id,
+        request.page.resource.id == RESOURCE.id && request.page.resource.path.len() == 2,
         "Invalid Kafka query resource"
     );
     let input: Replay = serde_json::from_str(&request.text)?;
@@ -105,6 +105,12 @@ mod tests {
 
     #[test]
     fn replay_is_strict_and_bookmarks_bind_query_session_and_partition() {
+        let mut topic = request("{}");
+        topic.page.resource.path.pop();
+        assert!(
+            prepare(&topic, 7).is_err(),
+            "replay requires an explicit partition"
+        );
         for text in [
             "{}",
             r#"{"offset":100,"end_offset":250}"#,

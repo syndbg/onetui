@@ -1,6 +1,6 @@
 # Kafka browsing
 
-The Kafka connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources. It supports historical browsing and live following of one partition.
+The Kafka connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources. It supports historical browsing and live following of a partition or a whole topic.
 
 ## Configuration
 
@@ -49,7 +49,7 @@ Unknown settings are rejected. Broker metadata can advertise endpoints other tha
 
 ## Navigation and values
 
-Enter on a connection opens a local resource menu with Topics, Brokers and Groups. The menu does not connect to Kafka; selecting an entry starts its native read. Topics lists topics; Enter on a topic offers Partitions and Configuration. Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
+Enter on a connection opens a local resource menu with Topics, Brokers and Groups. The menu does not connect to Kafka; selecting an entry starts its native read. Topics lists topics; Enter on a topic offers Partitions, Configuration and `kafka.records` (all partitions). Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
 
 Brokers lists IDs, hosts and ports advertised by Kafka; Enter opens the selected broker's configuration. Groups lists names, state, protocol and member counts; Enter offers Members and Offsets. Members shows member IDs, client IDs/hosts, metadata and assignment bytes. Assignments remain raw protocol bytes, available in the value viewer; OneTUI does not claim they are decoded partition assignments. Group names must fit 1..1024 UTF-8 bytes without control characters. These views do not join, rebalance or commit for any inspected group. They re-read and locally page metadata, so membership may change between pages.
 
@@ -80,6 +80,18 @@ These views use the existing connection and add no `onetui.toml` settings or CLI
 ```sh
 onetui schema --datasource kafka
 ```
+
+### Browse or follow a whole topic
+
+Run `make run`, then choose `local_kafka` → Topics → `demo_events` → `kafka.records`. This reads all three fixture partitions. Use `n/p` to page forward/backward, Enter to inspect a record, or `f` to follow new records across the topic. For the traffic producer, choose the same entry under `demo_live`.
+
+The `kafka.records` resource accepts `[topic]` for all partitions or `[topic, partition]` for a single partition. Topic-wide rows add a leading `partition` column; single-partition columns are unchanged. Offset/timestamp replay remains single-partition only: open Partitions and select one before using `e`.
+
+Topic-wide reads support at most 32 partitions and return at most 100 records and 1 MiB per page, including a cursor of at most 4 KiB. Larger topics fail explicitly; use their individual partitions. These are fixed connector limits, not new configuration settings.
+
+Each partition has its own next offset and captured stable end. Pages rotate through partition batches, allocating `ceil(100 / active partitions)` records per active partition until the row or byte budget is reached. A sparse partition can leave unused space. Records remain offset-ordered within each partition, not globally timestamp-ordered. `/` and `s` still affect only the displayed page.
+
+Historical bookmarks retain the captured ends; following updates each end on every batch. Metadata and watermarks are read sequentially on the existing native owner, under one request deadline. This is not an atomic topic snapshot. Empty partitions keep their cursors, and an empty follow batch does not mean following has ended. Retention invalidation, a backwards boundary or a changed partition set fails without advancing the successful bookmark. Refresh or restart following explicitly after a partition-set change.
 
 ### Replay from an offset or timestamp
 
@@ -127,7 +139,7 @@ Native work stays outside the UI and Tokio async worker threads. Cancellation st
 
 ## Live following
 
-Open a topic, partition and its `kafka.records` view, then press `f` or enter `:follow`. The initial request captures the current read-committed stable end and clears historical rows once it succeeds. The footer shows `LIVE`; subsequent requests fetch new committed records from that cursor, one second after the previous request finishes. Open transactions stay hidden until committed; aborted records never appear.
+Open `kafka.records` for a topic or one partition, then press `f` or enter `:follow`. The initial request captures the current read-committed stable end of each selected partition and clears historical rows once it succeeds. The footer shows `LIVE`; subsequent requests fetch new committed records from those cursors, one second after the previous request finishes. Open transactions stay hidden until committed; aborted records never appear.
 
 Press `f` or Ctrl-C to stop without quitting. Navigation, opening a record, menus and command entry also stop following before changing the view, keeping data steady for inspection. The stopped window remains readable. Pressing `f` again starts at a new current end and clears the old live window after that first request succeeds; it does not resume messages missed while stopped. `r` returns to historical browsing from the earliest available offset. Historical `n/p` paging is disabled in a live window.
 

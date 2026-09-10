@@ -1,6 +1,8 @@
 # onetui-kafka
 
-Kafka provider, strict configuration, metadata, bounded record browsing, offset/timestamp replay and live follow batches through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
+Kafka provider, strict configuration, metadata, bounded partition/topic-wide browsing and following, and single-partition offset/timestamp replay through `rdkafka`. The package owns its native client thread, offset tokens and tests. Core and TUI do not import Kafka types.
+
+Topic-wide reads reuse the partition reader with independent cursors and rotating batches, limited to 32 partitions. Package-owned tests cover multi-page replay/bookmarks, sparse partitions, transactions, byte-budget splitting, cancellation and partition-set changes. See [topic-wide usage and limits](../../docs/kafka.md#browse-or-follow-a-whole-topic).
 
 Topic/broker configuration and consumer-group committed offsets use read-only native admin calls on the same client. Results preserve native errors and withhold sensitive settings. Group lag is read-committed offset distance, not a message count. The fixture suite checks configuration paging, secret masking, group offsets, ACL errors and CLI submenu navigation; the broker-stall test covers cancellation. These views add no connection settings.
 

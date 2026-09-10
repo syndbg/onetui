@@ -328,6 +328,57 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
     };
     let following = matches!(job.operation, Operation::Follow(_));
     let position = crate::browse::validate(request, identity, following)?;
+    if request.resource.id == "kafka.records" && request.resource.path.len() == 1 {
+        let topic = &request.resource.path[0];
+        let metadata =
+            native_request(client, job, |wait| client.fetch_metadata(Some(topic), wait))?;
+        let metadata = metadata
+            .topics()
+            .iter()
+            .find(|t| t.name() == topic)
+            .ok_or_else(|| anyhow!("Kafka topic missing from metadata; refresh its parent"))?;
+        ensure!(
+            metadata.error().is_none(),
+            "Kafka topic metadata: {:?}",
+            metadata.error()
+        );
+        ensure!(
+            metadata.partitions().len() <= crate::topic::PARTITIONS,
+            "Kafka topic-wide view supports at most 32 partitions; open an individual partition"
+        );
+        let mut windows = Vec::new();
+        for partition in metadata.partitions() {
+            ensure!(
+                partition.error().is_none(),
+                "Kafka partition metadata: {:?}",
+                partition.error()
+            );
+            let (low, end) = native_request(client, job, |wait| {
+                client.fetch_watermarks(topic, partition.id(), wait)
+            })?;
+            windows.push((partition.id(), low, end));
+        }
+        return crate::topic::page(
+            request,
+            identity,
+            following,
+            windows,
+            |partition, window, limit| {
+                read_window(
+                    client,
+                    job,
+                    &onetui_core::Resource::new(
+                        "kafka.records",
+                        vec![topic.clone(), partition.to_string()],
+                    ),
+                    window,
+                    limit,
+                    true,
+                )
+            },
+        )
+        .map(Response::Page);
+    }
     if matches!(
         request.resource.id,
         "kafka.topic_config" | "kafka.broker_config" | "kafka.offsets"
@@ -451,21 +502,43 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
         start >= low && start <= end && end <= stable_end,
         "Kafka offsets unavailable: requested [{start}, {end}), available [{low}, {stable_end}); refresh"
     );
-    let mut page = crate::browse::page(
+    let (page, next) = read_window(
+        client,
+        job,
         &request.resource,
+        start..end,
+        PAGE_SIZE as usize,
+        following,
+    )?;
+    let page = crate::browse::finish(
+        page,
+        &request.resource,
+        identity,
+        (following || next < end).then_some((next, Some(end))),
+        following,
+    )?;
+    response(page, job)
+}
+
+fn read_window(
+    client: &BaseConsumer<NativeContext>,
+    job: &Job,
+    resource: &onetui_core::Resource,
+    window: std::ops::Range<i64>,
+    limit: usize,
+    split_bytes: bool,
+) -> Result<(Page, i64)> {
+    let topic = &resource.path[0];
+    let partition = resource.path[1].parse::<i32>()?;
+    let (start, end) = (window.start, window.end);
+    let mut page = crate::browse::page(
+        resource,
         &format!(
             "Read-committed offsets [{start}, {end}); no snapshot or offset commits. Headers retain ordered names and nullable byte arrays."
         ),
     );
     if start == end {
-        let page = crate::browse::finish(
-            page,
-            &request.resource,
-            identity,
-            following.then_some((end, Some(end))),
-            following,
-        )?;
-        return response(page, job);
+        return Ok((page, end));
     }
     let mut assignment = TopicPartitionList::new();
     assignment.add_partition_offset(topic, partition, Offset::Offset(start))?;
@@ -488,7 +561,7 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                     }
                     let row = crate::browse::record(&message)?;
                     page.rows.push(row);
-                    if following && page.bytes() > PAGE_BYTES && page.rows.len() > 1 {
+                    if split_bytes && page.bytes() > PAGE_BYTES && page.rows.len() > 1 {
                         page.rows.pop();
                         next = message.offset();
                         break;
@@ -501,7 +574,7 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                         page.bytes() <= PAGE_BYTES,
                         "Kafka page exceeds 1 MiB; current page and bookmark retained"
                     );
-                    if next >= end || page.rows.len() >= PAGE_SIZE as usize {
+                    if next >= end || page.rows.len() >= limit {
                         break;
                     }
                 }
@@ -527,18 +600,12 @@ fn run(client: &BaseConsumer<NativeContext>, job: &Job, identity: u64) -> Result
                 None => {}
             }
         }
-        crate::browse::finish(
-            page,
-            &request.resource,
-            identity,
-            (following || next < end).then_some((next, Some(end))),
-            following,
-        )
+        Ok((page, next))
     })();
     let unassigned = client.unassign();
     let page = result?;
     unassigned?;
-    response(page, job)
+    Ok(page)
 }
 
 fn response(page: Page, job: &Job) -> Result<Response> {
@@ -645,7 +712,7 @@ mod tests {
         assert_eq!(brokers.rows[0].cells[0], Some("1".into()));
         assert_eq!(topics.rows.len(), 1);
         let topic_menu = fetch(&executor, topics.rows[0].target.clone().unwrap(), None).await;
-        assert_eq!(topic_menu.rows.len(), 2);
+        assert_eq!(topic_menu.rows.len(), 3);
         assert_eq!(
             topic_menu.rows[1].target.as_ref().unwrap().id,
             "kafka.topic_config"

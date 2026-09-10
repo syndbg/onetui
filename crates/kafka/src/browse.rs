@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub static RESOURCES: &[&ResourceDescriptor] = &[
     &ResourceDescriptor {
         id: "kafka.topic",
-        description: "Choose partitions or read-only topic configuration",
+        description: "Choose all records, individual partitions or read-only topic configuration",
         columns: &["resource", "description"],
         paging: true,
         actions: &[],
@@ -109,8 +109,15 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
     },
     &ResourceDescriptor {
         id: "kafka.records",
-        description: "Read-committed partition records; explicit offsets, no commits or group subscription",
-        columns: &["offset", "timestamp_ms", "key", "value", "headers"],
+        description: "Read-committed topic or partition records; topic-wide rows include partition IDs; no commits or subscription",
+        columns: &[
+            "partition",
+            "offset",
+            "timestamp_ms",
+            "key",
+            "value",
+            "headers",
+        ],
         paging: true,
         actions: &[],
     },
@@ -132,6 +139,9 @@ pub(crate) fn validate(
     identity: u64,
     following: bool,
 ) -> Result<Option<Position>> {
+    if request.resource.id == "kafka.records" && request.resource.path.len() == 1 {
+        return crate::topic::validate(request, identity, following).map(|_| None);
+    }
     ensure!(
         !following || request.resource.id == "kafka.records",
         "Live following requires a Kafka partition record view"
@@ -203,6 +213,10 @@ pub(crate) fn resources(resource: &Resource, offset: i64, identity: u64) -> Resu
         "kafka.topic" => &[
             ("kafka.partitions", "Partitions and record replay/following"),
             ("kafka.topic_config", "Read-only topic configuration"),
+            (
+                "kafka.records",
+                "All partitions: bounded browsing and following",
+            ),
         ],
         "kafka.group" => &[
             ("kafka.members", "Member metadata and assignment bytes"),
@@ -236,6 +250,11 @@ pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
         columns: descriptor
             .columns
             .iter()
+            .filter(|name| {
+                !(resource.id == "kafka.records"
+                    && resource.path.len() == 2
+                    && **name == "partition")
+            })
             .map(|name| Column {
                 name: (*name).into(),
                 datatype: match *name {

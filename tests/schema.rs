@@ -227,4 +227,6 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
         "SSL"
     );
     assert_eq!(kafka["limits"]["page_rows"], 100);
+    assert_eq!(kafka["limits"]["topic_partitions"], 32);
+    assert_eq!(kafka["limits"]["topic_cursor_bytes"], 4096);
 }

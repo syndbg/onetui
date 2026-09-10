@@ -314,7 +314,30 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
         pty.wait(&["kafka.topics", "demo_events"]);
         pty.open_filtered("demo_events");
         pty.wait(&["kafka.topic", "kafka.topic_config"]);
-        pty.send(b"j\r");
+        pty.send(b"jj\r");
+        pty.wait(&[
+            "kafka.records",
+            "partition",
+            "Topic-wide",
+            "3partitions",
+            "100shown/100loaded",
+        ]);
+        for page in 2..=5 {
+            pty.send(b"n");
+            pty.wait(&["kafka.records", "Topic-wide", &format!("Page{page}")]);
+        }
+        for page in (1..5).rev() {
+            pty.send(b"p");
+            pty.wait(&["kafka.records", "Topic-wide", &format!("Page{page}")]);
+        }
+        pty.send(b"f");
+        pty.wait(&["LIVE", "0retained", "3partitions"]);
+        pty.send(b"\x03");
+        pty.wait(&["Followingstopped"]);
+        pty.send(b"\x1b");
+        pty.wait(&["kafka.topic", "kafka.topic_config"]);
+        pty.send(b"k");
+        pty.send(b"\r");
         pty.wait(&["kafka.topic_config", "cleanup.policy", "source"]);
         pty.send(b"\x1b");
         pty.wait(&["kafka.topic", "kafka.partitions"]);

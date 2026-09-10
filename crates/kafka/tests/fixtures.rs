@@ -9,6 +9,9 @@ use std::time::Duration;
 #[path = "fixtures/terminal.rs"]
 mod terminal;
 
+#[path = "fixtures/topic.rs"]
+mod topic;
+
 fn executor() -> KafkaExecutor {
     let options =
         toml::from_str("bootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'")
@@ -460,7 +463,7 @@ async fn kafka_browses_seeded_partitions_and_refetches_old_bookmarks() {
         .clone()
         .unwrap();
     let topic_menu = fetch(&executor, target, None).await;
-    assert_eq!(topic_menu.rows.len(), 2);
+    assert_eq!(topic_menu.rows.len(), 3);
     let config = fetch(&executor, topic_menu.rows[1].target.clone().unwrap(), None).await;
     let cleanup = config
         .rows
