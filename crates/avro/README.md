@@ -2,7 +2,7 @@
 
 Raw Avro decoding with an explicit writer schema, using `apache-avro` 0.22. The library performs no file or network access and has no Protobuf, datasource SDK or terminal dependency. `Decoder` returns original bytes, a schema identity and an `apache_avro::types::Value`. JSON is a separate, fallible presentation.
 
-The Kafka browser supports explicit [raw bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) in `onetui.toml`; `onetui schema --datasource kafka` lists their settings. Unbound fields and NATS retain Auto/text/hex behavior.
+The Kafka browser supports explicit [raw bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) and [Confluent Avro registry bindings](../../docs/kafka.md#confluent-avro-registry) in `onetui.toml`; `onetui schema --datasource kafka` lists their settings. Unbound fields and NATS retain Auto/text/hex behavior.
 
 ## Try a raw message
 
@@ -32,6 +32,8 @@ fn main() -> anyhow::Result<()> {
 
 `Decoder::new` loads one self-contained writer schema and resolves its named references locally. Decoding uses `GenericDatumReader`, consumes exactly one datum and rejects trailing bytes. It does not strip Confluent prefixes, fingerprints or container headers.
 
+`Decoder::with_references(writer_schema, &[reference_schema])` accepts up to 32 named writer-schema dependencies supplied by the caller. The combined bundle is limited to 256 KiB and shares the schema node/name budget. It resolves dependencies with Apache Avro's native schema resolver, without reading files or contacting registries. With references, the identity hashes length-prefixed UTF-8 schemas in supplied order, followed by the writer schema; reordering references changes that identity.
+
 `schema_id()` includes SHA-256 of the exact supplied UTF-8 schema bytes, so whitespace changes its identity. This identifies an interpretation, not the producer's actual schema or a registry ID. A successful decode does not prove the schema was correct.
 
 `Decoded::value()` preserves bytes, union indexes and logical types. JSON can flatten that information, so it is not a lossless export. Raw bytes remain available after a JSON-presentation error. `decode` borrows its input; an error leaves the caller's data untouched. The decoder never falls back to another format.
@@ -51,7 +53,7 @@ These are fixed library constants, not app settings. A schema-aware wire scan ch
 
 `big-decimal` is rejected because its arbitrary scale needs a separate bound; fixed-scale decimal is supported. NaN/infinity remains a typed float but JSON conversion fails instead of replacing it with null.
 
-Reader-schema resolution, external schema references, registry requests, Confluent payload/header framing, single-object framing and object containers are not implemented. [ADR-0008](../../docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the app and registry boundary.
+Reader-schema resolution, single-object framing and object containers are not implemented. The Kafka adapter owns registry requests and Confluent payload-prefix parsing; this library only accepts caller-supplied schemas and raw datum bytes. Header-GUID framing remains unsupported. [ADR-0008](../../docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the app and registry boundary.
 
 ## Validation
 

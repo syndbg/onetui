@@ -19,3 +19,19 @@ format = "protobuf"
 framing = "raw"
 schema_file = "/absolute/path/to/event.pb"
 message_name = "demo.Event"
+
+# Custom endpoint example. For the seeded local registry, use local_redpanda
+# from hack/connections.toml after make dev-up.
+# Keep only bindings for topics you use. This endpoint is a placeholder.
+[[connections.local_kafka.decoders]]
+topic = "registered_events"
+field = "value"
+format = "avro"
+framing = "confluent"
+[connections.local_kafka.decoders.registry]
+url = "https://registry.example.com"
+# Optional HTTP Basic authentication; omit both for anonymous access.
+# username_env = "REGISTRY_USER"
+# password_env = "REGISTRY_PASSWORD"
+# Or use token_env = "REGISTRY_TOKEN" instead of Basic authentication.
+# ca_file = "/absolute/path/to/registry-ca.pem"

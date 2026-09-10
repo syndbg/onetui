@@ -1,5 +1,31 @@
 name: onetui-fixtures
 services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.2
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:29092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://127.0.0.1:29092
+      - --schema-registry-addr=0.0.0.0:8081
+      - --set
+      - redpanda.auto_create_topics_enabled=false
+      - --set
+      - redpanda.enable_metrics_reporter=false
+    ports:
+      - "127.0.0.1:29092:29092"
+      - "127.0.0.1:18081:8081"
+    tmpfs:
+      - /var/lib/redpanda/data:uid=101,gid=101
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "-X", "brokers=127.0.0.1:9092"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
   nats: &nats_fixture
     build:
       context: ./fixtures

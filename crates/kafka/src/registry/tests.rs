@@ -128,7 +128,7 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
         .to_string();
     assert!(
         error.contains("401") && !error.contains("fixture") && !error.contains("dXNlcjpmaXh0dXJl"),
-        "{error}; requests={:?}", server.requests.lock().unwrap()
+        "{error}"
     );
     cfg.ca_file = None;
     assert!(Registry::new(cfg).unwrap().check(&|| Ok(())).is_err());
@@ -156,6 +156,25 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
         registry.preview(&envelope(1, &[14]), &|| Ok(())).1.unwrap(),
         "7"
     );
+    let other = Server::start(false, |_| {
+        (200, serde_json::json!({"schema":"\"string\""}).to_string())
+    });
+    let mut isolated = Registry::new(config(&other)).unwrap();
+    assert_eq!(
+        isolated
+            .preview(&envelope(1, &[2, b'a']), &|| Ok(()))
+            .1
+            .unwrap(),
+        "\"a\""
+    );
+    assert_eq!(other.requests.lock().unwrap().len(), 1);
+    let before = server.requests.lock().unwrap().len();
+    let mut reopened = Registry::new(config(&server)).unwrap();
+    assert_eq!(
+        reopened.preview(&envelope(1, &[14]), &|| Ok(())).1.unwrap(),
+        "7"
+    );
+    assert_eq!(server.requests.lock().unwrap().len(), before + 1);
     let mut cfg = config(&server);
     cfg.url = "http://remote.invalid".into();
     assert!(cfg.validate().is_err());

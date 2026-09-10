@@ -7,19 +7,42 @@ Linux builds also require CURL development headers (`libcurl4-openssl-dev` on De
 ```sh
 make dev-up        # builds, starts databases, waits for reads, seeds demos
 make dev-seed      # adds demos to running fixtures without resetting them
-make check-local   # checks PostgreSQL, Qdrant, Kafka and NATS with fixture settings
+make check-local   # checks all fixture aliases, including Redpanda's registry
 make run           # connection picker; uses existing fixtures, q quits
 make dev-logs
 make dev-down      # removes this fixture project and its temporary data
 ```
 
-`make run` builds and supplies fake PostgreSQL, Qdrant and NATS credentials; it does not start/recreate containers. It opens the connection picker without contacting a datasource. Choose `local_pg`, `local_qdrant`, `local_kafka` or `local_nats` and press Enter. PostgreSQL opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables, a Qdrant `demo_*` collection, or a Kafka `demo_*` topic and partition. Press `c` to return to the picker. Only an explicit CLI `--connection <alias>` skips the picker. See [PostgreSQL usage](../docs/postgres.md), [Qdrant usage](../docs/qdrant.md) [Kafka usage](../docs/kafka.md) and [NATS usage](../docs/nats.md).
+`make run` builds and supplies fake PostgreSQL, Qdrant and NATS credentials; it does not start/recreate containers. It opens the connection picker without contacting a datasource. Choose `local_pg`, `local_qdrant`, `local_kafka`, `local_redpanda` or `local_nats` and press Enter. PostgreSQL opens schemas, relations, then rows and field detail; `m` opens column metadata, `/` filters the displayed page and `s` cycles local lexical sort. Open schema `demo` for larger tables, a Qdrant `demo_*` collection, or a Kafka `demo_*` topic and partition. Press `c` to return to the picker. Only an explicit CLI `--connection <alias>` skips the picker. See [PostgreSQL usage](../docs/postgres.md), [Qdrant usage](../docs/qdrant.md), [Kafka usage](../docs/kafka.md) and [NATS usage](../docs/nats.md).
 
 `compose.yaml` is the only Compose definition. PostgreSQL 16.13 listens on `127.0.0.1:15432`; Qdrant 1.18.2 gRPC listens on `127.0.0.1:16334`; Apache Kafka 4.2.0 listens on `127.0.0.1:19092`. Kafka runs one combined KRaft broker/controller with auto topic creation disabled and no authentication on the local development listener. The `onetui-fixtures` project is reserved for disposable data. Storage is tmpfs, so even restarting containers can lose fixture state; recreate with `dev-down` then `dev-up`. There are no persistent data volumes. Do not place valuable data in these containers.
 
-A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` checks the normal PostgreSQL, Qdrant, Kafka and NATS connection aliases.
+A separate `qdrant-tls` fixture exposes gRPC on `127.0.0.1:16335` with a localhost-only certificate. Its private CA/keys are generated inside tmpfs at startup. Compose waits for a verified TLS handshake; the integration test performs authenticated metadata reads and negative trust/hostname/authentication/protocol checks. It supplies the public CA to only the child CLI through `SSL_CERT_FILE`/`SSL_CERT_DIR`; nothing is installed in the OS trust store. `make check-local` checks all five connection aliases, including Redpanda and its registry.
 
-Kafka also binds verified TLS on `127.0.0.1:19093` and SASL over TLS on `127.0.0.1:19094`, advertised as `localhost`. Its self-signed localhost certificate and keys live in container tmpfs for two days. Tests copy only the public certificate into a temporary `ca_file`; the OS trust store is unchanged. `kafka-security.sh` sets fixture-only PLAIN/SCRAM credentials and grants `fixture-reader` topic `Read`/`Describe` on `demo_*` and group `Describe` on `onetui-*`. It grants no group `Read`. `fixture-denied` has no ACLs. These accounts and the unauthenticated development listener are only for this disposable broker, not a deployment template.
+Redpanda 26.2.2 also runs in this Compose project, with its Kafka API at `127.0.0.1:29092` and Schema Registry at `http://127.0.0.1:18081`. It uses one CPU shard, a 512 MiB broker-memory setting and disposable tmpfs storage. Both published ports bind only to loopback, without authentication or TLS. Metrics reporting and automatic topic creation are disabled. Apache Kafka remains alongside it for the existing broker-specific configuration, authentication and transaction tests. No separate registry server or Console is needed. See Redpanda's [single-broker setup](https://docs.redpanda.com/labs/docker-compose/single-broker/).
+
+## Redpanda and Schema Registry
+
+`make dev-up` starts the real registry and seeds `demo_avro` with 1,000 records. In `make run`, choose `local_redpanda` → Topics → `demo_avro` → Records. This alias still uses `kind = "kafka"`; Redpanda is not another connector. Its `value` decoder binding already points at the local registry in [connections.toml](connections.toml).
+
+The records alternate between two versions of an Avro `Event` writer schema. Both reference a named `Customer` schema; the second adds an optional `note` field. Values include nested records, arrays and Unicode text. `value_decoded` shows JSON, `value_schema` identifies the exact registry ID, and the original `value` retains the Confluent prefix and datum bytes. Enter opens row data; select the original field and choose hex to inspect the wire representation.
+
+```sh
+make dev-up
+make run
+# Or open just this connection; no environment secrets required:
+./target/debug/onetui --config hack/connections.toml --connection local_redpanda
+curl --fail http://127.0.0.1:18081/subjects
+curl --fail http://127.0.0.1:18081/subjects/demo_avro_value/versions
+```
+
+`make dev-seed` preserves an existing `demo_avro` only when it still has one partition and offsets `[0, 1000)`. Unexpected or partial data fails without deleting it. Schema registration is idempotent for these fixed schemas; IDs are returned by the registry, never hard-coded. Setup uses only the fixed local endpoints. Registry mutations belong to fixture setup/tests, not the read-only application. The real-registry integration case owns a separate topic and subjects, exercises paging/replay/following, then deletes its topic and soft-deletes its subjects. A fixture reset removes the remaining registry storage.
+
+`make dev-traffic` remains Apache Kafka plus NATS; it does not append to `demo_avro`. Protobuf registry decoding is still unsupported. Redpanda's local registry is plaintext; registry TLS/authentication, redirects and timeout failures remain covered by separate HTTP/TLS protocol fixtures. This setup is not suitable for exposed or production deployments.
+
+## Fixture security and configuration
+
+Apache Kafka also binds verified TLS on `127.0.0.1:19093` and SASL over TLS on `127.0.0.1:19094`, advertised as `localhost`. Its self-signed localhost certificate and keys live in container tmpfs for two days. Tests copy only the public certificate into a temporary `ca_file`; the OS trust store is unchanged. `kafka-security.sh` sets fixture-only PLAIN/SCRAM credentials and grants `fixture-reader` topic `Read`/`Describe` on `demo_*` and group `Describe` on `onetui-*`. It grants no group `Read`. `fixture-denied` has no ACLs. These accounts and the unauthenticated development listener are only for this disposable broker, not a deployment template.
 
 The scripts set fixture-only credentials in their own process and do not modify your shell/config. `connections.toml` contains the theme, connection aliases, endpoint and environment references. Press `T` or use `:themes` to preview all palettes with `j`/`k` or arrows; Enter keeps for this session, Esc or Ctrl-C restores the previous theme. To persist a startup preference, edit top-level `theme` in that file; the menu never writes it. `onetui schema` lists known settings and actions. A bare `onetui --check --config hack/connections.toml` still needs `--connection` and the referenced environment variables; use `make check-local` to supply them automatically.
 
@@ -42,7 +65,7 @@ These commands append to disposable fixtures without reading user connection con
 
 ## Kafka traffic
 
-Kafka supports [raw decoder bindings](../docs/kafka.md#schema-bound-key-and-value-previews). Copy the relevant binding from [kafka-decoders.toml.example](kafka-decoders.toml.example), replacing the absolute schema path and topic. The traffic producers still send their existing JSON/byte fixtures; they do not generate schema-bound messages. Isolated Kafka integration tests create their own Avro and Protobuf topics and remove them afterward. Without a broker, use the standalone [Protobuf](../crates/protobuf/README.md#try-a-raw-message) or [Avro](../crates/avro/README.md#try-a-raw-message) example.
+Kafka supports [raw decoder bindings](../docs/kafka.md#schema-bound-key-and-value-previews). Copy the relevant binding from [kafka-decoders.toml.example](kafka-decoders.toml.example), replacing the absolute schema path and topic. For ready-made registry data, use the [Redpanda fixture](#redpanda-and-schema-registry). HTTP/TLS protocol tests create their own loopback registry servers without changing host trust. The traffic producers still send their existing JSON/byte fixtures; they do not generate schema-bound messages. Isolated Kafka integration tests create their own Avro and Protobuf topics and remove them afterward. Without a broker, use the standalone [Protobuf](../crates/protobuf/README.md#try-a-raw-message) or [Avro](../crates/avro/README.md#try-a-raw-message) example.
 
 To browse all seeded partitions together, choose `local_kafka` → Topics → `demo_events` → `kafka.records`. The extra `partition` column identifies each record's source; `n/p` replays pages and `f` follows the whole topic. The same entry under `demo_live` follows fixture traffic. Topic-wide reads allow up to 32 partitions, without global timestamp ordering; use Partitions for larger topics or offset/timestamp replay.
 

@@ -72,6 +72,8 @@ impl Server {
             while !done.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        // macOS accepts can inherit the listener's nonblocking mode.
+                        stream.set_nonblocking(false).unwrap();
                         stream
                             .set_read_timeout(Some(Duration::from_millis(300)))
                             .unwrap();
@@ -111,8 +113,7 @@ fn serve(
     let mut request = Vec::new();
     while !request.ends_with(b"\r\n\r\n") && request.len() < 16_384 {
         let mut b = [0];
-        if let Err(error) = stream.read_exact(&mut b) {
-            eprintln!("[DEBUG-registry] read error after {} bytes: {error:?}", request.len());
+        if stream.read_exact(&mut b).is_err() {
             return;
         }
         request.push(b[0]);

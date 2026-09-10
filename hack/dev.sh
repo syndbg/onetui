@@ -32,6 +32,7 @@ up() {
     wait_for_connection local_pg
     wait_for_connection local_qdrant
     wait_for_connection local_kafka
+    wait_for_connection local_redpanda
     wait_for_connection local_nats
     seed
 }
@@ -41,6 +42,7 @@ seed() {
     "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
     cargo run -p onetui-qdrant --example seed_demo --locked
     cargo run -p onetui-kafka --example seed_demo --locked
+    cargo run -p onetui-kafka --example seed_redpanda --locked
     cargo run -p onetui-nats --example seed_nats --locked
 }
 
@@ -133,7 +135,7 @@ case "$1" in
         check_connection local_nats
         exec cargo run -p onetui-nats --example produce_nats --locked
         ;;
-    check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka; check_connection local_nats ;;
+    check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka; check_connection local_redpanda; check_connection local_nats ;;
     down) "${compose[@]}" down --timeout 10 ;;
     logs) "${compose[@]}" logs --no-color --tail 100 ;;
     test)

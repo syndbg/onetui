@@ -13,13 +13,13 @@ The initial version, v0.1.0, is read-only. PostgreSQL, Qdrant, Kafka and NATS Je
 | PostgreSQL | Implemented, read-only | Schemas, tables/views, column metadata, row paging, SQL query editor, cached field detail, headless checks | Query parameters, writes |
 | Qdrant | Implemented, read-only | Collections and metadata, point ID paging, filtered Scroll JSON editor, on-demand payload and dense/sparse/multivector detail, headless checks | Advanced/nested filters, similarity search, writes |
 | DynamoDB | Planned | None | Connector and all datasource operations |
-| Kafka | [Implemented, read-only](docs/kafka.md) | Broker/topic/partition metadata, broker/topic configuration, consumer groups and members, committed offsets and read-committed lag, partition and topic-wide paging/following (up to 32 partitions), single-partition offset/timestamp replay JSON editor, byte-value inspection, explicit raw Protobuf/Avro JSON previews, headless checks, verified TLS and SASL PLAIN/SCRAM | Global timestamp ordering, publishing, group administration, schema registry, mutual TLS, OAuth, GSSAPI; hosted release validation pending |
+| Kafka | [Implemented, read-only](docs/kafka.md) | Broker/topic/partition metadata, broker/topic configuration, consumer groups and members, committed offsets and read-committed lag, partition and topic-wide paging/following (up to 32 partitions), single-partition offset/timestamp replay JSON editor, byte-value inspection, raw Protobuf/Avro and registry-backed Avro JSON previews, headless checks, verified TLS and SASL PLAIN/SCRAM | Global timestamp ordering, publishing, group administration, Protobuf schema registry, mutual TLS, OAuth, GSSAPI; hosted release validation pending |
 | NATS | [Implemented, read-only](docs/nats.md) | JetStream streams and configuration/state, sequence-based message paging and bookmarks, live following, byte/header inspection, headless checks, TLS and token/username-password configuration | Core NATS subscriptions, KV/object-store views, native queries, publishing, consumer administration, NKEY/JWT, schema registry |
 | RabbitMQ | Planned | None | Connector and all datasource operations |
 
 Qdrant browsing means opening a collection, paging through its point IDs, then opening a point's payload or vectors. Those are existing reads, not a similarity search. See [Qdrant usage](docs/qdrant.md) for navigation and limits.
 
-Kafka supports explicit [local Avro/Protobuf schema bindings](docs/kafka.md#schema-bound-key-and-value-previews). Registry resolution, local-directory catalogs and Buf descriptor discovery are planned in [ADR-0010](docs/adr/0010-resolve-message-schemas-from-explicit-sources.md); none is required for ordinary byte/text browsing.
+Kafka supports explicit [local Avro/Protobuf schema bindings](docs/kafka.md#schema-bound-key-and-value-previews). [Confluent Avro registry resolution](docs/kafka.md#confluent-avro-registry) is available; Protobuf registry decoding, local-directory catalogs and Buf descriptor discovery remain planned in [ADR-0010](docs/adr/0010-resolve-message-schemas-from-explicit-sources.md); none is required for ordinary byte/text browsing.
 
 All implemented datasources share connection switching, a command palette, page-local filtering and lexical sorting, request cancellation, and the offline resource/action/configuration catalog (`onetui schema`). Local filtering updates as you type and only searches cached text on the displayed page. Enter on a data row lists all fields; Enter on a field opens its full value. Single-value results such as Qdrant payloads open directly in the value viewer. PageUp/PageDown scrolls one screen within loaded data; Ctrl-U/Ctrl-D scrolls half a screen. Customizable keybindings are planned.
 
@@ -35,7 +35,7 @@ Read and write support is the direction for OneTUI, not a capability of the init
 - Ratatui and Crossterm for terminal rendering, keyboard input and terminal lifecycle.
 - Tokio for asynchronous requests, cancellation and connection tasks.
 - `tokio-postgres` with Rustls for PostgreSQL; `qdrant-client` and Tonic for Qdrant gRPC.
-- `rdkafka` with native librdkafka/OpenSSL for Kafka; `async-nats` with Rustls for NATS JetStream.
+- `rdkafka` with native librdkafka/OpenSSL for Kafka and `ureq`/Rustls for optional schema registry requests; `async-nats` with Rustls for NATS JetStream.
 - `prost-reflect` in `onetui-protobuf` and `apache-avro` in `onetui-avro` for schema-bound Kafka previews.
 - Clap for CLI arguments; Serde, JSON and TOML for configuration and the offline catalog.
 
@@ -70,7 +70,7 @@ alias ot='onetui'
 
 Open a new shell, then use `ot --help` or `ot --check --connection local_pg`. This is only a shell shortcut; the executable and configuration directory remain `onetui`.
 
-`--check` validates selected Kafka decoder files when configured, performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1-300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the TUI; displayed data does not expire while idle. See [PostgreSQL usage](docs/postgres.md) and [Qdrant usage](docs/qdrant.md).
+`--check` validates selected Kafka decoder files and checks configured registry schema-type endpoints, performs a real metadata read, prints a short result using the connection alias, and returns nonzero on failure. It does not inspect rows/points or require a privileged health endpoint. `--timeout 5` is the default active-request deadline (1-300 seconds); Ctrl-C cancels pending work. Running without `--check` opens the TUI; displayed data does not expire while idle. See [PostgreSQL usage](docs/postgres.md) and [Qdrant usage](docs/qdrant.md).
 
 ## Browsing and offline catalog
 
@@ -243,11 +243,13 @@ unicode = "literal"
 
 The table and every field are optional. Omission uses the listed defaults. Unknown fields, empty/unknown names and wrong types fail validation, including `--check`. String values are case-sensitive and are not environment-expanded. TOML booleans are `true`/`false`; commands such as `:display word-wrap off` use `on`/`off`. Existing config discovery and relative-path rules apply; there is no display file, CLI override flag, file watching or merge layer. Runtime switches override startup defaults in memory. Restart to reread the file.
 
-Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling back to hex for invalid UTF-8. Invalid bytes never become replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping. The independent [Protobuf](crates/protobuf/README.md) and [Avro](crates/avro/README.md) libraries and examples work with explicit local schemas; [Kafka bindings](docs/kafka.md#schema-bound-key-and-value-previews) add JSON/schema/error columns without replacing raw keys or values. Registry access and native-type inspection remain planned. Auto does not use these codecs.
+Auto displays valid UTF-8 bytes as text or complete JSON objects/arrays, falling back to hex for invalid UTF-8. Invalid bytes never become replacement characters. Hex/binary expose retained bytes with provenance; JSON formatting preserves keys and number text. Terminal controls remain escaped even with highlighting and pretty printing off. See [display behavior and bounds](docs/ui.md#value-display-controls), including preview limits and the single-line editor exceptions to wrapping. The independent [Protobuf](crates/protobuf/README.md) and [Avro](crates/avro/README.md) libraries and examples work with explicit local schemas; [Kafka bindings](docs/kafka.md#schema-bound-key-and-value-previews) add JSON/schema/error columns without replacing raw keys or values. Protobuf registry access and native-type inspection remain planned. Auto does not use these codecs.
 
 ## Disposable local fixtures and tests
 
-The [hack setup](hack/README.md) uses PostgreSQL 16.13, Qdrant 1.18.2, Apache Kafka 4.2.0 and NATS 2.12.15. It binds only to loopback: PostgreSQL 15432, Qdrant 16334/16335 and Kafka 19092/19093/19094 (plaintext/TLS/SASL over TLS), and NATS 14222/14223 (plaintext/TLS). Data lives in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `onetui-fixtures`; don't reuse it for valuable data.
+The [hack setup](hack/README.md) uses PostgreSQL 16.13, Qdrant 1.18.2, Apache Kafka 4.2.0, Redpanda 26.2.2 and NATS 2.12.15. It binds only to loopback: PostgreSQL 15432, Qdrant 16334/16335, Kafka 19092/19093/19094 (plaintext/TLS/SASL over TLS), Redpanda 29092 with Schema Registry 18081, and NATS 14222/14223 (plaintext/TLS). Data lives in temporary container memory. Its credentials are **fake, fixture-only values**. The Compose project is `onetui-fixtures`; don't reuse it for valuable data.
+
+Choose `local_redpanda` in `make run` to browse 1,000 registry-backed Avro records in `demo_avro`, with two writer versions and a referenced schema. It uses the existing Kafka connector. Apache Kafka remains for its broker-specific integration coverage; see [registry setup and usage](hack/README.md#redpanda-and-schema-registry).
 
 For live Kafka and NATS traffic, run `make dev-traffic` after `make dev-up`. Both producers send immediately and every 15 seconds; Ctrl-C stops both. Use `make dev-traffic-kafka` or `make dev-traffic-nats` to run only one. In another terminal, `make run`, choose `local_kafka`, open `demo_live` and partition `0`, then press `f`. The fixture producer sends one record immediately and every 15 seconds. `f` or Ctrl-C stops following and retains data; navigation/inspection also pauses it. Restart begins at a new current end. See [traffic setup](hack/README.md#kafka-traffic) and [following limits](docs/kafka.md#live-following). Following adds no configuration keys.
 
@@ -255,7 +257,7 @@ For live Kafka and NATS traffic, run `make dev-traffic` after `make dev-up`. Bot
 make help
 make dev-up              # start local fixtures and seed browsing demos
 make dev-seed            # add demos to already-running fixtures; no reset
-make run                 # choose local_pg, local_qdrant, local_kafka or local_nats
+make run                 # choose a local connection, including local_redpanda
 make verify              # build, formatting, Clippy, shell syntax, non-Docker tests
 make test-integration    # fresh databases -> readiness -> all fixture tests -> cleanup
 make workflow-lint       # workflow gate; requires Go to run pinned actionlint

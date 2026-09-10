@@ -1637,6 +1637,7 @@ name = "onetui-kafka"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apache-avro",
  "base64 0.22.1",
  "nix",
  "onetui-avro",

@@ -150,13 +150,13 @@ onetui --config "$HOME/onetui.toml" --connection events
 | `topic` | Required exact name, 1..249 ASCII letters/digits/dot/underscore/hyphen; not `.` or `..`. No wildcards. |
 | `field` | Required `"key"` or `"value"`. Each topic/field pair may appear once. |
 | `format` | Required `"avro"` or `"protobuf"`; case-sensitive. |
-| `framing` | Required `"raw"`. No prefix stripping, format guessing, containers or Confluent framing. |
-| `schema_file` | Required absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. Relative paths are rejected; neither `~` nor environment variables are expanded. |
+| `framing` | Required `"raw"` or `"confluent"`. Raw uses a local schema file; Confluent requires Avro and a registry table. No automatic format detection. |
+| `schema_file` | Required for raw framing, forbidden with Confluent. Absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. Relative paths are rejected; neither `~` nor environment variables are expanded. |
 | `message_name` | Required only for Protobuf: exact full name, 1..1,024 UTF-8 bytes without controls. Forbidden for Avro. |
 
 Unknown keys, missing required fields, wrong types and duplicate bindings fail validation even for unselected aliases. Omitted bindings retain Auto display. Bindings apply to partition and topic-wide `kafka.records`, following, and `kafka.query` replay for that topic.
 
-The worker loads a schema on its first relevant read; `--check` loads every binding for the selected alias before checking broker metadata. Config parsing and offline catalog output do not read schema files. Successful schemas and load errors stay cached for the session. Reopen the connection to reread files; refresh reuses cached schemas. Restart after editing binding settings. There are no registry requests or automatic file reloads.
+The worker loads a local schema on its first relevant read; `--check` loads each raw binding and checks configured registries for the selected alias before checking broker metadata. Config parsing and offline catalog output do not read schema files or contact registries. Local schemas and load errors stay cached for the session. Reopen the connection to reread files; refresh reuses cached schemas. Restart after editing binding settings. Registry bindings use the separate cache policy below.
 
 Each bound field adds `FIELD_decoded`, `FIELD_schema` and `FIELD_decode_error` columns. Enter on a record lists all fields; Enter on a field opens its full value. The original `key` and `value` remain unchanged. Select those originals and use `v`, `:display format hex` or `:display format binary` to inspect wire bytes. Hex on a decoded JSON field shows serialized JSON bytes, not the original message.
 
@@ -164,7 +164,44 @@ Null keys/tombstones are not decoded; empty bytes are decoded and may be valid o
 
 Previews use the library allocation/depth limits and accept at most 64 KiB of payload. JSON previews are capped at 64 KiB and must fit the remaining 1 MiB page budget. Bound topics reserve 2 KiB of raw-page capacity for column metadata; a raw record that cannot fit still fails the page explicitly. If preview metadata cannot fit, all preview cells are null and the page notice explains the omission. Columns stay stable across empty or budget-limited live batches. Omitting a preview does not change raw values or broker continuations.
 
-JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. The libraries retain native types during decoding, but the browser has no native-type inspector yet. Reader-schema resolution and Schema Registry remain unsupported. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
+JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. The libraries retain native types during decoding, but the browser has no native-type inspector yet. Reader-schema resolution and Protobuf registry decoding remain unsupported. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
+
+### Confluent Avro registry
+
+For Avro records with Confluent's version-zero payload prefix, resolve the exact schema ID from the configured registry. The original key/value keeps its five-byte prefix; only the derived preview strips it. Each record may use a different writer schema. OneTUI never requests `latest` or registers schemas. Protobuf registry messages, header-GUID framing and Avro single-object/container framing are not supported.
+
+Add this binding to a Kafka connection in your `onetui.toml`, replacing the endpoint and topic. Do not specify `schema_file` or `message_name`:
+
+```toml
+[[connections.events.decoders]]
+topic = "registered_events"
+field = "value"
+format = "avro"
+framing = "confluent"
+[connections.events.decoders.registry]
+url = "https://registry.example.com"
+username_env = "REGISTRY_USER"
+password_env = "REGISTRY_PASSWORD"
+```
+
+Use `onetui --config "$HOME/onetui.toml" --connection events --check` after setting the named environment variables. `--check` requests `GET /schemas/types` and requires Avro support; it does not read records or prove that every schema ID is available. Browsing uses `GET /schemas/ids/{id}` and resolves dependencies through exact `/subjects/{subject}/versions/{version}` requests. Reference subjects are encoded as path segments, not interpreted as URLs.
+
+| Registry setting | Values and default |
+| --- | --- |
+| `url` | Required HTTP(S) base URL, at most 512 UTF-8 bytes without controls, embedded credentials, query or fragment. Base paths are allowed. HTTPS is required remotely; HTTP is allowed only for literal loopback IPs such as `http://127.0.0.1:8081`, not `localhost`. |
+| `ca_file` | Optional HTTPS trust bundle. Omission uses platform certificate verification. An absolute regular-file path, at most 4,096 UTF-8 bytes without controls, containing up to 1 MiB of PEM certificates. Explicit certificates replace platform trust for this binding. No environment or tilde expansion. |
+| `username_env`, `password_env` | Optional pair of ASCII environment-variable names for HTTP Basic authentication. Both must be present or absent. The resolved username cannot contain `:`. |
+| `token_env` | Optional ASCII environment-variable name for a Bearer token, instead of Basic authentication. This is registry authentication, not broker OAuth. |
+
+Omitting credentials means anonymous registry access. Secrets are resolved only for the selected connection, must be nonempty and at most 4,096 UTF-8 bytes without controls, and are independent of broker credentials. Unknown registry keys and incompatible settings fail offline validation. Redirects and environment-proxy discovery are disabled; certificate and hostname verification cannot be disabled.
+
+Lookups run on the existing Kafka worker. Each uncached schema and its reference requests share a two-second I/O deadline; foreground cancellation/deadlines remain active, with checks between requests and before publishing results. An active native request may finish after foreground cancellation, and shutdown retains ownership until that work exits. There is no renderer I/O. Decoding retains the library's size/depth limits rather than promising a process RSS or CPU-time bound.
+
+Each response is limited to 256 KiB plus 16 KiB of headers. A writer bundle is limited to 256 KiB, 32 distinct referenced subject/version pairs and eight reference levels; the pending queue also holds at most 32 references. Each binding caches eight schema IDs, including lookup failures, with FIFO eviction. Repeated records reuse that binding's cache; another binding or connection has a separate cache and authentication context. Eviction or reopening permits another lookup. Refresh alone does not clear the cache. Cache limits count source schema bytes, not native parser allocation overhead.
+
+`FIELD_schema` identifies the registry endpoint and schema ID. Lookup failures retain that identity when the prefix was valid and show the returned HTTP status/body or native error in `FIELD_decode_error`, subject to credential redaction and the existing 512-byte display limit. Malformed prefixes retain raw bytes without a schema identity. Errors on one record do not hide other records; an overall request deadline or cancellation still retains the previous page. Null fields trigger no lookup. Empty bytes are a truncated Confluent prefix.
+
+For a ready-made local registry, run `make dev-up` and open `local_redpanda` in `make run`. The [Redpanda fixture](../hack/README.md#redpanda-and-schema-registry) includes two Avro writer versions, a referenced schema and 1,000 records. Separate HTTP/TLS protocol fixtures cover authentication, redirects, bounds and cancellation. Local Redpanda validation is not certification against a hosted Confluent deployment.
 
 ### Record values and bounds
 
@@ -209,4 +246,4 @@ make run
 
 Choose `local_kafka`, Topics, `demo_live`, Partitions, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
 
-SQL, publishing from the app, consumer-group administration, schema-registry decoding, mutual TLS, OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.
+SQL, publishing from the app, consumer-group administration, Protobuf registry decoding, mutual TLS, broker OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.
