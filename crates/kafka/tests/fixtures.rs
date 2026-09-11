@@ -20,6 +20,8 @@ mod decoding_protobuf;
 mod redpanda;
 #[path = "fixtures/registry_avro.rs"]
 mod registry_avro;
+#[path = "fixtures/registry_protobuf.rs"]
+mod registry_protobuf;
 
 fn executor() -> KafkaExecutor {
     let options =

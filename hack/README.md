@@ -28,7 +28,7 @@ TLS certificates expire after two days; recreate disposable fixtures when expire
 
 Choose `local_redpanda` → Topics → `demo_avro` → Records. The fixture contains 1,000 Avro records using two writer versions and a referenced schema. Decoder bindings are already configured.
 
-Apache Kafka remains alongside Redpanda for broker-specific security and transaction tests. Protobuf registry decoding is not implemented.
+Apache Kafka remains alongside Redpanda for broker-specific security and transaction tests. Protobuf registry decoding has a separate integration fixture; `demo_avro` remains Avro.
 
 ## Shared traffic
 

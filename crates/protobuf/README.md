@@ -1,8 +1,8 @@
 # onetui-protobuf
 
-Raw Protobuf decoding with an explicit descriptor set and message name, using `prost-reflect` 0.16. The library performs no file or network access and has no Avro, datasource SDK or terminal dependency. `Decoder` returns original bytes, a schema identity and a `prost_reflect::DynamicMessage`. JSON is a separate, fallible presentation.
+Raw Protobuf decoding with an explicit descriptor set and message name, using `prost-reflect` 0.16; `protox` compiles supplied registry sources in memory. The library performs no file or network access and has no Avro, datasource SDK or terminal dependency. `Decoder` returns original bytes, a schema identity and a `prost_reflect::DynamicMessage`. JSON is a separate, fallible presentation.
 
-The Kafka browser supports explicit [raw bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) in `onetui.toml`; `onetui schema --datasource kafka` lists their settings. Unbound fields and NATS retain Auto/text/hex behavior.
+The Kafka browser supports explicit [raw bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) in `onetui.toml`; `onetui schema --datasource kafka` lists their settings. Unbound fields and NATS retain Auto/text/hex behavior. Kafka also supports Confluent registry bindings.
 
 ## Try a raw message
 
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
 
 These are fixed library constants, not app settings. A schema-aware wire scan checks lengths and counts before constructing values. Typed values, schemas, JSON conversion and allocator overhead have separate costs; these limits are not process RSS or wall-clock guarantees. Run decoding outside rendering.
 
-Automatic `google.protobuf.Any` JSON unpacking is unavailable because embedded bytes would bypass preflight. Its typed fields and raw bytes remain readable. External schema resolution, registry requests, `.proto` source compilation and Confluent payload/header framing are not implemented. [ADR-0008](../../docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the app and registry boundary.
+Automatic `google.protobuf.Any` JSON unpacking is unavailable because embedded bytes would bypass preflight. Its typed fields and raw bytes remain readable. `SourceSchema::compile(root, imports)` accepts in-memory source plus up to 32 named imports. Source and compiled descriptors each have a 256 KiB cap; source nesting is capped at 32 and declarations at 4,096. Imports never read local files or make requests; embedded Google types are available. `SourceSchema::decoder(&[1, 0])` selects a declaration index path. Kafka owns registry requests and Confluent framing. [ADR-0008](../../docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the app and registry boundary.
 
 ## Validation
 

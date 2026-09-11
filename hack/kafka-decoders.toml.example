@@ -35,3 +35,12 @@ url = "https://registry.example.com"
 # password_env = "REGISTRY_PASSWORD"
 # Or use token_env = "REGISTRY_TOKEN" instead of Basic authentication.
 # ca_file = "/absolute/path/to/registry-ca.pem"
+
+[[connections.local_kafka.decoders]]
+topic = "registered_protobuf_events"
+field = "value"
+format = "protobuf"
+framing = "confluent"
+# The envelope selects the message; no schema_file or message_name.
+[connections.local_kafka.decoders.registry]
+url = "https://registry.example.com"

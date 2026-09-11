@@ -1,6 +1,9 @@
 #![doc = include_str!("../README.md")]
 mod bounds;
 mod protobuf;
+mod source;
+
+pub use source::SourceSchema;
 
 use anyhow::{Result, ensure};
 use sha2::{Digest, Sha256};
@@ -46,6 +49,10 @@ impl Decoder {
 
     pub fn schema_id(&self) -> &str {
         &self.schema_id
+    }
+
+    pub fn message_name(&self) -> &str {
+        self.descriptor.full_name()
     }
 
     /// Decode one raw payload without guessing framing or substituting another format.

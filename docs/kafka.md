@@ -150,9 +150,9 @@ onetui --config "$HOME/onetui.toml" --connection events
 | `topic` | Required exact name, 1..249 ASCII letters/digits/dot/underscore/hyphen; not `.` or `..`. No wildcards. |
 | `field` | Required `"key"` or `"value"`. Each topic/field pair may appear once. |
 | `format` | Required `"avro"` or `"protobuf"`; case-sensitive. |
-| `framing` | Required `"raw"` or `"confluent"`. Raw uses a local schema file; Confluent requires Avro and a registry table. No automatic format detection. |
+| `framing` | Required `"raw"` or `"confluent"`. Raw uses a local schema file; Confluent requires a registry table. No automatic format detection. |
 | `schema_file` | Required for raw framing, forbidden with Confluent. Absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. Relative paths are rejected; neither `~` nor environment variables are expanded. |
-| `message_name` | Required only for Protobuf: exact full name, 1..1,024 UTF-8 bytes without controls. Forbidden for Avro. |
+| `message_name` | Required for raw Protobuf: exact full name, 1..1,024 UTF-8 bytes without controls. Forbidden for Avro and Confluent framing; Protobuf registry records select their message through envelope indexes. |
 
 Unknown keys, missing required fields, wrong types and duplicate bindings fail validation even for unselected aliases. Omitted bindings retain Auto display. Bindings apply to partition and topic-wide `kafka.records`, following, and `kafka.query` replay for that topic.
 
@@ -164,11 +164,13 @@ Null keys/tombstones are not decoded; empty bytes are decoded and may be valid o
 
 Previews use the library allocation/depth limits and accept at most 64 KiB of payload. JSON previews are capped at 64 KiB and must fit the remaining 1 MiB page budget. Bound topics reserve 2 KiB of raw-page capacity for column metadata; a raw record that cannot fit still fails the page explicitly. If preview metadata cannot fit, all preview cells are null and the page notice explains the omission. Columns stay stable across empty or budget-limited live batches. Omitting a preview does not change raw values or broker continuations.
 
-JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. The libraries retain native types during decoding, but the browser has no native-type inspector yet. Reader-schema resolution and Protobuf registry decoding remain unsupported. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
+JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. The libraries retain native types during decoding, but the browser has no native-type inspector yet. Reader-schema resolution remains unsupported. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
 
 ### Confluent Avro registry
 
-For Avro records with Confluent's version-zero payload prefix, resolve the exact schema ID from the configured registry. The original key/value keeps its five-byte prefix; only the derived preview strips it. Each record may use a different writer schema. OneTUI never requests `latest` or registers schemas. Protobuf registry messages, header-GUID framing and Avro single-object/container framing are not supported.
+The same settings support Protobuf with `format = "protobuf"`.
+
+For Avro records with Confluent's version-zero payload prefix, resolve the exact schema ID from the configured registry. The original key/value keeps its five-byte prefix; only the derived preview strips it. Each record may use a different writer schema. OneTUI never requests `latest` or registers schemas. Protobuf registry records are also supported: set `format = "protobuf"` and omit `message_name`. Their envelope indexes select the top-level or nested message. Imports use exact registry reference versions or embedded Google types; no local filesystem search or external compiler is used. Header-GUID framing and Avro single-object/container framing are not supported.
 
 Add this binding to a Kafka connection in your `onetui.toml`, replacing the endpoint and topic. Do not specify `schema_file` or `message_name`:
 
@@ -184,7 +186,7 @@ username_env = "REGISTRY_USER"
 password_env = "REGISTRY_PASSWORD"
 ```
 
-Use `onetui --config "$HOME/onetui.toml" --connection events --check` after setting the named environment variables. `--check` requests `GET /schemas/types` and requires Avro support; it does not read records or prove that every schema ID is available. Browsing uses `GET /schemas/ids/{id}` and resolves dependencies through exact `/subjects/{subject}/versions/{version}` requests. Reference subjects are encoded as path segments, not interpreted as URLs.
+Use `onetui --config "$HOME/onetui.toml" --connection events --check` after setting the named environment variables. `--check` requests `GET /schemas/types` and requires the binding's AVRO or PROTOBUF type; it does not read records or prove that every schema ID is available. Browsing uses `GET /schemas/ids/{id}` and resolves dependencies through exact `/subjects/{subject}/versions/{version}` requests. Reference subjects are encoded as path segments, not interpreted as URLs.
 
 | Registry setting | Values and default |
 | --- | --- |

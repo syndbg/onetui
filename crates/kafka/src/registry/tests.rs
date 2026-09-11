@@ -42,7 +42,7 @@ fn exact_ids_references_cache_and_errors() {
         };
         (200, body.to_string())
     });
-    let mut registry = Registry::new(config(&server)).unwrap();
+    let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
     registry.check(&|| Ok(())).unwrap();
     assert_eq!(
         registry.preview(&envelope(1, &[14]), &|| Ok(())).1.unwrap(),
@@ -120,7 +120,7 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
         )
     })
     .unwrap();
-    let mut registry = Registry::new(cfg.clone()).unwrap();
+    let mut registry = Registry::new(cfg.clone(), Format::Avro).unwrap();
     let error = registry
         .preview(&envelope(1, &[14]), &|| Ok(()))
         .1
@@ -131,20 +131,25 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
         "{error}"
     );
     cfg.ca_file = None;
-    assert!(Registry::new(cfg).unwrap().check(&|| Ok(())).is_err());
+    assert!(
+        Registry::new(cfg, Format::Avro)
+            .unwrap()
+            .check(&|| Ok(()))
+            .is_err()
+    );
     for (status, body) in [
         (302, "redirect".into()),
         (200, "x".repeat(RESPONSE_BYTES + 1)),
     ] {
         let server = Server::start(false, move |_| (status, body.clone()));
-        let mut registry = Registry::new(config(&server)).unwrap();
+        let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
         assert!(registry.preview(&envelope(1, &[14]), &|| Ok(())).1.is_err());
         assert_eq!(server.requests.lock().unwrap().len(), 1);
     }
     let server = Server::start(false, |_| {
         (200, serde_json::json!({"schema":"\"long\""}).to_string())
     });
-    let mut registry = Registry::new(config(&server)).unwrap();
+    let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
     assert!(
         registry
             .preview(&envelope(1, &[14]), &|| anyhow::bail!("cancelled"))
@@ -159,7 +164,7 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
     let other = Server::start(false, |_| {
         (200, serde_json::json!({"schema":"\"string\""}).to_string())
     });
-    let mut isolated = Registry::new(config(&other)).unwrap();
+    let mut isolated = Registry::new(config(&other), Format::Avro).unwrap();
     assert_eq!(
         isolated
             .preview(&envelope(1, &[2, b'a']), &|| Ok(()))
@@ -169,7 +174,7 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
     );
     assert_eq!(other.requests.lock().unwrap().len(), 1);
     let before = server.requests.lock().unwrap().len();
-    let mut reopened = Registry::new(config(&server)).unwrap();
+    let mut reopened = Registry::new(config(&server), Format::Avro).unwrap();
     assert_eq!(
         reopened.preview(&envelope(1, &[14]), &|| Ok(())).1.unwrap(),
         "7"
@@ -189,7 +194,7 @@ fn reference_depth_timeout_and_config_validation() {
         let n: u32 = path.rsplit('/').next().unwrap().parse().unwrap();
         (200, serde_json::json!({"schema":"\"long\"", "references":[{"name":format!("R{n}"),"subject":"ref","version":n+1}]}).to_string())
     });
-    let mut registry = Registry::new(config(&server)).unwrap();
+    let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
     assert!(
         registry
             .preview(&envelope(1, &[14]), &|| Ok(()))
@@ -205,7 +210,7 @@ fn reference_depth_timeout_and_config_validation() {
     });
     let started = Instant::now();
     assert!(
-        Registry::new(config(&stalled))
+        Registry::new(config(&stalled), Format::Avro)
             .unwrap()
             .check(&|| Ok(()))
             .is_err()
@@ -223,4 +228,87 @@ fn reference_depth_timeout_and_config_validation() {
         let options = toml::from_str(&format!("{prefix}{invalid}")).unwrap();
         assert!(crate::config::Config::parse(&options).is_err());
     }
+}
+
+#[test]
+fn protobuf_indexes_imports_cache_and_raw_failure_recovery() {
+    let server = Server::start(false, |request| {
+        let path = request.split_whitespace().nth(1).unwrap();
+        let body = match path {
+            "/schemas/types" => serde_json::json!(["PROTOBUF"]),
+            "/schemas/ids/1" => {
+                serde_json::json!({"schemaType":"PROTOBUF", "schema": r#"syntax="proto3"; package demo; import "child.proto"; message First {int32 id=1;} message Outer {message Inner {Child child=1;}}"#, "references":[{"name":"child.proto","subject":"child/name","version":7}]})
+            }
+            "/subjects/child%2Fname/versions/7" => {
+                serde_json::json!({"schemaType":"PROTOBUF", "schema":r#"syntax="proto3"; package demo; message Child {int32 id=1;}"#})
+            }
+            "/schemas/ids/2" => serde_json::json!({"schemaType":"PROTOBUF", "schema":"invalid"}),
+            "/schemas/ids/3" => serde_json::json!({"schema":"\"long\""}),
+            _ => return (404, "missing writer".into()),
+        };
+        (200, body.to_string())
+    });
+    let mut registry = Registry::new(config(&server), Format::Protobuf).unwrap();
+    registry.check(&|| Ok(())).unwrap();
+    let valid = envelope(1, &[4, 2, 0, 10, 2, 8, 7]);
+    let (identity, result) = registry.preview(&valid, &|| Ok(()));
+    assert!(
+        identity
+            .unwrap()
+            .ends_with("#id=1&message=demo.Outer.Inner")
+    );
+    assert_eq!(result.unwrap(), r#"{"child":{"id":7}}"#);
+    let requests = server.requests.lock().unwrap().len();
+    for payload in [&[0, 8, 7][..], &[2, 0, 8, 7]] {
+        assert_eq!(
+            registry
+                .preview(&envelope(1, payload), &|| Ok(()))
+                .1
+                .unwrap(),
+            r#"{"id":7}"#
+        );
+    }
+    assert_eq!(server.requests.lock().unwrap().len(), requests);
+    for payload in [
+        &[][..],
+        &[128],
+        &[1],
+        &[66],
+        &[4, 2],
+        &[2, 255, 255, 255, 255, 16],
+        &[2, 6],
+        &[4, 2, 2],
+        &[0, 255],
+    ] {
+        assert!(
+            registry
+                .preview(&envelope(1, payload), &|| Ok(()))
+                .1
+                .is_err(),
+            "{payload:?}"
+        );
+    }
+    for id in [2, 3, 4] {
+        assert!(registry.preview(&envelope(id, &[0]), &|| Ok(())).1.is_err());
+    }
+    assert_eq!(
+        registry.preview(&valid, &|| Ok(())).1.unwrap(),
+        r#"{"child":{"id":7}}"#
+    );
+    assert!(
+        Registry::new(config(&server), Format::Avro)
+            .unwrap()
+            .check(&|| Ok(()))
+            .is_err()
+    );
+    assert!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| !r.contains("latest"))
+    );
+    let options = toml::from_str("bootstrap_servers=['127.0.0.1:9092']\nsecurity_protocol='PLAINTEXT'\n[[decoders]]\ntopic='events'\nfield='value'\nframing='confluent'\nformat='protobuf'\nregistry={url='https://registry.test'}").unwrap();
+    assert!(crate::config::Config::parse(&options).is_ok());
 }

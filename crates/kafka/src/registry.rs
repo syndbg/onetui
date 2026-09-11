@@ -3,13 +3,29 @@ use base64::Engine;
 use onetui_core::config::{safe_name, secret};
 use serde::Deserialize;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     io::Read,
     time::{Duration, Instant},
 };
 
 const RESPONSE_BYTES: usize = 256 * 1024;
 const CACHE_ENTRIES: usize = 8;
+
+use crate::decoding::Format;
+
+impl Format {
+    fn registry_type(self) -> &'static str {
+        match self {
+            Self::Avro => "AVRO",
+            Self::Protobuf => "PROTOBUF",
+        }
+    }
+}
+
+enum Compiled {
+    Avro(onetui_avro::Decoder),
+    Protobuf(onetui_protobuf::SourceSchema),
+}
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
@@ -22,8 +38,8 @@ pub(crate) fn capabilities() -> serde_json::Value {
             "token_env": {"required": false, "default": "none", "type": "ASCII environment-variable name", "purpose": "Bearer token instead of Basic authentication; never broker OAuth"}
         },
         "credentials": "Resolved only for the selected connection, nonempty, at most 4096 UTF-8 bytes without controls; no credentials means anonymous access.",
-        "limits": {"resolution_timeout_ms": 2000, "response_bytes": 262144, "header_bytes": 16384, "bundle_bytes": 262144, "references": 32, "reference_depth": 8, "cached_ids_per_binding": 8},
-        "behavior": "Read-only exact-ID and versioned-reference requests. FIFO cache includes lookup failures; eviction or reopening permits a new lookup. Two-second bound per uncached schema and its references, with foreground deadline/cancellation checks between requests. Native cleanup may outlive foreground cancellation. No RSS guarantee. --check requests schemas/types, not every record schema."
+        "limits": {"resolution_timeout_ms": 2000, "response_bytes": 262144, "header_bytes": 16384, "bundle_bytes": 262144, "references": 32, "reference_depth": 8, "cached_ids_per_binding": 8, "protobuf_message_index_depth": 32, "protobuf_source_nesting": 32, "protobuf_source_declarations": 4096},
+        "behavior": "Read-only exact-ID and versioned-reference requests. FIFO cache includes lookup failures; eviction or reopening permits a new lookup. Two-second bound per uncached schema and its references, with foreground deadline/cancellation checks between requests. Source compilation is in-memory with protox, supplied imports and embedded Google types only; no filesystem lookup. Source and compiled descriptors each have a 256 KiB cap. Native cleanup may outlive foreground cancellation; compilation has input/work bounds, not a preemptive CPU deadline. No RSS guarantee. --check requests schemas/types, not every record schema."
     })
 }
 
@@ -135,11 +151,12 @@ struct Reference {
 pub(crate) struct Registry {
     config: Config,
     agent: ureq::Agent,
-    cache: VecDeque<(u32, Result<onetui_avro::Decoder, String>)>,
+    format: Format,
+    cache: VecDeque<(u32, Result<Compiled, String>)>,
 }
 
 impl Registry {
-    pub fn new(config: Config) -> Result<Self> {
+    pub fn new(config: Config, format: Format) -> Result<Self> {
         let roots = if let Some(path) = &config.ca_file {
             let pem = super::decoding::read_file(path, 1024 * 1024)?;
             let mut certs = Vec::new();
@@ -169,6 +186,7 @@ impl Registry {
         Ok(Self {
             config,
             agent,
+            format,
             cache: VecDeque::new(),
         })
     }
@@ -226,8 +244,9 @@ impl Registry {
         )?;
         let types: Vec<String> = serde_json::from_slice(&bytes)?;
         ensure!(
-            types.iter().any(|t| t == "AVRO"),
-            "Registry does not advertise AVRO"
+            types.iter().any(|t| t == self.format.registry_type()),
+            "Registry does not advertise {}",
+            self.format.registry_type()
         );
         Ok(())
     }
@@ -241,8 +260,9 @@ impl Registry {
         let bytes = self.request(segments, deadline, remaining)?;
         let schema: Schema = serde_json::from_slice(&bytes)?;
         ensure!(
-            schema.kind.as_deref().is_none_or(|k| k == "AVRO"),
-            "Registry schema is not AVRO"
+            schema.kind.as_deref().unwrap_or("AVRO") == self.format.registry_type(),
+            "Registry schema is not {}",
+            self.format.registry_type()
         );
         ensure!(
             schema.references.len() <= 32,
@@ -251,7 +271,7 @@ impl Registry {
         Ok(schema)
     }
 
-    fn load(&self, id: u32, remaining: &impl Fn() -> Result<()>) -> Result<onetui_avro::Decoder> {
+    fn load(&self, id: u32, remaining: &impl Fn() -> Result<()>) -> Result<Compiled> {
         let deadline = Instant::now() + Duration::from_secs(2);
         let root = self.get(&["schemas", "ids", &id.to_string()], deadline, remaining)?;
         let mut pending = root
@@ -259,8 +279,7 @@ impl Registry {
             .into_iter()
             .map(|r| (r, 1))
             .collect::<Vec<_>>();
-        let mut seen = HashSet::new();
-        let mut names = HashSet::new();
+        let mut names = HashMap::new();
         let mut references = Vec::new();
         let mut bytes = root.schema.len();
         while let Some((reference, depth)) = pending.pop() {
@@ -277,14 +296,15 @@ impl Registry {
                 "Invalid registry reference"
             );
             let key = (reference.subject, reference.version);
-            if seen.contains(&key) {
+            if let Some(previous) = names.get(&reference.name) {
+                ensure!(previous == &key, "Conflicting registry reference name");
                 continue;
             }
             ensure!(
-                seen.len() < 32 && names.insert(reference.name),
+                names.len() < 32,
                 "Too many or conflicting registry references"
             );
-            seen.insert(key.clone());
+            names.insert(reference.name.clone(), key.clone());
             let schema = self.get(
                 &["subjects", &key.0, "versions", &key.1.to_string()],
                 deadline,
@@ -300,14 +320,30 @@ impl Registry {
                 "Registry reference queue exceeds 32"
             );
             pending.extend(schema.references.into_iter().map(|r| (r, depth + 1)));
-            references.push(schema.schema);
+            references.push((reference.name, schema.schema));
         }
         remaining()?;
-        let decoder = onetui_avro::Decoder::with_references(
-            &root.schema,
-            &references.iter().map(String::as_str).collect::<Vec<_>>(),
-        )?;
+        let decoder = match self.format {
+            Format::Avro => Compiled::Avro(onetui_avro::Decoder::with_references(
+                &root.schema,
+                &references
+                    .iter()
+                    .map(|(_, s)| s.as_str())
+                    .collect::<Vec<_>>(),
+            )?),
+            Format::Protobuf => Compiled::Protobuf(onetui_protobuf::SourceSchema::compile(
+                &root.schema,
+                &references
+                    .iter()
+                    .map(|(name, s)| (name.as_str(), s.as_str()))
+                    .collect::<Vec<_>>(),
+            )?),
+        };
         remaining()?;
+        ensure!(
+            Instant::now() <= deadline,
+            "Registry resolution exceeded two seconds"
+        );
         Ok(decoder)
     }
 
@@ -330,11 +366,19 @@ impl Registry {
             );
             Ok((id, &raw[5..]))
         };
-        let (id, payload) = match envelope() {
+        let (id, mut payload) = match envelope() {
             Ok(value) => value,
             Err(error) => return (None, Err(error)),
         };
-        let identity = Some(format!("confluent:{}#id={id}", self.config.url));
+        let mut identity = Some(format!("confluent:{}#id={id}", self.config.url));
+        let indexes = if self.format == Format::Protobuf {
+            match message_indexes(&mut payload) {
+                Ok(indexes) => indexes,
+                Err(error) => return (identity, Err(error)),
+            }
+        } else {
+            Vec::new()
+        };
         if !self.cache.iter().any(|(cached, _)| *cached == id) {
             let loaded = self.load(id, remaining).map_err(|error| {
                 onetui_core::diagnostic(
@@ -362,14 +406,52 @@ impl Registry {
             .find(|(cached, _)| *cached == id)
             .unwrap()
             .1;
-        (
-            identity,
-            decoder
-                .as_ref()
-                .map_err(|error| anyhow!("{error}"))
-                .and_then(|decoder| decoder.decode(payload)?.json()),
-        )
+        let result = decoder
+            .as_ref()
+            .map_err(|error| anyhow!("{error}"))
+            .and_then(|decoder| match decoder {
+                Compiled::Avro(decoder) => decoder.decode(payload)?.json(),
+                Compiled::Protobuf(schema) => {
+                    let decoder = schema.decoder(&indexes)?;
+                    let message = decoder.message_name();
+                    identity
+                        .as_mut()
+                        .unwrap()
+                        .push_str(&format!("&message={message}"));
+                    decoder.decode(payload)?.json()
+                }
+            });
+        (identity, result)
     }
+}
+
+// Confluent uses nonnegative zigzag varints, with [0] abbreviated to one zero.
+fn message_indexes(input: &mut &[u8]) -> Result<Vec<usize>> {
+    fn number(input: &mut &[u8]) -> Result<usize> {
+        let mut value = 0u32;
+        for shift in (0..35).step_by(7) {
+            let (&byte, tail) = input
+                .split_first()
+                .ok_or_else(|| anyhow!("Truncated Protobuf message indexes"))?;
+            *input = tail;
+            ensure!(shift < 28 || byte <= 15, "Protobuf message index overflow");
+            value |= u32::from(byte & 127) << shift;
+            if byte & 128 == 0 {
+                ensure!(value & 1 == 0, "Negative Protobuf message index");
+                return Ok((value >> 1) as usize);
+            }
+        }
+        anyhow::bail!("Protobuf message index overflow")
+    }
+    let count = number(input)?;
+    if count == 0 {
+        return Ok(vec![0]);
+    }
+    ensure!(
+        count <= onetui_protobuf::MAX_DEPTH,
+        "Protobuf message index depth exceeds 32"
+    );
+    (0..count).map(|_| number(input)).collect()
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ This replaces only the opaque-bytes-always-use-hex rule in [ADR-0004](0004-prese
 
 Protobuf and Avro decoding requires explicit schema and framing choices. Auto is a display convenience, not serialization detection: binary messages can happen to be valid UTF-8. A successful decode also cannot prove that the selected schema is correct.
 
-Readable Auto display, raw decoder libraries and Kafka JSON-preview bindings are implemented. Confluent Avro registry access is implemented; Protobuf registry access, reader-schema resolution and native-type inspection remain planned. The [Protobuf](../../crates/protobuf/README.md) and [Avro](../../crates/avro/README.md) guides describe each library's bounds and unsupported types. [Kafka usage](../kafka.md#schema-bound-key-and-value-previews) documents the implemented settings.
+Readable Auto display, raw decoder libraries and Kafka JSON-preview bindings are implemented. Confluent Avro and Protobuf registry access is implemented; reader-schema resolution and native-type inspection remain planned. The [Protobuf](../../crates/protobuf/README.md) and [Avro](../../crates/avro/README.md) guides describe each library's bounds and unsupported types. [Kafka usage](../kafka.md#schema-bound-key-and-value-previews) documents the implemented settings.
 
 ## Decoder boundary
 
@@ -29,7 +29,7 @@ The connector retains original bytes and message metadata. A worker resolves the
 
 ## Schema choices and examples
 
-These examples describe schema choices; the Protobuf registry variant remains planned:
+Schema choices:
 
 | Message | Explicit inputs | Decoding |
 | --- | --- | --- |

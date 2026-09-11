@@ -30,7 +30,7 @@ pub(crate) enum Format {
     Protobuf,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Framing {
     Raw,
@@ -102,10 +102,6 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
             }
             Framing::Confluent => {
                 ensure!(
-                    binding.format == Format::Avro,
-                    "Confluent Protobuf decoding is not supported yet"
-                );
-                ensure!(
                     binding.schema_file.is_none(),
                     "Registry binding does not accept schema_file"
                 );
@@ -127,7 +123,7 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
                 binding.message_name.is_none(),
                 "Avro binding does not accept message_name"
             ),
-            Format::Protobuf => ensure!(
+            Format::Protobuf if binding.framing == Framing::Raw => ensure!(
                 binding
                     .message_name
                     .as_ref()
@@ -135,6 +131,10 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
                         && name.len() <= 1024
                         && !name.chars().any(char::is_control)),
                 "Protobuf binding requires message_name of 1..1024 bytes without controls"
+            ),
+            Format::Protobuf => ensure!(
+                binding.message_name.is_none(),
+                "Confluent Protobuf selects its message through envelope indexes; omit message_name"
             ),
         }
     }
@@ -196,8 +196,11 @@ impl Entry {
     fn registry(&mut self) -> Result<&mut crate::registry::Registry> {
         self.registry
             .get_or_insert_with(|| {
-                crate::registry::Registry::new(self.binding.registry.clone().unwrap())
-                    .map_err(|e| format!("{e:#}"))
+                crate::registry::Registry::new(
+                    self.binding.registry.clone().unwrap(),
+                    self.binding.format,
+                )
+                .map_err(|e| format!("{e:#}"))
             })
             .as_mut()
             .map_err(|error| anyhow::anyhow!("{error}"))
@@ -297,7 +300,7 @@ impl Bindings {
             };
             remaining()?;
             let identity_bytes = if entry.binding.registry.is_some() {
-                600
+                1700
             } else {
                 identity.as_ref().map_or(0, String::len)
             };

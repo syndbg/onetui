@@ -10,7 +10,7 @@ The initial version, v0.1.0, is read-only. Writes and broker administration are 
 | --- | --- | --- |
 | [PostgreSQL](docs/postgres.md) | Schemas, tables/views, columns, row paging, SQL queries | Query parameters, writes |
 | [Qdrant](docs/qdrant.md) | Collections, point paging, filtered Scroll, payloads, dense/sparse/multivectors | Advanced filters, similarity search, writes |
-| [Kafka](docs/kafka.md) | Metadata/configuration, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, TLS and SASL PLAIN/SCRAM, local Avro/Protobuf and registry-backed Avro previews | Protobuf registry, mTLS/OAuth/GSSAPI, global timestamp ordering, publishing, administration |
+| [Kafka](docs/kafka.md) | Metadata/configuration, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, TLS and SASL PLAIN/SCRAM, local and registry-backed Avro/Protobuf previews | mTLS/OAuth/GSSAPI, global timestamp ordering, publishing, administration |
 | [NATS JetStream](docs/nats.md) | Streams, configuration/state, stored messages, live following, headers, TLS and token/user-password authentication | Core subscriptions, KV/object store, queries, NKEY/JWT, schema decoding, publishing, administration |
 | DynamoDB | Planned | All operations |
 | RabbitMQ | Planned | All operations |
@@ -19,7 +19,7 @@ All implemented connectors support headless checks. The shared UI provides conne
 
 ## Tech stack
 
-Rust 2024, Ratatui/Crossterm and Tokio. Clients: `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka and `async-nats`. Decoding: `apache-avro` and `prost-reflect`. Configuration: Clap, Serde and TOML.
+Rust 2024, Ratatui/Crossterm and Tokio. Clients: `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka and `async-nats`. Decoding: `apache-avro`, `prost-reflect` and `protox`. Configuration: Clap, Serde and TOML.
 
 Providers are separate crates, registered through [static enum dispatch](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md). No runtime plugins.
 
