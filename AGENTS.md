@@ -4,39 +4,28 @@
 
 ## Style
 
-- Always apply `$humanizer:humanizer`, `$ponytail:ponytail` (full) and `$caveman` (full), without waiting for the user to mention them. Read available skills; preserve these rules when unavailable.
-- Keep commentary and handoffs brief: changes, checks, blockers. Preserve exact commands and errors; explain more only when requested or needed for safety.
-- Write normal, concise prose in code, docs and proposed commit/PR text. Comments explain why or risk, not obvious operations.
-- Link to existing sources instead of narrating files or repeating their contents. For commands, point to [Makefile](Makefile) and `make help`; say which targets to run. Skip file tours, implementation diaries and repeated feature lists.
+- Always use `$humanizer:humanizer`, `$ponytail:ponytail` and `$caveman`. Read available skills; follow these rules if unavailable.
+- Keep replies and docs short. Explain only what the reader needs to act.
+- Link to source and `make help` instead of narrating files or repeating command descriptions. Use `onetui schema` for settings reference.
+- Keep agent progress notes out of user-facing docs. Avoid repeated test reports and exhaustive option/edge-case descriptions. Comments explain why or risk.
 
 ## Development
 
-- Read relevant ADRs and source before changing behavior. Stay within the requested scope.
-- Reuse existing code, standard libraries and installed dependencies. Add abstractions or dependencies only for a concrete need. Fix root causes; preserve validation, security and error handling.
-- Keep implementation and tests in their owning package. Never combine datasource suites in a shared backend loop. Small duplicated fixture helpers are acceptable; root tests cover CLI orchestration.
-- Test changed behavior, failures and boundaries. Add regression tests for bugs. Never weaken assertions or hide failures to pass a gate.
-- Keep affected docs, configuration examples, CLI help and schema output current. Document purpose, usage and limits; distinguish supported from planned behavior.
-- For settings, document types, values, defaults, required/empty behavior, units/bounds, config location/precedence, path and secret handling, errors and a working example. Record compatibility changes. Prefer `onetui schema` for the complete settings catalog.
+- Read the relevant source and ADRs. Stay in scope; reuse existing code and dependencies.
+- Keep implementation and tests in their owning package. No shared loops over datasource test suites; small duplicated fixture helpers are fine.
+- Add regression tests for bugs. Preserve validation, security and error handling; never weaken tests to pass.
+- Update affected usage docs, config examples, CLI help and schema when behavior changes. Document non-obvious limits, not everything.
 - ADRs record decisions and rejected alternatives. Keep delivery checklists in issues and pull requests.
 
-## Commands and validation
+## Checks
 
-Use [Makefile](Makefile): `make help`, `make dev-up`, `make run`, `make dev-traffic`, `make check-local`, `make fmt`, `make build`, `make lint`, `make test`.
-Prefix agent shell commands with `rtk`; use `rtk proxy` when needed. User-facing commands need no RTK wrapper.
+Use [Makefile](Makefile) targets. Features require passing `make verify`, `make test-integration` and `make workflow-lint`. Docs-only edits need content/link checks and `git diff --check`. Report failed or unrun checks; local success is not hosted CI proof.
 
-Before declaring a feature complete, all tests must pass and docs/config must match. Run:
+Prefix agent shell commands with `rtk`; use `rtk proxy` when needed. Keep user-facing commands plain.
 
-```sh
-rtk make verify
-rtk make test-integration
-rtk make workflow-lint
-```
+## Safety
 
-Documentation-only changes need content/link checks and `rtk git diff --check`, unless behavior or executable examples changed. Report failed or unrun gates. Local checks do not prove hosted CI or release validation.
-
-## Workflow and safety
-
-- Use code-review-graph first: `get_minimal_context`, impact/test queries, and `detect_changes` for reviews. Refresh and retry missing/stale results before falling back to `rg` and source reads. If unavailable, state that and use local source.
-- Preserve existing edits. Ask before staging, branching, stashing, restoring, rebasing, merging, pushing or other Git-state changes. Never run `git commit` or add `Co-Authored-By`.
-- Use disposable fixtures for writes; never real datasource contents or credentials. Do not bypass fixture reset guards or delete running fixtures without authorization. `make dev-down` deletes temporary fixture data.
-- Follow Semantic Versioning and [CONTRIBUTING.md](CONTRIBUTING.md). Releases use the GitHub Releases UI. Do not bump versions, create tags or publish without authorization.
+- Use code-review-graph first for code exploration/review. Refresh and retry missing results before falling back to `rg` and source reads.
+- Preserve existing edits. Ask before Git-state changes. Never run `git commit` or add `Co-Authored-By`.
+- Write only to disposable fixtures, never real datasources. Do not bypass reset guards or delete running fixtures without authorization. `make dev-down` deletes fixture data.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md) for SemVer and GitHub UI releases. No version bumps, tags or publishing without authorization.

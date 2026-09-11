@@ -1,28 +1,20 @@
 # Contributing to OneTUI
 
-OneTUI is working toward v0.1.0. Check [architecture decisions](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md) before changing behavior. Discuss new datasources or larger design changes before implementing them.
+Check relevant ADRs before larger changes.
 
 ## Local setup
 
-Install rustup, Make, Bash and Docker with Compose. The repository pins the Rust toolchain. Kafka's native build also needs CMake, a C/C++ compiler and Perl; Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source. An OpenSSL command is needed for TLS fixtures; Go is needed for workflow linting. On macOS, install Xcode Command Line Tools and CMake (`brew install cmake`); on Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev`. The pinned librdkafka CMake build requires CURL headers even with its CURL runtime feature disabled.
+Install rustup, Make, Bash and Docker Compose. Rust is pinned in [rust-toolchain.toml](rust-toolchain.toml). Native builds need a C/C++ compiler, CMake and Perl; fixtures need OpenSSL, workflow lint needs Go.
 
-Run from the repository root:
+On macOS, install Xcode Command Line Tools and `brew install cmake`. On Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev`.
 
-```sh
-make dev-up
-make run
-make dev-down
-```
-
-The local databases contain disposable test data. `make dev-down` removes their containers, network and temporary data. See [hack/README.md](hack/README.md) for endpoints, fixture credentials and troubleshooting. Never run write-dependent tests against a real datasource.
+Use `make dev-up`, then `make run`. See [local fixtures](hack/README.md) and `make help`. `make dev-down` deletes the disposable data.
 
 ## Changes and pull requests
 
-Keep each change focused. Implement connector behavior and tests in its owning package; core and TUI code must not gain backend-specific branches. PostgreSQL, Qdrant, Kafka and NATS have separate test suites, not a shared backend test loop.
+Keep changes focused and tests in their owning package. Do not combine datasource suites in shared backend loops. Add regression coverage for bugs; update affected usage docs and config examples. Use `onetui schema` for exhaustive settings reference.
 
-Add regression coverage for bugs and relevant boundary/error tests for features. Update documentation and configuration examples with the code. Describe each setting's purpose, supported values, default and usage; distinguish implemented behavior from planned support.
-
-Before submitting a pull request, run:
+Before submitting:
 
 ```sh
 make verify
@@ -30,25 +22,21 @@ make test-integration
 make workflow-lint
 ```
 
-`verify` builds, checks formatting and Clippy, validates shell syntax and runs default tests. `test-integration` starts fresh fixtures, runs the ignored package-owned tests and cleans up. It refuses existing fixture containers: finish your development session with `make dev-down` before running it. Default Cargo tests alone do not cover the live integrations.
+Integration tests require fresh disposable fixtures and refuse an existing development setup. Use `make dev-down` first only when its data can be deleted. Never run write-dependent tests against real datasources.
 
-Explain the problem, scope, behavior changes and tests in the pull request. Call out compatibility changes and any unverified behavior. Do not include secrets or unrelated edits. CI definitions cover PR and main builds, with Linux fixture tests; local success is not evidence of hosted CI success.
-
-OneTUI uses [Apache-2.0](LICENSE). Do not change versions or publish artifacts as part of an unrelated feature change.
+PRs should state the problem, changes, checks and any compatibility risks. Report unrun checks; do not weaken tests to pass. Docs-only changes need content/link checks and `git diff --check`.
 
 ## Releases
 
-Development target: v0.1.0, stored as `0.1.0` in Cargo. It is not yet a published release. Versioning follows [Semantic Versioning](https://semver.org/); update Cargo.toml and regenerate Cargo.lock together. A prerelease such as `v0.1.0-rc.1` must correspond to Cargo version `0.1.0-rc.1`.
+Target: v0.1.0. Follow Semantic Versioning; update Cargo.toml and Cargo.lock together. Tags must exactly match Cargo's version with a `v` prefix.
 
 ### Publish through GitHub's UI
 
-1. Confirm PR/main validation is green for the commit being released. OneTUI uses [Apache-2.0](LICENSE).
-2. Update the package version in a reviewed change. Run `make verify`, `make workflow-lint` and `make test-integration` from a clean checkout. Check `make release-check TAG=v0.1.0` (substitute the intended version).
-3. In **Releases → Draft a new release**, choose/create the exact `v<version>` tag at the reviewed main commit. Write release notes containing only shipped functionality and known limitations. Mark prerelease versions as prereleases.
-4. Click **Publish release**. The `release: published` workflow checks out the tagged revision, rejects tag/Cargo-version mismatches, reruns validation, and builds native archives for Linux x86_64 (`x86_64-unknown-linux-gnu`) and macOS arm64 (`aarch64-apple-darwin`).
-5. Wait for the Release workflow to succeed and verify the two `.tar.gz` assets and their `.sha256` files. Both builds must pass before assets are uploaded. A published release is visible while builds run; do not announce it until assets are complete.
+1. Use a reviewed main commit with passing checks. Run `make release-check TAG=v0.1.0` (substitute the intended version).
+2. In **Releases → Draft a new release**, select/create that tag at the reviewed commit. Describe shipped changes; mark prereleases.
+3. Publish. Wait for the [release workflow](.github/workflows/release.yaml) and verify Linux x86_64 and macOS arm64 archives plus their SHA-256 files before announcing.
 
-No workflow creates a release, tag, version-bump commit or crates.io publication. PR/main workflows have read-only repository permissions. Only the final release-upload job has `contents: write`; build jobs do not receive that permission. The Release workflow has not yet been exercised on GitHub.
+Never move a published tag. Uploads refuse overwrites; inspect partial assets before retrying. Keep the license and third-party notices with redistributed binaries.
 
 ### Local packaging and verification
 
@@ -58,18 +46,7 @@ cd dist
 shasum -a 256 -c onetui-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
 ```
 
-Use the filename matching your native platform. Packaging derives the target from rustc, builds explicitly for it, smoke-checks `--version`, and bundles the binary, README, LICENSE and THIRD_PARTY_NOTICES.md. Keep the bundled Kafka/native-library and theme notices with redistributed binaries. When updating Kafka's native dependencies, review their license texts against the new Cargo.lock versions and update the release-notice test. Packaging refuses to overwrite existing archives/checksums. Move an old local artifact aside before rebuilding; `dist/` is ignored by Git.
-
-Artifacts are initially unsigned/unnotarized. Linux binaries use the runner's GNU libc. Compatibility with older distributions or musl is unverified. Intel macOS, Linux arm64 and Windows binaries are not part of this initial workflow. Compatibility and signing remain release-readiness work.
-
-If validation fails, fix it through review and use the corrected release version/tag; do not silently move a published tag. If only upload fails, inspect existing assets before rerunning the upload job: uploads deliberately do not overwrite published files. GitHub can partially upload a batch, so recovery may require removing incomplete assets through the Releases UI before retrying. Nothing uploads to an external telemetry or package service.
-
-References: [release workflow events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release), [workflow token permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions), [hosted runner platforms](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Use the filename matching your platform. Packaging refuses existing artifacts. Releases are unsigned/unnotarized; older GNU libc and musl compatibility is unverified. Review native dependency licenses when updating them.
 
 ### Validation status
 
-On September 7, 2026, [Main run 34154703652](https://github.com/syndbg/onetui/actions/runs/34154703652) passed at `83adaf5f434304ab67259e17e5db0098a20ed135` on macOS arm64 and Linux x86_64, including Linux Docker integration tests. Subsequent local help/test/documentation changes still need hosted CI after submission.
-
-The September 7 local macOS checks covered formatting, Clippy, 57 default tests, workflow lint and 22 Docker integration tests. Those integration suites also passed with optimized test harnesses and the extracted release executable; cleanup removed all three fixture containers and their network. Tests covered narrow terminals, Unicode, oversized responses, TLS/authentication failures, deadlines and interruption, offline deterministic schema output and configuration validation. See [performance checks](docs/performance.md) for measured timing scope and allocation limitations.
-
-A native `aarch64-apple-darwin` archive containing the release binary, README and LICENSE was built in a temporary directory, checksum-verified, extracted and smoke-tested. Existing `dist/` artifacts were left untouched. This validates local packaging preparation, not GitHub asset publication. No PR-event or Release workflow run, uploaded assets, signing/notarization, older Linux compatibility or other target architectures were validated.
