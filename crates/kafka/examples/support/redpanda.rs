@@ -1,25 +1,14 @@
+use super::broker;
 use anyhow::{Result, ensure};
 use apache_avro::{Schema, types::Value};
-use rdkafka::{
-    ClientConfig,
-    admin::{AdminClient, AdminOptions, NewTopic, TopicReplication},
-    consumer::{BaseConsumer, Consumer},
-    producer::{FutureProducer, FutureRecord},
-};
 use serde_json::json;
-use std::{io::Read, time::Duration};
-
-pub const BROKER: &str = "127.0.0.1:29092";
-pub const REGISTRY: &str = "http://127.0.0.1:18081";
+use std::path::Path;
 const CUSTOMER: &str = r#"{"type":"record","name":"Customer","namespace":"demo","fields":[{"name":"id","type":"long"},{"name":"name","type":"string"}]}"#;
 
-pub fn config() -> ClientConfig {
-    let mut config = ClientConfig::new();
-    config
-        .set("bootstrap.servers", BROKER)
-        .set("allow.auto.create.topics", "false")
-        .set("message.timeout.ms", "5000");
-    config
+pub fn prepare(directory: &Path) -> Result<()> {
+    std::fs::write(directory.join("avro_customer.avsc"), CUSTOMER)?;
+    std::fs::write(directory.join("avro_event.avsc"), writer(0))?;
+    Ok(())
 }
 
 fn writer(version: usize) -> String {
@@ -43,39 +32,11 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_'),
         "Invalid fixture topic"
     );
-    let register = |subject: &str, body: serde_json::Value| -> Result<u32> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .proxy(None)
-            .max_redirects(0)
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .into();
-        let mut response = agent
-            .post(format!("{REGISTRY}/subjects/{subject}/versions"))
-            .header("Content-Type", "application/vnd.schemaregistry.v1+json")
-            .send(body.to_string())?;
-        let mut bytes = Vec::new();
-        response
-            .body_mut()
-            .as_reader()
-            .take(65537)
-            .read_to_end(&mut bytes)?;
-        ensure!(bytes.len() <= 65536, "Fixture registry response too large");
-        let body: serde_json::Value = serde_json::from_slice(&bytes)?;
-        let id = body["id"]
-            .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("Missing registry schema ID"))?;
-        ensure!(
-            id > 0 && id <= i32::MAX as u64,
-            "Invalid registry schema ID"
-        );
-        Ok(id as u32)
-    };
     let subject = format!("{topic}_customer");
-    register(&subject, json!({"schemaType":"AVRO","schema":CUSTOMER}))?;
+    broker::register(&subject, json!({"schemaType":"AVRO","schema":CUSTOMER}))?;
     let mut ids = [0; 2];
     for (version, id) in ids.iter_mut().enumerate() {
-        *id = register(
+        *id = broker::register(
             &format!("{topic}_value"),
             json!({"schemaType":"AVRO","schema":writer(version),"references":[{"name":"demo.Customer","subject":subject,"version":1}]}),
         )?;
@@ -130,51 +91,11 @@ pub fn message(n: u32, ids: [u32; 2]) -> Result<Vec<u8>> {
 }
 
 pub async fn seed(topic: &str, count: u32) -> Result<()> {
-    let config = config();
-    let admin: AdminClient<_> = config.create()?;
-    let reader: BaseConsumer = config.create()?;
-    let existing = reader.fetch_metadata(None, Duration::from_secs(5))?;
-    if let Some(metadata) = existing.topics().iter().find(|t| t.name() == topic) {
-        ensure!(
-            metadata.error().is_none() && metadata.partitions().len() == 1,
-            "Unexpected {topic} metadata; inspect before resetting"
-        );
-        let offsets = reader.fetch_watermarks(topic, 0, Duration::from_secs(5))?;
-        ensure!(
-            offsets == (0, i64::from(count)),
-            "Unexpected {topic} offsets {offsets:?}; inspect before resetting"
-        );
-        println!("Preserved {topic}: {count} records");
-        return Ok(());
-    }
     let ids = schemas(topic)?;
-    for result in admin
-        .create_topics(
-            &[NewTopic::new(topic, 1, TopicReplication::Fixed(1))
-                .set("retention.ms", "-1")
-                .set("retention.bytes", "-1")],
-            &AdminOptions::new().operation_timeout(Some(Duration::from_secs(5))),
-        )
-        .await?
-    {
-        result.map_err(|(_, e)| anyhow::anyhow!("Create fixture topic: {e:?}"))?;
-    }
-    let producer: FutureProducer = config.create()?;
-    for n in 0..count {
-        let raw = message(n, ids)?;
-        producer
-            .send(
-                FutureRecord::to(topic)
-                    .partition(0)
-                    .key("demo")
-                    .payload(&raw),
-                Duration::from_secs(5),
-            )
-            .await
-            .map_err(|(e, _)| e)?;
-    }
-    println!(
-        "Seeded {topic}: {count} Avro records, writer schema IDs {ids:?}, referenced Customer schema"
-    );
-    Ok(())
+    broker::seed(topic, count, |n| message(n, ids)).await
+}
+
+pub fn raw(n: u32) -> Result<Vec<u8>> {
+    // The catalog binds writer version 1; framing and registry IDs are absent.
+    Ok(message(n.saturating_mul(2), [0, 0])?[5..].to_vec())
 }

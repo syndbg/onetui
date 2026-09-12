@@ -12,7 +12,7 @@ export ONETUI_NATS_USERNAME='fixture-reader'
 export ONETUI_NATS_PASSWORD='fixture-reader-only'
 
 check_connection() {
-    ./target/debug/onetui --check --config hack/connections.toml --connection "$1" --timeout 2
+    ./target/debug/onetui --check --config target/demo-onetui.toml --connection "$1" --timeout 2
 }
 
 wait_for_connection() {
@@ -72,6 +72,7 @@ stop_traffic() {
 traffic() {
     check_connection local_kafka
     check_connection local_nats
+    check_connection local_redpanda
     cargo build -p onetui-kafka --example produce_demo --locked
     cargo build -p onetui-nats --example produce_nats --locked
     traffic_pids=()
@@ -82,13 +83,15 @@ traffic() {
     traffic_pids+=("$!")
     ./target/debug/examples/produce_nats &
     traffic_pids+=("$!")
-    # macOS ships Bash 3.2, without wait -n. Notice either producer exiting.
+    ./target/debug/examples/seed_redpanda --traffic &
+    traffic_pids+=("$!")
+    # macOS ships Bash 3.2, without wait -n. Notice any producer exiting.
     while true; do
         for pid in "${traffic_pids[@]}"; do
             if ! kill -0 "$pid" 2>/dev/null; then
                 local status=0
                 wait "$pid" || status=$?
-                printf 'Traffic producer exited (status %s); stopping both.\n' "$status" >&2
+                printf 'Traffic producer exited (status %s); stopping all.\n' "$status" >&2
                 return "$status"
             fi
         done
@@ -102,13 +105,14 @@ case "${1:-}" in
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
+        cargo run -p onetui-kafka --example seed_redpanda --locked -- --prepare
         ;;
     down|logs) ;;
     *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|traffic|traffic-kafka|traffic-nats|down|logs}\n' >&2; exit 2 ;;
 esac
 
 if [[ "$1" == run ]]; then
-    exec ./target/debug/onetui --config hack/connections.toml
+    exec ./target/debug/onetui --config target/demo-onetui.toml
 fi
 
 # The test clients use localhost; never create/delete fixtures on a remote Docker context.

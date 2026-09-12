@@ -1,4 +1,5 @@
 mod browse;
+mod catalog;
 mod config;
 mod decoding;
 mod groups;
@@ -33,13 +34,14 @@ fn capabilities() -> serde_json::Value {
                     "topic": {"required": true, "type": "string", "values": "exact Kafka topic, 1..249 ASCII letters/digits/dot/underscore/hyphen; not dot or dot-dot; no wildcards"},
                     "field": {"required": true, "values": ["key", "value"]},
                     "format": {"required": true, "values": ["avro", "protobuf"]},
-                    "framing": {"required": true, "values": ["raw", "confluent"], "purpose": "Raw uses a local file; confluent requires registry, resolves the four-byte schema ID after version byte zero and Protobuf message indexes. No automatic detection."},
-                    "schema_file": {"required": "raw only; forbidden with confluent", "type": "absolute path, at most 4096 UTF-8 bytes without controls", "purpose": "Regular local writer-schema JSON or binary FileDescriptorSet with imports; at most 256 KiB. No environment expansion, tilde expansion or relative-path resolution."},
+                    "framing": {"required": true, "values": ["raw", "confluent"], "purpose": "Raw requires exactly one of schema_file or catalog; confluent requires registry, resolves the four-byte schema ID after version byte zero and Protobuf message indexes. No automatic detection."},
+                    "schema_file": {"required": "raw without catalog; forbidden with confluent or catalog", "type": "absolute path, at most 4096 UTF-8 bytes without controls", "purpose": "Regular local writer-schema JSON or binary FileDescriptorSet with imports; at most 256 KiB. No environment expansion, tilde expansion or relative-path resolution."},
                     "message_name": {"required": "raw protobuf only; forbidden for avro and confluent", "type": "exact fully qualified string, 1..1024 UTF-8 bytes without controls"},
-                    "registry": crate::registry::capabilities()
+                    "registry": crate::registry::capabilities(),
+                    "catalog": crate::catalog::capabilities()
                 },
                 "example": {"topic": "events", "field": "value", "format": "avro", "framing": "raw", "schema_file": "/absolute/event.avsc"},
-                "lifecycle": "Config parsing is offline. First relevant read resolves the schema on the native worker; --check loads local bindings and checks configured registries for the selected alias. Local-file successes/failures stay cached until reopening; registry caches retain eight IDs per binding. No renderer I/O.",
+                "lifecycle": "Config parsing is offline. First relevant read resolves the schema on the native worker; --check loads local bindings and checks configured registries for the selected alias. Local-file and catalog successes/failures stay cached until reopening; registry caches retain eight IDs per binding. No renderer I/O.",
                 "resources": ["kafka.records", "kafka.query"],
                 "columns": ["key_decoded", "key_schema", "key_decode_error", "value_decoded", "value_schema", "value_decode_error"],
                 "limits": {"schema_bytes_per_binding": 262144, "payload_bytes": 65536, "preview_bytes": 65536, "error_bytes": 512, "raw_page_reserve_bytes": 2048},

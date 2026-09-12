@@ -25,7 +25,7 @@ kind = "kafka"
 bootstrap_servers = ["127.0.0.1:19092"]
 security_protocol = "PLAINTEXT"
 
-# Kafka protocol on Redpanda, with its local Avro registry.
+# make tasks render catalog paths into target/demo-onetui.toml.
 [connections.local_redpanda]
 kind = "kafka"
 bootstrap_servers = ["127.0.0.1:29092"]
@@ -37,6 +37,28 @@ format = "avro"
 framing = "confluent"
 [connections.local_redpanda.decoders.registry]
 url = "http://127.0.0.1:18081"
+
+[[connections.local_redpanda.decoders]]
+topic = "demo_protobuf"
+field = "value"
+format = "protobuf"
+framing = "confluent"
+registry = { url = "http://127.0.0.1:18081" }
+
+[[connections.local_redpanda.decoders]]
+topic = "demo_avro_catalog"
+field = "value"
+format = "avro"
+framing = "raw"
+catalog = { directory = "/generated/by/make", schema = "avro_event", references = ["avro_customer"] }
+
+[[connections.local_redpanda.decoders]]
+topic = "demo_protobuf_catalog"
+field = "value"
+format = "protobuf"
+framing = "raw"
+message_name = "demo.Event"
+catalog = { directory = "/generated/by/make", schema = "protobuf_event" }
 
 [connections.local_nats]
 kind = "nats"

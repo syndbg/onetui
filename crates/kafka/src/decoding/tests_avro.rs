@@ -10,6 +10,7 @@ fn binding(path: &Path) -> Binding {
         schema_file: Some(path.to_str().unwrap().into()),
         message_name: None,
         registry: None,
+        catalog: None,
     }
 }
 
@@ -48,6 +49,15 @@ fn avro_binding_is_strict_offline_and_scoped() {
         serde_json::json!(["raw", "confluent"])
     );
     assert_eq!(settings["limits"]["schema_bytes_per_binding"], SCHEMA_BYTES);
+    assert_eq!(settings["fields"]["catalog"]["limits"]["schemas"], 64);
+    let example: toml::Value =
+        toml::from_str(include_str!("../../../../hack/kafka-decoders.toml.example")).unwrap();
+    let mut options = example["connections"]["local_kafka"]
+        .as_table()
+        .unwrap()
+        .clone();
+    options.remove("kind");
+    crate::config::Config::parse(&options).unwrap();
     let example: Binding = serde_json::from_value(settings["example"].clone()).unwrap();
     validate(&[example]).unwrap();
     let valid = binding(Path::new("/not-read-during-validation/event.avsc"));
@@ -203,4 +213,76 @@ fn avro_missing_files_limits_and_live_columns_are_stable() {
                 .is_err()
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn avro_catalog_resolves_references_and_reloads_only_when_reopened() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("event.avsc");
+    let child = dir.path().join("child.avsc");
+    std::fs::write(
+        &root,
+        r#"{"type":"record","name":"Event","fields":[{"name":"child","type":"Child"}]}"#,
+    )
+    .unwrap();
+    let child_schema = r#"{"type":"record","name":"Child","fields":[{"name":"id","type":"long"}]}"#;
+    std::fs::write(&child, child_schema).unwrap();
+    let mut configured = binding(&root);
+    configured.schema_file = None;
+    configured.catalog = Some(crate::catalog::Config {
+        directory: dir.path().to_str().unwrap().into(),
+        schema: "event".into(),
+        references: vec!["child".into()],
+    });
+    validate(std::slice::from_ref(&configured)).unwrap();
+    let mut invalid = configured.clone();
+    invalid.schema_file = Some(root.to_str().unwrap().into());
+    assert!(validate(&[invalid]).is_err());
+    let mut invalid = configured.clone();
+    invalid.framing = Framing::Confluent;
+    assert!(validate(&[invalid]).is_err());
+    let mut bindings = Bindings::new(vec![configured.clone()]);
+    bindings.check(|| Ok(())).unwrap();
+    let mut data = page(vec![
+        Some(Value::Bytes(vec![14])),
+        Some(Value::Bytes(vec![255])),
+        None,
+    ]);
+    bindings.project("events", &mut data, || Ok(())).unwrap();
+    assert_eq!(
+        data.rows[0].cells[2],
+        Some(Value::Json(r#"{"child":{"id":7}}"#.into()))
+    );
+    assert_eq!(data.rows[0].cells[1], Some(Value::Bytes(vec![14])));
+    assert!(
+        data.rows[0].cells[3]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("#schema=event:avro:sha256:")
+    );
+    assert!(data.rows[1].cells[4].is_some());
+    assert!(data.rows[2].cells[2].is_none());
+    std::fs::write(&child, child_schema.replace("\"id\"", "\"renamed\"")).unwrap();
+    let mut again = page(vec![Some(Value::Bytes(vec![14]))]);
+    bindings.project("events", &mut again, || Ok(())).unwrap();
+    assert_eq!(again.rows[0].cells, data.rows[0].cells);
+    let mut reopened = Bindings::new(vec![configured.clone()]);
+    let mut reloaded = page(vec![Some(Value::Bytes(vec![14]))]);
+    reopened
+        .project("events", &mut reloaded, || Ok(()))
+        .unwrap();
+    assert_eq!(
+        reloaded.rows[0].cells[2],
+        Some(Value::Json(r#"{"child":{"renamed":7}}"#.into()))
+    );
+    assert_ne!(reloaded.rows[0].cells[3], data.rows[0].cells[3]);
+    std::fs::remove_file(&child).unwrap();
+    let mut missing = Bindings::new(vec![configured.clone()]);
+    assert!(missing.check(|| Ok(())).is_err());
+    std::fs::write(&child, child_schema).unwrap();
+    assert!(missing.check(|| Ok(())).is_err());
+    Bindings::new(vec![configured]).check(|| Ok(())).unwrap();
 }

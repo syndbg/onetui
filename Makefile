@@ -16,7 +16,7 @@ help:
 	  'workflow-lint          Validate GitHub workflows (requires Go; downloads pinned actionlint)' \
 	  'dev-up                 Build and start ready-to-use disposable local databases' \
 	  'dev-seed               Add demo data to running fixtures without resetting existing data' \
-	  'dev-traffic            Produce Kafka and NATS traffic every 15 seconds; Ctrl-C stops both' \
+	  'dev-traffic            Produce Kafka, Redpanda and NATS traffic every 15 seconds; Ctrl-C stops all' \
 	  'dev-traffic-kafka      Produce Kafka traffic only' \
 	  'dev-traffic-nats       Produce one NATS demo.live message every 15 seconds; Ctrl-C stops' \
 	  'check-local            Check all local fixtures, including Redpanda Schema Registry' \

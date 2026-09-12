@@ -5,30 +5,48 @@ use prost_types::{DescriptorProto, FieldDescriptorProto, FileDescriptorProto, Fi
 
 #[test]
 fn protobuf_key_binding_uses_exact_message_and_preserves_raw_value() {
+    protobuf_binding(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn protobuf_catalog_uses_exact_message_and_preserves_raw_value() {
+    protobuf_binding(true);
+}
+
+fn protobuf_binding(catalog: bool) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("event.pb");
     let schema = FileDescriptorSet {
-        file: vec![FileDescriptorProto {
-            name: Some("event.proto".into()),
-            package: Some("demo".into()),
-            syntax: Some("proto3".into()),
-            message_type: vec![DescriptorProto {
-                name: Some("Event".into()),
-                field: vec![FieldDescriptorProto {
-                    name: Some("id".into()),
-                    number: Some(1),
-                    r#type: Some(3),
-                    label: Some(1),
+        file: vec![
+            FileDescriptorProto {
+                name: Some("event.proto".into()),
+                package: Some("demo".into()),
+                syntax: Some("proto3".into()),
+                dependency: vec!["common.proto".into()],
+                message_type: vec![DescriptorProto {
+                    name: Some("Event".into()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("id".into()),
+                        number: Some(1),
+                        r#type: Some(3),
+                        label: Some(1),
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 }],
                 ..Default::default()
-            }],
-            ..Default::default()
-        }],
+            },
+            FileDescriptorProto {
+                name: Some("common.proto".into()),
+                syntax: Some("proto3".into()),
+                ..Default::default()
+            },
+        ],
     }
     .encode_to_vec();
-    std::fs::write(&path, schema).unwrap();
-    let binding = Binding {
+    std::fs::write(&path, &schema).unwrap();
+    let mut binding = Binding {
         topic: "events".into(),
         field: Field::Key,
         format: Format::Protobuf,
@@ -36,7 +54,16 @@ fn protobuf_key_binding_uses_exact_message_and_preserves_raw_value() {
         schema_file: Some(path.to_str().unwrap().into()),
         message_name: Some("demo.Event".into()),
         registry: None,
+        catalog: None,
     };
+    if catalog {
+        binding.schema_file = None;
+        binding.catalog = Some(crate::catalog::Config {
+            directory: dir.path().to_str().unwrap().into(),
+            schema: "event".into(),
+            references: vec![],
+        });
+    }
     validate(std::slice::from_ref(&binding)).unwrap();
     let mut invalid = binding.clone();
     invalid.message_name = None;
@@ -85,7 +112,27 @@ fn protobuf_key_binding_uses_exact_message_and_preserves_raw_value() {
     assert!(page.rows[1].cells[2].is_none() && page.rows[1].cells[4].is_some());
     assert_eq!(page.rows[2].cells[2], Some(Value::Json("{}".into())));
     assert_eq!(page.rows[0].cells[0], Some(Value::Bytes(vec![8, 7])));
-    for row in page.rows {
+    for row in &page.rows {
         assert_eq!(row.cells[1], Some(Value::Bytes(b"untouched".to_vec())));
+    }
+    if catalog {
+        assert!(
+            page.rows[0].cells[3]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("#schema=event:protobuf:sha256:")
+        );
+        let mut missing_import = FileDescriptorSet::decode(schema.as_slice()).unwrap();
+        missing_import.file.pop();
+        std::fs::write(&path, missing_import.encode_to_vec()).unwrap();
+        bindings.check(|| Ok(())).unwrap();
+        let mut reopened = Bindings::new(vec![bindings.0[0].binding.clone()]);
+        assert!(reopened.check(|| Ok(())).is_err());
+        assert_eq!(
+            page.rows[0].cells[2],
+            Some(Value::Json(r#"{"id":"7"}"#.into()))
+        );
     }
 }

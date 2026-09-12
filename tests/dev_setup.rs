@@ -40,6 +40,10 @@ impl TrafficHarness {
                 "target/debug/examples/produce_nats",
                 "#!/bin/bash\nprintf '%s' \"$$\" > nats.pid\nif [[ ${ONETUI_TEST_TRAFFIC_FAIL:-} == nats ]]; then while [[ ! -f kafka.pid ]]; do sleep 0.01; done; exit 24; fi\nexec sleep 60\n",
             ),
+            (
+                "target/debug/examples/seed_redpanda",
+                "#!/bin/bash\nprintf '%s' \"$$\" > redpanda.pid\nif [[ ${ONETUI_TEST_TRAFFIC_FAIL:-} == redpanda ]]; then while [[ ! -f nats.pid ]]; do sleep 0.01; done; exit 25; fi\nexec sleep 60\n",
+            ),
         ];
         for (name, script) in scripts {
             let path = root.path().join(name);
@@ -68,7 +72,7 @@ impl TrafficHarness {
     }
 
     fn producers(&self) -> Vec<String> {
-        ["kafka.pid", "nats.pid"]
+        ["kafka.pid", "nats.pid", "redpanda.pid"]
             .iter()
             .filter_map(|name| std::fs::read_to_string(self.root.path().join(name)).ok())
             .collect()
@@ -105,23 +109,25 @@ impl Drop for TrafficHarness {
 }
 
 #[test]
-fn shared_traffic_starts_both_and_reaps_them_on_interrupt_or_failure() {
+fn shared_traffic_starts_all_and_reaps_them_on_interrupt_or_failure() {
     for signal in ["-INT", "-TERM"] {
         let mut harness = TrafficHarness::spawn("");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while harness.producers().len() != 2 {
+        while harness.producers().len() != 3 {
             assert!(
                 std::time::Instant::now() < deadline,
-                "both producers must start"
+                "all producers must start"
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         let checks = std::fs::read_to_string(harness.root.path().join("checks")).unwrap();
         assert!(checks.contains("--connection local_kafka"));
         assert!(checks.contains("--connection local_nats"));
+        assert!(checks.contains("--connection local_redpanda"));
         let builds = std::fs::read_to_string(harness.root.path().join("builds")).unwrap();
         assert!(builds.contains("-p onetui-kafka --example produce_demo --locked"));
         assert!(builds.contains("-p onetui-nats --example produce_nats --locked"));
+        assert!(builds.contains("-p onetui-kafka --example seed_redpanda --locked -- --prepare"));
         assert!(
             Command::new("kill")
                 .args([signal, &harness.child.id().to_string()])
@@ -145,7 +151,7 @@ fn shared_traffic_starts_both_and_reaps_them_on_interrupt_or_failure() {
             );
         }
     }
-    for (failure, code) in [("kafka", 23), ("nats", 24), ("check", 19)] {
+    for (failure, code) in [("kafka", 23), ("nats", 24), ("redpanda", 25), ("check", 19)] {
         let mut harness = TrafficHarness::spawn(failure);
         assert_eq!(harness.wait().code(), Some(code));
         if failure == "check" {
@@ -168,6 +174,9 @@ fn shared_traffic_starts_both_and_reaps_them_on_interrupt_or_failure() {
 #[test]
 fn local_run_does_not_select_a_connection() {
     let temp = tempfile::tempdir().unwrap();
+    let cargo = temp.path().join("cargo");
+    std::fs::write(&cargo, "#!/bin/bash\nexit 0\n").unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::create_dir_all(temp.path().join("hack")).unwrap();
     std::fs::create_dir_all(temp.path().join("target/debug")).unwrap();
     std::fs::copy(
@@ -181,6 +190,14 @@ fn local_run_does_not_select_a_connection() {
     let output = Command::new("bash")
         .args(["hack/dev.sh", "run"])
         .current_dir(temp.path())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                temp.path().display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
         .output()
         .unwrap();
     assert!(
@@ -190,13 +207,16 @@ fn local_run_does_not_select_a_connection() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "--config\nhack/connections.toml\n"
+        "--config\ntarget/demo-onetui.toml\n"
     );
 }
 
 #[test]
 fn fixture_setup_preserves_existing_containers_and_cleans_failed_startup() {
     let temp = tempfile::tempdir().unwrap();
+    let cargo = temp.path().join("cargo");
+    std::fs::write(&cargo, "#!/bin/bash\nexit 0\n").unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
     let docker = temp.path().join("docker");
     std::fs::write(
         &docker,

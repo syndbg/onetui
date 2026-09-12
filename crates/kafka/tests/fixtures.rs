@@ -16,6 +16,10 @@ mod topic;
 mod decoding_avro;
 #[path = "fixtures/decoding_protobuf.rs"]
 mod decoding_protobuf;
+#[path = "fixtures/demo_avro.rs"]
+mod demo_avro;
+#[path = "fixtures/demo_protobuf.rs"]
+mod demo_protobuf;
 #[path = "fixtures/redpanda.rs"]
 mod redpanda;
 #[path = "fixtures/registry_avro.rs"]

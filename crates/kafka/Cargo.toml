@@ -26,6 +26,7 @@ rustls.workspace = true
 tempfile.workspace = true
 prost = "0.14"
 prost-types = "0.14"
+protox = "0.9.1"
 
 [target.'cfg(unix)'.dependencies]
-nix.workspace = true
+nix = { workspace = true, features = ["dir"] }

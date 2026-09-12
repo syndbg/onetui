@@ -8,7 +8,18 @@ use rdkafka::{
 #[tokio::test]
 #[ignore = "creates and removes one protobuf topic on the disposable Kafka fixture"]
 async fn kafka_protobuf_bindings_browse_replay_and_follow_without_losing_raw_data() {
-    let topic = format!("onetui_protobuf_{}", std::process::id());
+    exercise_binding(false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "creates and removes one protobuf catalog topic on the disposable Kafka fixture"]
+async fn kafka_protobuf_catalog_browse_replay_and_follow() {
+    exercise_binding(true).await;
+}
+
+async fn exercise_binding(catalog: bool) {
+    let topic = format!("onetui_protobuf_{}_{}", std::process::id(), catalog);
     let dir = tempfile::tempdir().unwrap();
     let schema = dir.path().join("event.pb");
     use prost::Message;
@@ -47,7 +58,14 @@ async fn kafka_protobuf_bindings_browse_replay_and_follow_without_losing_raw_dat
     binding.insert("field".into(), "key".into());
     binding.insert("format".into(), "protobuf".into());
     binding.insert("framing".into(), "raw".into());
-    binding.insert("schema_file".into(), schema.to_str().unwrap().into());
+    if catalog {
+        let mut source = toml::Table::new();
+        source.insert("directory".into(), dir.path().to_str().unwrap().into());
+        source.insert("schema".into(), "event".into());
+        binding.insert("catalog".into(), source.into());
+    } else {
+        binding.insert("schema_file".into(), schema.to_str().unwrap().into());
+    }
     binding.insert("message_name".into(), "demo.Event".into());
     options.insert(
         "decoders".into(),
@@ -102,6 +120,18 @@ async fn kafka_protobuf_bindings_browse_replay_and_follow_without_losing_raw_dat
         }
         let first = fetch(&executor, resource.clone(), None).await;
         assert_eq!(first.rows.len(), 100);
+        if catalog {
+            assert!(
+                first.rows[0].cells[6]
+                    .as_ref()
+                    .unwrap()
+                    .text()
+                    .unwrap()
+                    .contains("#schema=event:")
+            );
+            // Refresh and follow must keep the binding snapshot after a file edit.
+            std::fs::write(&schema, b"invalid replacement").unwrap();
+        }
         assert_eq!(
             first.rows[0].cells[5],
             Some(Value::Json(r#"{"id":"7"}"#.into()))
@@ -137,6 +167,8 @@ async fn kafka_protobuf_bindings_browse_replay_and_follow_without_losing_raw_dat
         assert!(live.rows[1].cells[7].is_some());
         let next = follow(&executor, resource.clone(), live.continuation).await;
         assert_eq!(next.rows.len(), 25);
+        assert!(next.rows[0].cells[5].is_some());
+        assert_eq!(next.rows[0].cells[6], first.rows[0].cells[6]);
         let quiet = follow(&executor, resource.clone(), next.continuation).await;
         assert!(quiet.rows.is_empty());
         assert_eq!(

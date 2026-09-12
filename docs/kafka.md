@@ -150,8 +150,9 @@ onetui --config "$HOME/onetui.toml" --connection events
 | `topic` | Required exact name, 1..249 ASCII letters/digits/dot/underscore/hyphen; not `.` or `..`. No wildcards. |
 | `field` | Required `"key"` or `"value"`. Each topic/field pair may appear once. |
 | `format` | Required `"avro"` or `"protobuf"`; case-sensitive. |
-| `framing` | Required `"raw"` or `"confluent"`. Raw uses a local schema file; Confluent requires a registry table. No automatic format detection. |
-| `schema_file` | Required for raw framing, forbidden with Confluent. Absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. Relative paths are rejected; neither `~` nor environment variables are expanded. |
+| `framing` | Required `"raw"` or `"confluent"`. Raw requires exactly one of `schema_file` or `catalog`; Confluent requires `registry`. No automatic detection. |
+| `schema_file` | Raw framing only, mutually exclusive with `catalog`. Absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. No path expansion. |
+| `catalog` | Optional local-directory source for raw framing; see below. |
 | `message_name` | Required for raw Protobuf: exact full name, 1..1,024 UTF-8 bytes without controls. Forbidden for Avro and Confluent framing; Protobuf registry records select their message through envelope indexes. |
 
 Unknown keys, missing required fields, wrong types and duplicate bindings fail validation even for unselected aliases. Omitted bindings retain Auto display. Bindings apply to partition and topic-wide `kafka.records`, following, and `kafka.query` replay for that topic.
@@ -165,6 +166,20 @@ Null keys/tombstones are not decoded; empty bytes are decoded and may be valid o
 Previews use the library allocation/depth limits and accept at most 64 KiB of payload. JSON previews are capped at 64 KiB and must fit the remaining 1 MiB page budget. Bound topics reserve 2 KiB of raw-page capacity for column metadata; a raw record that cannot fit still fails the page explicitly. If preview metadata cannot fit, all preview cells are null and the page notice explains the omission. Columns stay stable across empty or budget-limited live batches. Omitting a preview does not change raw values or broker continuations.
 
 JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. The libraries retain native types during decoding, but the browser has no native-type inspector yet. Reader-schema resolution remains unsupported. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
+
+### Local directory catalogs
+
+Replace `schema_file` with an explicit catalog selection:
+
+```toml
+catalog = { directory = "/absolute/schemas", schema = "event", references = ["customer"] }
+```
+
+IDs are filename stems: `event.avsc` selects an Avro writer schema, `event.pb` a Protobuf descriptor set. List all Avro dependencies in `references` (default `[]`); Protobuf descriptors must include imports and use `message_name` instead. No trial decoding or recursive search.
+
+The directory is limited to 128 entries and 64 schemas; the selected bundle to 256 KiB. Duplicate IDs, traversal, symlinks and non-regular schema files are rejected. Reopen the connection to reload a binding; refresh and following retain its cached schema, including failures. Retained values are unchanged. `FIELD_schema` includes the directory, ID and content hash.
+
+Build `.pb` files outside OneTUI with the [protoc example](../crates/protobuf/README.md#try-a-raw-message) or `buf build --as-file-descriptor-set -o /absolute/schemas/event.pb` from your Buf workspace. See [Buf build](https://buf.build/docs/reference/cli/buf/build/). Catalogs require Linux/macOS. Use `onetui schema --datasource kafka` for supported settings and limits; [example bindings](../hack/kafka-decoders.toml.example) cover both formats.
 
 ### Confluent Avro registry
 
@@ -203,7 +218,7 @@ Each response is limited to 256 KiB plus 16 KiB of headers. A writer bundle is l
 
 `FIELD_schema` identifies the registry endpoint and schema ID. Lookup failures retain that identity when the prefix was valid and show the returned HTTP status/body or native error in `FIELD_decode_error`, subject to credential redaction and the existing 512-byte display limit. Malformed prefixes retain raw bytes without a schema identity. Errors on one record do not hide other records; an overall request deadline or cancellation still retains the previous page. Null fields trigger no lookup. Empty bytes are a truncated Confluent prefix.
 
-For a ready-made local registry, run `make dev-up` and open `local_redpanda` in `make run`. The [Redpanda fixture](../hack/README.md#redpanda-and-schema-registry) includes two Avro writer versions, a referenced schema and 1,000 records. Separate HTTP/TLS protocol fixtures cover authentication, redirects, bounds and cancellation. Local Redpanda validation is not certification against a hosted Confluent deployment.
+Run `make dev-up`, then open `local_redpanda` in `make run`. The [Redpanda demo](../hack/README.md#redpanda-and-schema-registry) has four Avro/Protobuf registry and catalog topics, 1,000 messages each, with live traffic through `make dev-traffic`. Local validation is not certification against a hosted Confluent deployment.
 
 ### Record values and bounds
 
@@ -248,4 +263,4 @@ make run
 
 Choose `local_kafka`, Topics, `demo_live`, Partitions, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
 
-SQL, publishing from the app, consumer-group administration, Protobuf registry decoding, mutual TLS, broker OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.
+SQL, publishing from the app, consumer-group administration, mutual TLS, broker OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.

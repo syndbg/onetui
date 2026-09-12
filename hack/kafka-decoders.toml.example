@@ -1,5 +1,6 @@
 # Copy the desired binding into your onetui.toml.
 # Replace schema_file with an absolute local path. Paths are not shell-expanded.
+# Directory bindings below use filename stems; reopen the connection after edits.
 [connections.local_kafka]
 kind = "kafka"
 bootstrap_servers = ["127.0.0.1:19092"]
@@ -20,8 +21,23 @@ framing = "raw"
 schema_file = "/absolute/path/to/event.pb"
 message_name = "demo.Event"
 
+[[connections.local_kafka.decoders]]
+topic = "catalog_avro"
+field = "value"
+format = "avro"
+framing = "raw"
+catalog = { directory = "/absolute/schemas", schema = "event", references = ["customer"] }
+
+[[connections.local_kafka.decoders]]
+topic = "catalog_protobuf"
+field = "key"
+format = "protobuf"
+framing = "raw"
+message_name = "demo.Event"
+catalog = { directory = "/absolute/schemas", schema = "event_proto" }
+
 # Custom endpoint example. For the seeded local registry, use local_redpanda
-# from hack/connections.toml after make dev-up.
+# from target/demo-onetui.toml after make dev-up.
 # Keep only bindings for topics you use. This endpoint is a placeholder.
 [[connections.local_kafka.decoders]]
 topic = "registered_events"

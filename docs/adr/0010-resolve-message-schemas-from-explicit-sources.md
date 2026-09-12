@@ -9,7 +9,7 @@ date: 2026-09-11
 
 Load schemas dynamically through built-in source implementations. Keep `onetui-avro` and `onetui-protobuf` independent: they parse schemas and decode bytes, while source adapters handle files, registry protocols, authentication and caching. Use static enum dispatch as in [ADR-0002](0002-use-static-enum-dispatch-for-built-in-providers.md). User schemas are data, not runtime plugins.
 
-This extends [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md). Explicit Kafka raw-file bindings are implemented in [the Kafka decoder adapter](../../crates/kafka/src/decoding.rs); Confluent Avro/Protobuf registry access is implemented in [the registry adapter](../../crates/kafka/src/registry.rs). Directory catalogs and Buf discovery remain pending.
+This extends [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md). Kafka supports explicit files, directory catalogs and Confluent Avro/Protobuf registries. Buf discovery remains pending.
 
 Keep schema source, framing and message selection distinct. Discovering a directory or registry's schemas does not identify which schema encoded a record. Raw messages require an explicit binding; framed messages resolve the identity carried by their configured envelope. Kafka keys and values remain independently bound. Future NATS bindings use the same decoding rules without inheriting Kafka topic semantics.
 
@@ -42,6 +42,8 @@ Confluent header-GUID framing is distinct from its schema-ID payload prefix. Avr
 AWS Glue supports Avro and Protobuf but needs its own identity, framing and authentication adapter. Native Apicurio integration likewise requires its own protocol handling; do not assume every registry uses Confluent framing. These adapters are deferred. [AWS Glue registry](https://docs.aws.amazon.com/glue/latest/dg/schema-registry.html), [Apicurio identities](https://www.apicur.io/registry/docs/apicurio-registry/3.2.x/getting-started/assembly-registry-concepts-glossary.html)
 
 ## Resolution and failure behavior
+
+Directory catalogs use filename stems as IDs in a flat inventory. Avro bindings list dependencies explicitly; Protobuf artifacts include their imports. Files open relative to a pinned directory descriptor without following symlinks. Each binding snapshots its schema until the connection is reopened; no watcher or refresh-time reload. See [catalog settings](../kafka.md#local-directory-catalogs) for bounds and usage.
 
 Resolve outside rendering, with deadlines, cancellation and stale-result rejection. Bound schema bytes, dependency depth/count, compilation work, concurrent requests and cache bytes/entries. Reuse schema results across records with the same identity. Cache keys include the configured source, authentication context and immutable schema identity; moving labels resolve to a pinned revision. Refreshes must not replace the schema attached to an already decoded value.
 

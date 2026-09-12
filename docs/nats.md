@@ -78,7 +78,7 @@ Native server error JSON, codes, descriptions and SDK error causes are preserved
 ```sh
 make dev-up
 make run                 # choose local_nats, then DEMO_EVENTS or DEMO_LIVE
-make dev-traffic         # separate terminal; Kafka and NATS, every 15 seconds
+make dev-traffic         # separate terminal; Kafka, Redpanda and NATS, every 15 seconds
 ```
 
 Open `DEMO_LIVE` and press `f` to follow future arrivals. See [fixture setup](../hack/README.md#nats-traffic) for the finite simulator and dataset inventory. The simulator writes only disposable fixture data; it is not an app publishing feature.

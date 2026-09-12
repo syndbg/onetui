@@ -1,0 +1,14 @@
+syntax = "proto3";
+package demo;
+import "customer.proto";
+
+message Event {
+  uint64 id = 1;
+  Customer customer = 2;
+  string title = 3;
+  bool active = 4;
+  double score = 5;
+  repeated string tags = 6;
+  bytes attachment = 7;
+  optional string note = 8;
+}

@@ -12,7 +12,7 @@ make run
 
 ## Fixture security and configuration
 
-`make run` supplies fixture credentials and selects [connections.toml](connections.toml). For exact service settings, see [compose.yaml](compose.yaml).
+`make` tasks generate `target/demo-onetui.toml` from [connections.toml](connections.toml), with absolute catalog paths under `target/demo-schemas`. `make run` loads it and supplies fixture credentials. For service settings, see [compose.yaml](compose.yaml).
 
 | Alias | Endpoint |
 | --- | --- |
@@ -26,13 +26,22 @@ TLS certificates expire after two days; recreate disposable fixtures when expire
 
 ## Redpanda and Schema Registry
 
-Choose `local_redpanda` → Topics → `demo_avro` → Records. The fixture contains 1,000 Avro records using two writer versions and a referenced schema. Decoder bindings are already configured.
+Choose `local_redpanda` → Topics → a topic below → Records. Each starts with 1,000 messages; `make dev-traffic` appends to all four every 15 seconds. Decoder bindings and local schemas are generated automatically.
 
-Apache Kafka remains alongside Redpanda for broker-specific security and transaction tests. Protobuf registry decoding has a separate integration fixture; `demo_avro` remains Avro.
+| Topic | Encoding and schema source |
+| --- | --- |
+| `demo_protobuf` | Confluent Protobuf: two writer versions, imported Customer schema |
+| `demo_protobuf_catalog` | Raw Protobuf: local descriptor set with imports |
+| `demo_avro` | Confluent Avro: two writer versions, referenced Customer schema |
+| `demo_avro_catalog` | Raw Avro: local writer schema and Customer reference |
+
+Enter opens a record; select `value_decoded` for readable JSON. `value` retains wire bytes. `value_schema` identifies the source; `value_decode_error` should be NULL. Protobuf samples include nested records, Unicode, arrays, bytes, booleans, numbers and optional fields. Sources: [event.proto](fixtures/schemas/event.proto), [customer.proto](fixtures/schemas/customer.proto).
+
+For an existing setup, use `make dev-seed`, then restart `make run`. Seeding preserves existing messages, including traffic. Apache Kafka remains alongside Redpanda for broker-specific security and transaction tests.
 
 ## Shared traffic
 
-Run `make dev-traffic` in another terminal. Kafka and NATS receive a message immediately, then every 15 seconds; Ctrl-C stops both. This does not produce Redpanda traffic.
+Run `make dev-traffic` in another terminal. Kafka, Redpanda and NATS receive messages immediately after setup, then every 15 seconds; Ctrl-C stops all producers. For Redpanda, choose any topic above and press `f`.
 
 ### Kafka traffic
 

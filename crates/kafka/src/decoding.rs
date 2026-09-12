@@ -47,6 +47,7 @@ pub(crate) struct Binding {
     pub schema_file: Option<String>,
     pub message_name: Option<String>,
     pub registry: Option<crate::registry::Config>,
+    pub catalog: Option<crate::catalog::Config>,
 }
 
 pub(crate) fn validate_path(path: &str) -> Result<()> {
@@ -89,12 +90,16 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
         );
         match binding.framing {
             Framing::Raw => {
-                validate_path(
-                    binding
-                        .schema_file
-                        .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("Raw binding requires schema_file"))?,
-                )?;
+                ensure!(
+                    binding.schema_file.is_some() != binding.catalog.is_some(),
+                    "Raw binding requires exactly one of schema_file or catalog"
+                );
+                if let Some(path) = &binding.schema_file {
+                    validate_path(path)?;
+                }
+                if let Some(catalog) = &binding.catalog {
+                    catalog.validate(binding.format)?;
+                }
                 ensure!(
                     binding.registry.is_none(),
                     "Raw binding does not accept registry"
@@ -102,8 +107,8 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
             }
             Framing::Confluent => {
                 ensure!(
-                    binding.schema_file.is_none(),
-                    "Registry binding does not accept schema_file"
+                    binding.schema_file.is_none() && binding.catalog.is_none(),
+                    "Registry binding does not accept schema_file or catalog"
                 );
                 binding
                     .registry
@@ -147,21 +152,35 @@ enum Decoder {
 }
 
 impl Decoder {
-    fn load(binding: &Binding) -> Result<Self> {
-        let bytes = read_file(
-            binding
-                .schema_file
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("Raw binding requires schema_file"))?,
-            SCHEMA_BYTES,
-        )?;
+    fn load(binding: &Binding, remaining: &impl Fn() -> Result<()>) -> Result<Self> {
+        remaining()?;
+        let bundle = if let Some(catalog) = &binding.catalog {
+            catalog.load(binding.format, remaining)?
+        } else {
+            crate::catalog::Bundle {
+                schema: read_file(
+                    binding
+                        .schema_file
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Raw binding requires schema_file"))?,
+                    SCHEMA_BYTES,
+                )?,
+                references: Vec::new(),
+            }
+        };
+        remaining()?;
         match binding.framing {
             Framing::Raw => match binding.format {
-                Format::Avro => Ok(Self::Avro(onetui_avro::Decoder::new(std::str::from_utf8(
-                    &bytes,
-                )?)?)),
+                Format::Avro => Ok(Self::Avro(onetui_avro::Decoder::with_references(
+                    std::str::from_utf8(&bundle.schema)?,
+                    &bundle
+                        .references
+                        .iter()
+                        .map(|s| std::str::from_utf8(s))
+                        .collect::<std::result::Result<Vec<_>, _>>()?,
+                )?)),
                 Format::Protobuf => Ok(Self::Protobuf(onetui_protobuf::Decoder::new(
-                    &bytes,
+                    &bundle.schema,
                     binding.message_name.as_deref().unwrap(),
                 )?)),
             },
@@ -188,8 +207,13 @@ impl Decoder {
 
 struct Entry {
     binding: Binding,
-    loaded: Option<Result<Decoder, String>>,
+    loaded: Option<Result<Loaded, String>>,
     registry: Option<Result<crate::registry::Registry, String>>,
+}
+
+struct Loaded {
+    decoder: Decoder,
+    identity: String,
 }
 
 impl Entry {
@@ -217,18 +241,27 @@ impl Entry {
                 Err(error) => (None, Err(error)),
             };
         }
-        let decoder = self.load();
+        let decoder = self.load(remaining);
         (
-            decoder.as_ref().ok().map(|d| d.schema_id().to_owned()),
+            decoder.as_ref().ok().map(|d| d.identity.clone()),
             decoder
                 .as_ref()
                 .map_err(|error| anyhow::anyhow!("{error}"))
-                .and_then(|d| d.json(raw)),
+                .and_then(|d| d.decoder.json(raw)),
         )
     }
-    fn load(&mut self) -> &Result<Decoder, String> {
+    fn load(&mut self, remaining: &impl Fn() -> Result<()>) -> &Result<Loaded, String> {
         self.loaded.get_or_insert_with(|| {
-            Decoder::load(&self.binding).map_err(|error| format!("{error:#}"))
+            (|| {
+                let decoder = Decoder::load(&self.binding, remaining)?;
+                remaining()?;
+                let identity = match &self.binding.catalog {
+                    Some(catalog) => format!("{}:{}", catalog.identity(), decoder.schema_id()),
+                    None => decoder.schema_id().to_owned(),
+                };
+                Ok(Loaded { decoder, identity })
+            })()
+            .map_err(|error: anyhow::Error| format!("{error:#}"))
         })
     }
 }
@@ -256,7 +289,7 @@ impl Bindings {
                 entry.registry()?.check(&remaining)?;
             } else {
                 entry
-                    .load()
+                    .load(&remaining)
                     .as_ref()
                     .map_err(|error| anyhow::anyhow!("{error}"))?;
             }
@@ -296,7 +329,11 @@ impl Bindings {
             let identity = if entry.binding.registry.is_some() {
                 None
             } else {
-                entry.load().as_ref().ok().map(|d| d.schema_id().to_owned())
+                entry
+                    .load(&remaining)
+                    .as_ref()
+                    .ok()
+                    .map(|d| d.identity.clone())
             };
             remaining()?;
             let identity_bytes = if entry.binding.registry.is_some() {

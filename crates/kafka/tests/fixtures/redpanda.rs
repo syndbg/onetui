@@ -1,5 +1,8 @@
 use super::*;
+#[path = "../../examples/support/broker.rs"]
+mod broker;
 #[path = "../../examples/support/redpanda.rs"]
+#[allow(dead_code)]
 mod fixture;
 use rdkafka::{
     admin::{AdminClient, AdminOptions},
@@ -17,7 +20,7 @@ async fn redpanda_registry_versions_references_paging_and_following() {
         fixture::seed(&owned, 125).await.unwrap();
         let ids = fixture::schemas(&owned).unwrap();
         assert_ne!(ids[0], ids[1]);
-        let options = toml::from_str(&format!("bootstrap_servers=[{:?}]\nsecurity_protocol='PLAINTEXT'\n[[decoders]]\ntopic={owned:?}\nfield='value'\nformat='avro'\nframing='confluent'\n[decoders.registry]\nurl={:?}", fixture::BROKER, fixture::REGISTRY)).unwrap();
+        let options = toml::from_str(&format!("bootstrap_servers=[{:?}]\nsecurity_protocol='PLAINTEXT'\n[[decoders]]\ntopic={owned:?}\nfield='value'\nformat='avro'\nframing='confluent'\n[decoders.registry]\nurl={:?}", broker::BROKER, broker::REGISTRY)).unwrap();
         let mut executor = KafkaProvider.configure(&options, &|_| panic!("fixture needs no credentials")).unwrap();
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         executor.check(context).await.unwrap();
@@ -38,7 +41,7 @@ async fn redpanda_registry_versions_references_paging_and_following() {
         assert_eq!(fetch(&executor, resource.clone(), first.continuation).await.rows[0].cells, tail.rows[0].cells);
         let start = follow(&executor, resource.clone(), None).await;
         assert!(start.rows.is_empty());
-        let producer: FutureProducer = fixture::config().create().unwrap();
+        let producer: FutureProducer = broker::config().create().unwrap();
         let raw = fixture::message(125, ids).unwrap();
         producer.send(FutureRecord::to(&owned).partition(0).key("demo").payload(&raw), Duration::from_secs(5)).await.unwrap();
         let live = follow(&executor, resource.clone(), start.continuation).await;
@@ -63,7 +66,7 @@ async fn redpanda_registry_versions_references_paging_and_following() {
         assert_eq!(replay.rows[0].cells, first.rows[1].cells);
         executor.shutdown(ShutdownContext::new(Duration::from_secs(3))).await.unwrap();
     }).await;
-    let admin: AdminClient<_> = fixture::config().create().unwrap();
+    let admin: AdminClient<_> = broker::config().create().unwrap();
     let deleted = admin
         .delete_topics(
             &[&topic],
@@ -79,7 +82,7 @@ async fn redpanda_registry_versions_references_paging_and_following() {
             .build()
             .into();
         let response = agent
-            .delete(format!("{}/subjects/{topic}_{suffix}", fixture::REGISTRY))
+            .delete(format!("{}/subjects/{topic}_{suffix}", broker::REGISTRY))
             .call();
         assert!(response.is_ok(), "{response:?}");
     }

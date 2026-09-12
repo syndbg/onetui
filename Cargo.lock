@@ -1745,6 +1745,7 @@ dependencies = [
  "onetui-protobuf",
  "prost",
  "prost-types",
+ "protox",
  "rdkafka",
  "rustls",
  "serde",
