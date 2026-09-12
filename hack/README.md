@@ -10,6 +10,8 @@ make run
 
 `make dev-down` deletes fixture data. These are disposable, loopback-only services with fake credentials and temporary storage, not production templates. Do not run setup/tests concurrently; ports and the Compose project are fixed.
 
+For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This deletes all fixture data, recreates services/certificates and reseeds demos. Reopen `make run` afterward.
+
 ## Fixture security and configuration
 
 `make` tasks generate `target/demo-onetui.toml` from [connections.toml](connections.toml), with absolute catalog paths under `target/demo-schemas`. `make run` loads it and supplies fixture credentials. For service settings, see [compose.yaml](compose.yaml).

@@ -212,6 +212,62 @@ fn local_run_does_not_select_a_connection() {
 }
 
 #[test]
+fn dev_reset_builds_then_tears_down_and_starts_even_with_parallel_make() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/Makefile"),
+        temp.path().join("Makefile"),
+    )
+    .unwrap();
+    for (name, script) in [
+        (
+            "cargo",
+            "#!/bin/bash\necho build >> calls\nif [[ $FAIL == build ]]; then exit 28; fi\n",
+        ),
+        (
+            "bash",
+            "#!/bin/bash\necho \"$2\" >> calls\nif [[ $FAIL == \"$2\" ]]; then exit 29; fi\n",
+        ),
+    ] {
+        let path = temp.path().join(name);
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for (failure, expected) in [
+        ("", "build\ndown\nup\n"),
+        ("build", "build\n"),
+        ("down", "build\ndown\n"),
+        ("up", "build\ndown\nup\n"),
+    ] {
+        std::fs::write(temp.path().join("calls"), "").unwrap();
+        let output = Command::new("make")
+            .args(["-j8", "dev-reset"])
+            .current_dir(temp.path())
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    temp.path().display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .env("FAIL", failure)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            failure.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("calls")).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn fixture_setup_preserves_existing_containers_and_cleans_failed_startup() {
     let temp = tempfile::tempdir().unwrap();
     let cargo = temp.path().join("cargo");

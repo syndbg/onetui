@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration release-check package
 
 help:
 	@printf '%s\n' \
@@ -15,6 +15,7 @@ help:
 	  'verify                 Build, lint and run non-Docker tests' \
 	  'workflow-lint          Validate GitHub workflows (requires Go; downloads pinned actionlint)' \
 	  'dev-up                 Build and start ready-to-use disposable local databases' \
+	  'dev-reset              Delete fixture data, recreate services and reseed demos' \
 	  'dev-seed               Add demo data to running fixtures without resetting existing data' \
 	  'dev-traffic            Produce Kafka, Redpanda and NATS traffic every 15 seconds; Ctrl-C stops all' \
 	  'dev-traffic-kafka      Produce Kafka traffic only' \
@@ -52,6 +53,10 @@ workflow-lint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= .github/workflows/*.yaml
 
 dev-up: build
+	bash hack/dev.sh up
+
+dev-reset: build
+	bash hack/dev.sh down
 	bash hack/dev.sh up
 
 dev-seed: build
