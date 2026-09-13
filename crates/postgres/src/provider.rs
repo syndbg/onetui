@@ -23,6 +23,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         resource: "postgres.query",
         language: "SQL",
         example: "SELECT 1 AS value",
+        contextual_example: None,
         path_depth: 0,
         scope_resources: &[],
     }),

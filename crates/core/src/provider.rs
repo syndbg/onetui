@@ -109,6 +109,8 @@ pub struct QueryDescriptor {
     pub resource: &'static str,
     pub language: &'static str,
     pub example: &'static str,
+    #[serde(skip)]
+    pub contextual_example: Option<fn(&Resource, Option<&crate::Row>) -> String>,
     /// Number of current resource path components needed to scope a query.
     pub path_depth: usize,
     /// Resource paths that can supply this query's scope; empty permits every resource.
@@ -116,6 +118,10 @@ pub struct QueryDescriptor {
 }
 
 impl QueryDescriptor {
+    pub fn initial_text(&self, resource: &Resource, row: Option<&crate::Row>) -> String {
+        self.contextual_example
+            .map_or_else(|| self.example.into(), |example| example(resource, row))
+    }
     pub fn accepts(&self, resource: &Resource) -> bool {
         resource.path.len() >= self.path_depth
             && (self.scope_resources.is_empty() || self.scope_resources.contains(&resource.id))
@@ -249,6 +255,7 @@ mod tests {
             resource: "query",
             language: "JSON",
             example: "{}",
+            contextual_example: None,
             path_depth: 1,
             scope_resources: &["messages"],
         };

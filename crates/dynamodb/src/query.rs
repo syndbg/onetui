@@ -55,6 +55,26 @@ fn forward() -> bool {
     true
 }
 
+pub(crate) fn example(resource: &onetui_core::Resource, row: Option<&onetui_core::Row>) -> String {
+    let first = row
+        .and_then(|row| row.cells.first())
+        .and_then(Option::as_ref)
+        .and_then(onetui_core::Value::text);
+    let value = if resource.id == "dynamodb.records" {
+        serde_json::json!({"operation":"GetRecords", "shard_id":resource.path.get(1).map(String::as_str).unwrap_or("shard-id"), "sequence_number":first.unwrap_or("0"), "limit":100})
+    } else if resource.id == "dynamodb.shards" {
+        let shard: Value = first
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null);
+        serde_json::json!({"operation":"GetRecords", "shard_id":shard["ShardId"].as_str().unwrap_or("shard-id"), "sequence_number":shard["SequenceNumberRange"]["StartingSequenceNumber"].as_str().unwrap_or("0"), "limit":100})
+    } else if matches!(resource.id, "dynamodb.stream" | "dynamodb.stream_info") {
+        serde_json::json!({"operation":"GetRecords", "shard_id":"shard-id", "sequence_number":"0", "limit":100})
+    } else {
+        serde_json::json!({"operation":"Scan", "limit":100})
+    };
+    serde_json::to_string_pretty(&value).expect("JSON query example")
+}
+
 impl Read {
     pub fn parse(text: &str) -> Result<Self> {
         ensure!(
@@ -118,6 +138,37 @@ impl Read {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stream_examples_use_selected_shards_and_preserve_decimal_sequences() {
+        use onetui_core::{Resource, Row};
+        let row = Row {
+            cells: vec![Some("000123456789012345678901234567890".into())],
+            target: None,
+        };
+        let text = example(
+            &Resource::new("dynamodb.records", vec!["arn".into(), "shard-1".into()]),
+            Some(&row),
+        );
+        assert!(
+            matches!(Read::parse(&text).unwrap(), Read::GetRecords { shard_id, sequence_number, after: false, limit: 100 } if shard_id == "shard-1" && sequence_number == "000123456789012345678901234567890")
+        );
+        let row = Row { cells: vec![Some(onetui_core::Value::Json(r#"{"ShardId":"shard-2","SequenceNumberRange":{"StartingSequenceNumber":"000456"}}"#.into()))], target: None };
+        let text = example(
+            &Resource::new("dynamodb.shards", vec!["arn".into()]),
+            Some(&row),
+        );
+        assert!(
+            matches!(Read::parse(&text).unwrap(), Read::GetRecords { shard_id, sequence_number, .. } if shard_id == "shard-2" && sequence_number == "000456")
+        );
+        assert!(matches!(
+            Read::parse(&example(
+                &Resource::new("dynamodb.table", vec!["demo".into()]),
+                None
+            ))
+            .unwrap(),
+            Read::Scan { .. }
+        ));
+    }
     #[test]
     fn only_known_read_operations_and_options_are_accepted() {
         assert!(Read::parse(r#"{"operation":"Scan"}"#).is_ok());

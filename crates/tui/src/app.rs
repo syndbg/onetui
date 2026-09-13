@@ -875,7 +875,14 @@ impl App {
                     .query_draft
                     .clone()
                     .or_else(|| self.view.query.clone())
-                    .unwrap_or_else(|| descriptor.example.into());
+                    .unwrap_or_else(|| {
+                        descriptor.initial_text(
+                            &self.view.resource,
+                            self.view
+                                .selected_index()
+                                .and_then(|index| self.view.page.rows.get(index)),
+                        )
+                    });
                 self.query_editor = Some(crate::query::Editor::new(text));
                 self.help = false;
                 self.detail = false;

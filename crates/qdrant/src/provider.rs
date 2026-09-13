@@ -22,6 +22,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     query: Some(QueryDescriptor {
         resource: "qdrant.query",
         language: "Scroll JSON",
+        contextual_example: None,
         example: "{\n  \"filter\": {\"must\": []},\n  \"limit\": 100\n}",
         path_depth: 1,
         scope_resources: &[],

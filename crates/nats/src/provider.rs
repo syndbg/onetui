@@ -17,6 +17,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     query: Some(QueryDescriptor {
         resource: "nats.query",
         language: "Replay JSON",
+        contextual_example: None,
         example: "{\n  \"subject\": \">\",\n  \"start_sequence\": 1\n}",
         path_depth: 1,
         scope_resources: &["nats.messages", "nats.stream_info", "nats.query"],
