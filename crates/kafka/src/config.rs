@@ -11,6 +11,9 @@ pub(crate) struct Config {
     #[serde(default = "default_security")]
     pub security_protocol: String,
     pub ca_file: Option<String>,
+    pub client_cert_file: Option<String>,
+    pub client_key_file: Option<String>,
+    pub client_key_password_env: Option<String>,
     pub sasl_mechanism: Option<String>,
     pub username_env: Option<String>,
     pub password_env: Option<String>,
@@ -73,14 +76,31 @@ impl Config {
                 );
             }
         }
-        if let Some(path) = &config.ca_file {
+        for (name, path) in [
+            ("ca_file", &config.ca_file),
+            ("client_cert_file", &config.client_cert_file),
+            ("client_key_file", &config.client_key_file),
+        ] {
+            let Some(path) = path else { continue };
             ensure!(
-                path.len() <= 4096 && !path.contains('\0') && Path::new(path).is_absolute(),
-                "Kafka ca_file must be an absolute path"
+                path.len() <= 4096
+                    && !path.chars().any(char::is_control)
+                    && Path::new(path).is_absolute(),
+                "Kafka {name} must be an absolute path without controls (max 4096 bytes)"
             );
             ensure!(
                 config.security_protocol != "PLAINTEXT",
-                "Kafka ca_file requires TLS"
+                "Kafka {name} requires TLS"
+            );
+        }
+        ensure!(
+            config.client_cert_file.is_some() == config.client_key_file.is_some(),
+            "Kafka client_cert_file and client_key_file must be configured together"
+        );
+        if let Some(name) = &config.client_key_password_env {
+            ensure!(
+                config.client_key_file.is_some() && safe_name(name),
+                "Kafka client_key_password_env requires a client key and a valid environment reference"
             );
         }
         if config.security_protocol == "SASL_SSL" {
@@ -145,6 +165,21 @@ impl Config {
             config.set("ssl.ca.location", path);
         }
         let mut secrets = Vec::new();
+        if let Some(path) = &self.client_cert_file {
+            config.set("ssl.certificate.location", path);
+        }
+        if let Some(path) = &self.client_key_file {
+            config.set("ssl.key.location", path);
+        }
+        if let Some(name) = &self.client_key_password_env {
+            let password = secret(name, env)?;
+            ensure!(
+                !password.contains('\0'),
+                "Kafka client key password must not contain NUL"
+            );
+            config.set("ssl.key.password", &password);
+            secrets.push(password);
+        }
         if let Some(mechanism) = &self.sasl_mechanism {
             let username = secret(self.username_env.as_deref().unwrap(), env)?;
             let password = secret(self.password_env.as_deref().unwrap(), env)?;
@@ -165,6 +200,49 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_certificates_are_paired_offline_and_secrets_are_alias_local() {
+        let base = "bootstrap_servers=['broker:9093']\n";
+        let pair = "client_cert_file='/not-read/client.pem'\nclient_key_file='/not-read/key.pem'\n";
+        for invalid in [
+            "client_cert_file='/client.pem'",
+            "client_key_file='/key.pem'",
+            "client_key_password_env='KEY_PASSWORD'",
+            "client_cert_file='relative.pem'\nclient_key_file='/key.pem'",
+            "client_cert_file='/client.pem'\nclient_key_file='relative.pem'",
+            "client_cert_file='/client.pem'\nclient_key_file='/key.pem'\nclient_key_password_env='bad name'",
+            "client_cert_file='/client.pem'\nclient_key_file='/key.pem'\nsecurity_protocol='PLAINTEXT'",
+            "client_cert_file=\"/client\\n.pem\"\nclient_key_file='/key.pem'",
+        ] {
+            assert!(Config::parse(&toml::from_str(&format!("{base}{invalid}")).unwrap()).is_err());
+        }
+        let config = Config::parse(&toml::from_str(&format!("{base}{pair}")).unwrap()).unwrap();
+        let (native, secrets) = config
+            .native(1, &|_| panic!("no password configured"))
+            .unwrap();
+        assert!(secrets.is_empty());
+        assert_eq!(
+            native.get("ssl.certificate.location"),
+            Some("/not-read/client.pem")
+        );
+        assert_eq!(native.get("ssl.key.location"), Some("/not-read/key.pem"));
+        assert_eq!(
+            native.get("enable.ssl.certificate.verification"),
+            Some("true")
+        );
+        assert_eq!(
+            native.get("ssl.endpoint.identification.algorithm"),
+            Some("https")
+        );
+        let config = Config::parse(&toml::from_str(&format!("{base}{pair}client_key_password_env='KEY_PASSWORD'\nsecurity_protocol='SASL_SSL'\nsasl_mechanism='PLAIN'\nusername_env='USER'\npassword_env='PASS'")).unwrap()).unwrap();
+        assert!(config.native(2, &|_| None).is_err());
+        assert!(config.native(2, &|_| Some("bad\0secret".into())).is_err());
+        let (native, secrets) = config.native(2, &|name| Some(name.into())).unwrap();
+        assert_eq!(native.get("ssl.key.password"), Some("KEY_PASSWORD"));
+        assert_eq!(native.get("sasl.password"), Some("PASS"));
+        assert_eq!(secrets, ["KEY_PASSWORD", "USER", "PASS"]);
+    }
 
     #[test]
     fn strict_offline_config_and_nonoverridable_read_safety() {

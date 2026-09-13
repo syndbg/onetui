@@ -227,6 +227,15 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
         "SSL"
     );
     assert_eq!(kafka["limits"]["page_rows"], 100);
+    assert_eq!(
+        kafka["configuration"]["client_cert_file"]["required"],
+        "with client_key_file"
+    );
+    assert_eq!(
+        kafka["configuration"]["client_key_file"]["required"],
+        "with client_cert_file"
+    );
+    assert!(kafka["configuration"]["client_key_password_env"]["default"].is_null());
     assert_eq!(kafka["limits"]["topic_partitions"], 32);
     assert_eq!(kafka["limits"]["topic_cursor_bytes"], 4096);
     let buf = &kafka["configuration"]["decoders"]["fields"]["buf"];

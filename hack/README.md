@@ -20,7 +20,7 @@ For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This de
 | --- | --- |
 | `local_pg` | PostgreSQL: `127.0.0.1:15432` |
 | `local_qdrant` | gRPC: `127.0.0.1:16334`; TLS fixture: `16335` |
-| `local_kafka` | Kafka: `127.0.0.1:19092`; TLS: `19093`; SASL/TLS: `19094` |
+| `local_kafka` | Kafka: `127.0.0.1:19092`; TLS: `19093`; SASL/TLS: `19094`; mTLS test listener: `19095` |
 | `local_redpanda` | Kafka: `127.0.0.1:29092`; Schema Registry: `http://127.0.0.1:18081` |
 | `local_nats` | NATS: `127.0.0.1:14222`; TLS fixture: `14223` |
 

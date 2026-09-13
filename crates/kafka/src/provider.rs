@@ -19,6 +19,8 @@ use tokio::sync::{Mutex, Semaphore, oneshot, watch};
 use tokio::time::Instant;
 
 pub struct KafkaProvider;
+pub(crate) const NATIVE_ERROR_COUNT: usize = 4;
+pub(crate) const NATIVE_ERROR_BYTES: usize = 2048;
 static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 // Native destruction and certificate/DNS reads cannot be aborted by dropping an async future.
 // Keep the slot until the native owner exits, including after a timed-out shutdown.
@@ -106,6 +108,7 @@ struct Job {
     operation: Operation,
     deadline: Instant,
     reply: oneshot::Sender<Result<Response>>,
+    errors: Arc<StdMutex<Vec<String>>>,
 }
 
 impl Job {
@@ -119,7 +122,7 @@ impl Job {
 
 struct NativeContext {
     status: watch::Sender<ConnectionStatus>,
-    last_error: Arc<StdMutex<Option<String>>>,
+    errors: StdMutex<Arc<StdMutex<Vec<String>>>>,
     secrets: Vec<String>,
 }
 
@@ -128,12 +131,32 @@ impl ClientContext for NativeContext {
     fn log(&self, _: RDKafkaLogLevel, _: &str, _: &str) {}
     fn error(&self, error: KafkaError, reason: &str) {
         let secrets: Vec<_> = self.secrets.iter().map(String::as_str).collect();
-        let text = onetui_core::diagnostic(anyhow!("{error}: {reason}"), &secrets).to_string();
-        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+        let mut text = onetui_core::diagnostic(anyhow!("{error}: {reason}"), &secrets).to_string();
+        if text.len() > NATIVE_ERROR_BYTES {
+            text.truncate(text.floor_char_boundary(NATIVE_ERROR_BYTES - 3));
+            text.push_str("...");
+        }
+        let errors = self.errors.lock().unwrap_or_else(|e| e.into_inner());
+        let mut errors = errors.lock().unwrap_or_else(|e| e.into_inner());
+        if !errors.contains(&text) {
+            if errors.len() == NATIVE_ERROR_COUNT {
+                errors.remove(0);
+            }
+            errors.push(text);
+        }
         self.status.send_replace(ConnectionStatus::Disconnected);
     }
 }
 impl ConsumerContext for NativeContext {}
+
+fn request_error(error: anyhow::Error, errors: &StdMutex<Vec<String>>) -> anyhow::Error {
+    let errors = errors.lock().unwrap_or_else(|e| e.into_inner());
+    if errors.is_empty() {
+        error
+    } else {
+        error.context(errors.join("; "))
+    }
+}
 
 impl KafkaExecutor {
     async fn execute(&self, operation: Operation, mut context: RequestContext) -> Result<Response> {
@@ -154,7 +177,6 @@ impl KafkaExecutor {
                     let _permit = permit;
                     let mut client = None;
                     let mut decoders = crate::decoding::Bindings::new(bindings);
-                    let last_error = Arc::new(StdMutex::new(None));
                     while let Ok(job) = receive.recv() {
                         let result = (|| {
                             job.remaining()?;
@@ -166,12 +188,18 @@ impl KafkaExecutor {
                                 client = Some(config.create_with_context::<_, BaseConsumer<_>>(
                                     NativeContext {
                                         status: status.clone(),
-                                        last_error: last_error.clone(),
+                                        errors: StdMutex::new(job.errors.clone()),
                                         secrets: secrets.clone(),
                                     },
                                 )?);
                             }
-                            *last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                            *client
+                                .as_ref()
+                                .unwrap()
+                                .context()
+                                .errors
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner()) = job.errors.clone();
                             let topic = match &job.operation {
                                 Operation::Page(request) | Operation::Follow(request) => {
                                     request.resource.path.first()
@@ -207,11 +235,7 @@ impl KafkaExecutor {
                             result
                         })();
                         let result = result.map_err(|error| {
-                            let error =
-                                match last_error.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                                    Some(native) => error.context(native),
-                                    None => error,
-                                };
+                            let error = request_error(error, &job.errors);
                             onetui_core::diagnostic(
                                 error,
                                 &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -237,6 +261,9 @@ impl KafkaExecutor {
             });
         }
         let (reply, receive) = oneshot::channel();
+        // Foreground deadlines can win the race with native cleanup. Keep this request's
+        // diagnostics separately so neither timeout nor the next request replaces them.
+        let errors = Arc::new(StdMutex::new(Vec::new()));
         owner
             .as_ref()
             .unwrap()
@@ -245,11 +272,13 @@ impl KafkaExecutor {
                 operation,
                 deadline: context.deadline,
                 reply,
+                errors: errors.clone(),
             })
             .map_err(|_| anyhow!("Kafka native worker is busy or stopped"))?;
         context
             .run(receive)
-            .await?
+            .await
+            .map_err(|error| request_error(error, &errors))?
             .map_err(|_| anyhow!("Kafka native worker stopped"))?
     }
 }
@@ -682,6 +711,44 @@ mod tests {
     use onetui_core::{Resource, Value};
     use rdkafka::mocking::MockCluster;
     use rdkafka::producer::{BaseProducer, BaseRecord, Producer};
+
+    #[tokio::test]
+    async fn foreground_timeout_keeps_bounded_native_errors_for_its_own_request() {
+        let first = Arc::new(StdMutex::new(Vec::new()));
+        let native = NativeContext {
+            status: watch::channel(ConnectionStatus::Connected).0,
+            errors: StdMutex::new(first.clone()),
+            secrets: vec!["fixture-secret".into()],
+        };
+        let error = KafkaError::Global(RDKafkaErrorCode::BrokerTransportFailure);
+        native.error(error.clone(), "TLS alert fixture-secret\x1b[31m");
+        native.error(error.clone(), "IPv6 connection refused");
+        let (_cancel, mut context) = RequestContext::new(Duration::from_millis(1));
+        let timeout = context.run(std::future::pending::<()>()).await.unwrap_err();
+        let diagnostic = format!("{:#}", request_error(timeout, &first));
+        assert!(diagnostic.contains("TLS alert"));
+        assert!(diagnostic.contains("IPv6 connection refused"));
+        assert!(diagnostic.contains("timed out"));
+        assert!(!diagnostic.contains("fixture-secret"));
+        assert!(!diagnostic.contains('\x1b'));
+        let second = Arc::new(StdMutex::new(Vec::new()));
+        *native.errors.lock().unwrap() = second.clone();
+        assert_eq!(
+            request_error(anyhow!("Request timed out"), &second).to_string(),
+            "Request timed out"
+        );
+        for n in 0..10 {
+            native.error(error.clone(), &format!("{n}: {}", "界".repeat(1000)));
+        }
+        let errors = second.lock().unwrap();
+        assert_eq!(errors.len(), 4);
+        assert!(
+            errors
+                .iter()
+                .all(|text| text.len() <= 2048 && text.ends_with("..."))
+        );
+        assert_eq!(first.lock().unwrap().len(), 2);
+    }
 
     async fn fetch(
         executor: &KafkaExecutor,

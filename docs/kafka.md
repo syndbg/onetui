@@ -36,14 +36,16 @@ password_env = "ONETUI_KAFKA_PASSWORD"
 ca_file = "/absolute/path/to/kafka-ca.pem"
 ```
 
-| Setting | Purpose, values and default |
-| --- | --- |
-| `kind` | Required string, exactly `kafka`. |
-| `bootstrap_servers` | Required array of 1..32 `host:port` strings, each at most 255 bytes. IPv6 addresses use brackets. No URL scheme, credentials, path, query or fragment. Empty arrays and zero/missing ports are rejected. |
-| `security_protocol` | `SSL` (default), `SASL_SSL`, or `PLAINTEXT`. TLS verifies certificates and hostnames. Plaintext is restricted to loopback bootstrap addresses for local development. |
-| `ca_file` | Optional absolute path, at most 4096 bytes, to a CA bundle. No `~` or environment expansion; relative and empty paths are rejected. Omission uses librdkafka/OpenSSL trust discovery, which is not the same as the other connectors' Rustls trust lookup. Not allowed with `PLAINTEXT`. File access occurs on the first native request, not during offline schema/config validation. |
-| `sasl_mechanism` | Required for `SASL_SSL`: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`. Must be omitted otherwise. |
-| `username_env`, `password_env` | Required for `SASL_SSL`. Nonempty environment-variable references containing ASCII letters, digits, underscores or hyphens. Both must be omitted otherwise. Only the selected alias resolves secrets. Missing, empty or NUL-containing credentials fail; values are never saved to the config file. |
+For mTLS, use `SSL` and configure both PEM files. These settings also work with `SASL_SSL`:
+
+```toml
+client_cert_file = "/absolute/path/to/client.pem"
+client_key_file = "/absolute/path/to/client-key.pem"
+# Only for an encrypted key:
+client_key_password_env = "ONETUI_KAFKA_KEY_PASSWORD"
+```
+
+Restrict private-key file permissions. Files are read on the first native request; passwords resolve only for the selected alias. Certificate and hostname verification remain enabled. Omitting `ca_file` uses librdkafka/OpenSSL trust discovery. Paths must be absolute; `~` and environment expansion are not supported. Use the schema command above for all accepted values and defaults.
 
 Unknown settings are rejected. Broker metadata can advertise endpoints other than the bootstrap addresses; those addresses must be reachable from the machine running OneTUI. The plaintext bootstrap restriction is not an outbound network allowlist. Prefer TLS for all non-disposable environments. Broker ACLs remain the authorization boundary.
 
@@ -74,12 +76,6 @@ Choose Groups → a group → Offsets to inspect `kafka.offsets`. It lists store
 | `status` | `within window`, `no commit`, `before retained start`, or `beyond stable end`. The last three have null lag; OneTUI does not clamp invalid positions to zero. |
 
 Offsets require group `Describe`; watermarks also require topic `Describe`. An authorization or partition error fails the request and retains the previous page. Each page re-reads offsets and fetches watermarks only for its displayed partitions, under the normal request deadline. These independent reads are not a snapshot and can race with commits, retention and transactions. Results sort by topic and partition; configuration sorts by name. `n/p` uses session/resource-bound bookmarks, with the usual 100-row and 1 MiB page limits and 4 MiB native-array conversion limit.
-
-These views use the existing connection and add no `onetui.toml` settings or CLI options. Dump their descriptors with:
-
-```sh
-onetui schema --datasource kafka
-```
 
 ### Browse or follow a whole topic
 
@@ -273,17 +269,6 @@ Retention invalidation, a backwards-moving boundary, an oversized value, authent
 
 Following adds no `onetui.toml` settings. The existing request timeout applies to each batch. `onetui schema --datasource kafka` lists `follow_page`, its resource and fixed limits; `onetui schema` lists the `follow` action. See [ADR-0007](adr/0007-follow-live-records-in-bounded-batches.md).
 
-For local traffic, run these in separate terminals:
+For sample arrivals, use [Kafka traffic](../hack/README.md#kafka-traffic).
 
-```sh
-make dev-up
-make dev-traffic
-```
-
-```sh
-make run
-```
-
-Choose `local_kafka`, Topics, `demo_live`, Partitions, partition `0`, then press `f`. The producer sends its first record immediately and another every 15 seconds until Ctrl-C. It creates `demo_live` if absent, preserves existing records and never modifies the fixed demo datasets. Details and a finite-run command are in the [hack guide](../hack/README.md#kafka-traffic).
-
-SQL, publishing from the app, consumer-group administration, mutual TLS, broker OAuth and GSSAPI are not exposed. Client support for these features does not imply OneTUI support.
+SQL, publishing from the app, consumer-group administration, broker OAuth and GSSAPI are not exposed.

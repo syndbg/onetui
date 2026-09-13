@@ -22,6 +22,8 @@ mod decoding_protobuf;
 mod demo_avro;
 #[path = "fixtures/demo_protobuf.rs"]
 mod demo_protobuf;
+#[path = "fixtures/mtls.rs"]
+mod mtls;
 #[path = "fixtures/redpanda.rs"]
 mod redpanda;
 #[path = "fixtures/registry_avro.rs"]
