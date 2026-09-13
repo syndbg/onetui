@@ -1,6 +1,6 @@
-# NATS JetStream
+# NATS
 
-Browse streams, read their configuration/state, page through stored messages and follow new messages. Core NATS subscriptions, consumer administration, KV/object-store views, publishing and native queries are not implemented. DynamoDB remains planned.
+Browse JetStream messages, consumer state, KV entries and objects, or subscribe to Core subjects. No publishing, consumer creation or ACKs.
 
 ## Configuration
 
@@ -14,6 +14,7 @@ kind = "nats"
 servers = ["tls://nats.example.net:4222"]
 username_env = "NATS_USERNAME"
 password_env = "NATS_PASSWORD"
+subjects = ["demo.live", "orders.*"]
 # ca_file = "/absolute/path/to/ca.pem"
 ```
 
@@ -28,33 +29,59 @@ onetui schema --datasource nats
 | Setting | Purpose, accepted values and default |
 | --- | --- |
 | `kind` | Required string, exactly `"nats"`. |
+| `jetstream` | Boolean, default `true`. Set `false` for Core-only servers; `--check` then tests the connection without requesting JetStream metadata. |
+| `subjects` | Core subscription choices, default `[]`. At most 32 unique subjects of 1..1024 bytes, without whitespace, controls or empty dot-separated tokens. `*` matches one token; `>` must be the final token. |
 | `servers` | Required array of 1–32 explicit `nats://host:port` or `tls://host:port` URLs, at most 1,024 bytes each. Port must be nonzero. No embedded credentials, query, fragment or non-root path. No default server; advertised cluster addresses are ignored. |
 | `tls` | Boolean, default `true`: certificate and hostname verification required, including for `nats://` URLs. `false` permits only loopback `nats://` endpoints for local development. No downgrade fallback. |
 | `ca_file` | Optional absolute PEM path, at most 4,096 bytes; regular file at most 1 MiB. Requires TLS. The bundle replaces native trust roots; omission uses the SDK's native-root loader. Read on connection, not during offline validation. |
 | `token_env` | Optional environment-variable name containing a token; cannot be combined with username/password references. |
 | `username_env`, `password_env` | Optional paired environment-variable names. Both must be supplied, or both omitted. |
+| `nkey_env` | Environment reference for the user NKEY seed; native nonce signing. |
+| `credentials_env` | Environment reference for complete standard `.creds` text (user JWT and NKEY seed), at most 64 KiB; multiline allowed. |
+| `cert_file`, `key_file` | Paired absolute PEM paths for mTLS, each at most 1 MiB. Requires TLS; private key must be unencrypted. |
+| `tls_first` | Boolean, default `false`. Handshake before server INFO; requires TLS and a compatible server. |
+| `domain` | JetStream domain, 1–255 ASCII letters, digits, underscores or hyphens. Omitted uses `$JS.API`; set uses `$JS.<domain>.API`. Requires `jetstream = true`. |
 
-Omitted authentication fields send no credentials. References use nonempty ASCII letters, digits, underscores or hyphens; the selected alias alone resolves them. Referenced secrets must be present, nonblank Unicode, contain no control characters and be at most 65,536 bytes. Unknown fields, invalid types, empty URLs/reference names and incompatible options fail validation even on unselected aliases. No URL/path environment expansion, config merging or automatic file writes. Existing connection kinds need no migration.
+Omitted authentication fields send no credentials. References use nonempty ASCII letters, digits, underscores or hyphens; the selected alias alone resolves them. Referenced secrets must be present, nonblank Unicode and at most 65,536 bytes. Controls are rejected except line breaks and tabs in `.creds` text. Unknown fields, invalid types, empty URLs/reference names and incompatible options fail validation even on unselected aliases. No URL/path environment expansion, config merging or automatic file writes. Existing connection kinds need no migration.
 
-NKEY/JWT credentials, client TLS certificates and custom JetStream domain/API prefixes are not supported.
+Choose one authentication mode: token, username/password, NKEY, or JWT credentials. Supply standard `.creds` contents through your secret manager's environment injection. Authentication secrets are captured when selecting the connection; reselect after rotation. Arbitrary API prefixes and encrypted private keys are unsupported.
 
 ## Browsing and following
 
 | View | How to open it | Contents |
 | --- | --- | --- |
-| `nats.streams` | Choose the connection | Name, configured subjects, message/byte counts and consumer count. |
+| `nats.resources` | Choose the connection | Streams, consumers, KV buckets, object buckets and configured Core subjects. |
+| `nats.streams` | Open Streams | Name, configured subjects, message/byte counts and consumer count. |
+| `nats.subjects` | Open Subjects | Configured subjects; does not subscribe yet. |
+| `nats.core_messages` | Open a subject, then press `f` | Future payloads, subject, reply address, header values and status. |
 | `nats.messages` | Enter on a stream | Stream sequence, subject, stored RFC3339 time, data bytes and original header-block bytes. |
 | `nats.stream_info` | `m` / `:columns` on a stream or message view | Complete returned stream configuration/state as JSON. The shared metadata action is named `columns`; NATS has no SQL columns. |
+| `nats.consumers`, `nats.consumer_info` | Consumers → stream → consumer | Pending, ACK-pending, redelivery and delivery positions; full configuration/state on Enter. |
+| `nats.kv_keys`, `nats.kv_history` | KV → bucket → key | Retained revisions, including delete/purge headers. `f` watches future revisions; `m` reads the latest entry. |
+| `nats.objects` | Objects → bucket | Object names, including deleted entries whose metadata remains. |
+| `nats.object_info`, `nats.object_chunks` | Object → Metadata or Contents | Full metadata, or lazily fetched original chunk bytes. |
+
+KV history is limited by the bucket's retention. Object contents stay chunked: page through them without assembling the whole object in memory. Bookmarks reject changed object versions; completed reads check byte/chunk counts, not the digest. Links remain visible in metadata but are not followed automatically. Bucket/key/object listings can shift while paginating.
 
 Enter on a message lists every field; select a field and Enter for full-value inspection. Auto shows valid UTF-8 text/JSON and falls back to hex otherwise. Empty payloads are empty bytes, absent headers are null, and duplicate header lines remain intact. Use `v` for explicit text/JSON/hex/binary and the shared pretty-print, highlighting, wrapping and Unicode controls.
 
 `n/p` pages forward/back, including refetching bookmarks beyond the three-page cache. `r` refreshes from the current retained beginning. `/` filters the displayed page as you type; `s` sorts it lexically. Neither performs a server-side query. Byte-field filtering uses the stable hexadecimal projection, regardless of display format.
 
-Press `f` / `:follow` in a message view to start after the stream's current last sequence. The TUI polls once per second, retaining at most 100 messages / 1 MiB and reporting locally evicted rows. `f`, Ctrl-C, navigation, inspection or an error stops following and retains the window. Restart captures a new current end; it does not resume missed history. `r` returns to historical browsing.
+Press `f` / `:follow` in a JetStream message view to start after the stream's current last sequence. The TUI polls once per second, retaining at most 100 messages / 1 MiB and reporting locally evicted rows. `f`, Ctrl-C, navigation, inspection or an error stops following and retains the window. Restart captures a new current end; it does not resume missed history. `r` returns to historical browsing.
 
 Messages are fetched in stream-sequence order. Historical pages retain an upper sequence boundary, but are independent reads, not a snapshot. The server skips deleted sequences. Retention or stream recreation can invalidate bookmarks; refresh rather than silently starting elsewhere. Stream listings use server offset pagination and can shift under concurrent changes.
 
 ## Permissions, lifetime and limits
+
+On a stream or message view, `e` / `:query` opens replay JSON above the results. Enter/F5 executes; Shift-Enter adds a line. For example:
+
+```json
+{"subject":"orders.*","start_sequence":1,"end_sequence":500}
+```
+
+`subject` defaults to `>`; `start_sequence` is inclusive and `end_sequence` exclusive. Omitted bounds use the retained beginning and captured end. Use `start_time` (RFC3339) instead of `start_sequence` to filter by stored timestamp. Time replay scans at most 100 subject-matching messages per page, so an empty page can still have a next page. Bookmarks bind the query and stream version. This does not create consumers or modify stream configuration.
+
+Core subscriptions require subscribe permission on the selected subject. They use no queue group and never answer reply addresses. Stopping follow, inspecting a value or navigating away unsubscribes and discards queued arrivals. The SDK queue holds 16 messages; overflow or disconnect stops following with a loss warning. Core has no replay: stopped or disconnected messages cannot be recovered. Header values come from the SDK, not the original wire header block.
 
 `--check` reads JetStream account metadata. Browsing needs permission to publish only these API requests, plus subscribe to private `_INBOX.>` replies:
 
@@ -63,9 +90,13 @@ $JS.API.INFO
 $JS.API.STREAM.LIST
 $JS.API.STREAM.INFO.<stream>
 $JS.API.STREAM.MSG.GET.<stream>
+$JS.API.CONSUMER.LIST.<stream>
+$JS.API.CONSUMER.INFO.<stream>.<consumer>
 ```
 
 Scope stream subjects to the streams the user may inspect. The app does not create/pull consumers, ACK, delete messages or publish application data. The [decision record](adr/0009-browse-nats-jetstream-without-consumers.md) explains why it uses stream reads instead of consumers.
+
+Domain requests use `$JS.<domain>.API`; the server can map them to `$JS.API` before checking permissions. Match permissions to the routed subjects, as in the local secure fixture.
 
 The selected alias owns one lazy `async-nats` client. Native PING/PONG uses a 15-second interval. Consecutive reconnect attempts are capped at the configured server count; each TCP connection attempt has a one-second timeout. Failed/cancelled reads discard the client; later requests connect again. Request deadlines cover connection, locks and all page reads; `--timeout` defaults to five seconds (1–300). Alias changes and quit drain within the shell's shutdown deadline. There is no background application heartbeat or consumer task.
 
@@ -73,12 +104,38 @@ Each page has at most 100 rows and 1 MiB retained data. Each API response is rej
 
 Native server error JSON, codes, descriptions and SDK error causes are preserved. Configured secrets are redacted and terminal controls escaped. Validation, cancellation and limit errors remain local messages.
 
+## Payload decoding
+
+Bindings match exact subjects, not subscription wildcards. They add `data_decoded`, `data_schema`, `data_decode_error`, `data_native` and `data_native_error`; raw `data` stays unchanged. JSON and native inspection can fail independently. Avro union branches and Protobuf unknown fields remain available in native inspection.
+
+```toml
+[[connections.events.decoders]]
+subject = "orders.created"
+format = "avro"
+schema_file = "/absolute/path/event.avsc"
+# reader_schema_file = "/absolute/path/reader.avsc"
+
+[[connections.events.decoders]]
+subject = "orders.updated"
+format = "protobuf"
+schema_file = "/absolute/path/event.pb"
+message_name = "demo.Event"
+```
+
+Use self-contained Avro schemas or a binary Protobuf `FileDescriptorSet` including imports. These bindings decode raw messages; registry envelopes, catalogs and Buf discovery are not supported for NATS yet. `--check` loads every configured schema. Browsing loads on first use and keeps failures visible beside the raw value; reselect the connection after changing schema files.
+
+At most 32 bindings, 256 KiB per schema, 64 KiB per decoded payload/preview. Oversized previews become per-message errors rather than removing records. Parsing runs outside the TUI, with bounded workers and cancellation/deadline checks.
+
 ## Local demo
 
 ```sh
 make dev-up
-make run                 # choose local_nats, then DEMO_EVENTS or DEMO_LIVE
+make run                 # local_nats → Streams → DEMO_EVENTS or DEMO_LIVE
 make dev-traffic         # separate terminal; Kafka, Redpanda and NATS, every 15 seconds
 ```
 
 Open `DEMO_LIVE` and press `f` to follow future arrivals. See [fixture setup](../hack/README.md#nats-traffic) for the finite simulator and dataset inventory. The simulator writes only disposable fixture data; it is not an app publishing feature.
+
+`KV → DEMO_SETTINGS` includes 125 service keys, retained history, binary/empty values and delete/purge markers. `Objects → DEMO_FILES` has 110 JSON objects, a multi-page binary object, empty and deleted objects. `Consumers → DEMO_EVENTS → demo_reader` shows an unconsumed durable's pending state.
+
+`DEMO_AVRO` and `DEMO_PROTOBUF` each contain 250 schema-bound messages with Unicode and binary fields. `make run` prepares their local schema files and config paths.

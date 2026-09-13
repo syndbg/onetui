@@ -14,7 +14,11 @@ fn prepare() -> anyhow::Result<()> {
     std::fs::create_dir_all(&directory)?;
     fixture::prepare(&directory)?;
     protobuf::prepare(&directory)?;
-    let mut config: toml::Value = toml::from_str(include_str!("../../../hack/connections.toml"))?;
+    let source = include_str!("../../../hack/connections.toml").replace(
+        "/ONETUI_DEMO_TARGET_DIR",
+        root.join("target").to_str().unwrap(),
+    );
+    let mut config: toml::Value = toml::from_str(&source)?;
     for binding in config["connections"]["local_redpanda"]["decoders"]
         .as_array_mut()
         .unwrap()

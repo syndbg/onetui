@@ -62,7 +62,19 @@ catalog = { directory = "/generated/by/make", schema = "protobuf_event" }
 
 [connections.local_nats]
 kind = "nats"
+subjects = ["demo.live", "demo.*"]
 servers = ["nats://127.0.0.1:14222"]
 tls = false
 username_env = "ONETUI_NATS_USERNAME"
 password_env = "ONETUI_NATS_PASSWORD"
+
+[[connections.local_nats.decoders]]
+subject = "demo.avro"
+format = "avro"
+schema_file = "/ONETUI_DEMO_TARGET_DIR/nats-schemas/nats-event.avsc"
+
+[[connections.local_nats.decoders]]
+subject = "demo.protobuf"
+format = "protobuf"
+schema_file = "/ONETUI_DEMO_TARGET_DIR/nats-schemas/nats-event.pb"
+message_name = "demo.Event"

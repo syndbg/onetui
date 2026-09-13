@@ -27,12 +27,13 @@ static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 static NATIVE_OWNER: Semaphore = Semaphore::const_new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
-    follow_resource: Some("kafka.records"),
+    follow_resources: &["kafka.records"],
     query: Some(QueryDescriptor {
         resource: "kafka.query",
         language: "Kafka replay JSON",
         example: "{}",
         path_depth: 2,
+        scope_resources: &[],
     }),
     kind: "kafka",
     entry_resource: Some("kafka.resources"),

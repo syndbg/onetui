@@ -485,7 +485,7 @@ impl App {
                         .as_deref()
                         .and_then(|alias| self.config.descriptor(alias))
                         .is_some_and(|provider| {
-                            provider.follow_resource == Some(self.view.resource.id)
+                            provider.follow_resources.contains(&self.view.resource.id)
                         })
             }
             Action::Query => !loading && self.query_target().is_some(),
@@ -560,21 +560,22 @@ impl App {
 
     fn query_target(&self) -> Option<Resource> {
         let descriptor = self.query_descriptor()?;
-        let path = if self.view.resource.path.len() >= descriptor.path_depth {
-            &self.view.resource.path
+        let resource = if descriptor.accepts(&self.view.resource) {
+            &self.view.resource
         } else {
-            &self
-                .view
+            self.view
                 .page
                 .rows
                 .get(self.view.selected_index()?)?
                 .target
                 .as_ref()?
-                .path
         };
+        if !descriptor.accepts(resource) {
+            return None;
+        }
         Some(Resource::new(
             descriptor.resource,
-            path.get(..descriptor.path_depth)?.to_vec(),
+            resource.path.get(..descriptor.path_depth)?.to_vec(),
         ))
     }
 

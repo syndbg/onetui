@@ -10,7 +10,7 @@ use crate::catalog::ResourceDescriptor;
 use crate::{Page, Resource};
 
 pub struct ProviderDescriptor {
-    pub follow_resource: Option<&'static str>,
+    pub follow_resources: &'static [&'static str],
     pub query: Option<QueryDescriptor>,
     pub kind: &'static str,
     pub entry_resource: Option<&'static str>,
@@ -27,7 +27,7 @@ impl ProviderDescriptor {
     pub fn capabilities(&self) -> serde_json::Value {
         let mut value = (self.documentation)();
         value["query"] = serde_json::to_value(self.query).expect("query descriptor");
-        value["follow_resource"] = serde_json::json!(self.follow_resource);
+        value["follow_resources"] = serde_json::json!(self.follow_resources);
         if self.query.is_some() {
             value["query_max_bytes"] = QUERY_BYTES.into();
         }
@@ -53,6 +53,10 @@ pub trait Provider: Send + Sync {
 /// Native failures retain backend codes/messages and underlying transport causes.
 /// Executors redact known connection secrets and escape controls before returning diagnostics.
 pub trait Executor: Send + Sync {
+    /// Release live subscriptions when following stops, including between batches.
+    fn stop_follow(&self, _context: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
+        async { Ok(()) }
+    }
     /// One bounded live batch. No cursor starts at the current end; even an empty
     /// batch returns a cursor. Cancellation/error must not advance the caller's cursor.
     fn follow_page(
@@ -107,6 +111,15 @@ pub struct QueryDescriptor {
     pub example: &'static str,
     /// Number of current resource path components needed to scope a query.
     pub path_depth: usize,
+    /// Resource paths that can supply this query's scope; empty permits every resource.
+    pub scope_resources: &'static [&'static str],
+}
+
+impl QueryDescriptor {
+    pub fn accepts(&self, resource: &Resource) -> bool {
+        resource.path.len() >= self.path_depth
+            && (self.scope_resources.is_empty() || self.scope_resources.contains(&resource.id))
+    }
 }
 
 pub struct QueryRequest {
@@ -205,8 +218,9 @@ pub fn validate_catalog<P: Provider>(catalog: &[P]) -> Result<()> {
         );
         ensure!(
             descriptor
-                .follow_resource
-                .is_none_or(|id| descriptor.resource(id).is_some_and(|r| r.paging)),
+                .follow_resources
+                .iter()
+                .all(|id| descriptor.resource(id).is_some_and(|r| r.paging)),
             "invalid provider follow resource"
         );
         ensure!(
@@ -214,7 +228,10 @@ pub fn validate_catalog<P: Provider>(catalog: &[P]) -> Result<()> {
                 .resource(q.resource)
                 .is_some_and(|r| r.paging)
                 && !q.example.is_empty()
-                && q.example.len() <= QUERY_BYTES),
+                && q.example.len() <= QUERY_BYTES
+                && q.scope_resources
+                    .iter()
+                    .all(|id| descriptor.resource(id).is_some())),
             "invalid provider query descriptor"
         );
     }
@@ -225,6 +242,28 @@ pub fn validate_catalog<P: Provider>(catalog: &[P]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::test_provider::{CATALOG, FakeExecutor, FakeProvider};
+
+    #[test]
+    fn query_scope_checks_resource_kind_and_path_depth() {
+        let scoped = QueryDescriptor {
+            resource: "query",
+            language: "JSON",
+            example: "{}",
+            path_depth: 1,
+            scope_resources: &["messages"],
+        };
+        assert!(scoped.accepts(&Resource::new("messages", vec!["stream".into()])));
+        assert!(!scoped.accepts(&Resource::new("messages", vec![])));
+        assert!(!scoped.accepts(&Resource::new("objects", vec!["bucket".into()])));
+        assert!(
+            QueryDescriptor {
+                scope_resources: &[],
+                path_depth: 0,
+                ..scoped
+            }
+            .accepts(&Resource::new("root", vec![]))
+        );
+    }
 
     struct Declared(&'static ProviderDescriptor);
     impl Provider for Declared {
@@ -257,7 +296,7 @@ mod tests {
             actions: &[],
         };
         static DUPLICATE: ProviderDescriptor = ProviderDescriptor {
-            follow_resource: None,
+            follow_resources: &[],
             query: None,
             kind: "fake",
             entry_resource: None,
@@ -266,7 +305,7 @@ mod tests {
             documentation: || serde_json::json!({}),
         };
         static MISSING: ProviderDescriptor = ProviderDescriptor {
-            follow_resource: None,
+            follow_resources: &[],
             query: None,
             kind: "fake",
             entry_resource: Some("fake.missing"),

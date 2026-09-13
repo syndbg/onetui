@@ -18,12 +18,13 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 pub struct PostgresProvider;
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
-    follow_resource: None,
+    follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "postgres.query",
         language: "SQL",
         example: "SELECT 1 AS value",
         path_depth: 0,
+        scope_resources: &[],
     }),
     kind: "postgres",
     entry_resource: Some("postgres.schemas"),

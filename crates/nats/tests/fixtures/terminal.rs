@@ -207,6 +207,8 @@ fn actual_cli_nats_browsing_and_following() {
     );
     for alias in ["nats", "second"] {
         pty.open_filtered(alias);
+        pty.wait(&["nats.resources", "Streams"]);
+        pty.open_filtered("Streams");
         pty.wait(&["nats.streams", "DEMO_EVENTS"]);
         pty.open_filtered("DEMO_EVENTS");
         pty.wait(&["nats.messages", "100shown/100loaded", "Page1"]);
@@ -228,6 +230,8 @@ fn actual_cli_nats_browsing_and_following() {
         pty.wait(&["connections", "second"]);
     }
     pty.open_filtered("nats");
+    pty.wait(&["nats.resources", "Streams"]);
+    pty.open_filtered("Streams");
     pty.wait(&["nats.streams"]);
     pty.open_filtered("DEMO_LIVE");
     pty.wait(&["nats.messages", "Page1"]);
@@ -262,6 +266,57 @@ fn actual_cli_nats_browsing_and_following() {
         String::from_utf8_lossy(&produced.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&produced.stdout).lines().count(), 2);
+    assert!(
+        tcgetattr(&slave)
+            .unwrap()
+            .local_flags
+            .contains(LocalFlags::ICANON)
+    );
+    pty.send(b"\n");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "disposable Core subject; actual CLI subscribe, inspect, unsubscribe and terminal restoration"]
+async fn actual_cli_core_subscription_stops_when_inspecting() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let subject = format!("core.pty.{}", std::process::id());
+    let mut config = tempfile::NamedTempFile::new().unwrap();
+    write!(config, "[connections.core]\nkind='nats'\nservers=['nats://127.0.0.1:14222']\ntls=false\njetstream=false\nsubjects=['{subject}']\nusername_env='NATS_USER'\npassword_env='NATS_PASS'").unwrap();
+    let binary = std::env::var_os("ONETUI_TEST_BIN")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let mut command = Command::new("sh");
+    command.args(["-c", "\"$1\" --config \"$2\"; status=$?; printf '\\nONETUI_DONE\\n'; read -r finish; exit \"$status\"", "core-pty"])
+        .arg(binary).arg(config.path()).env("NATS_USER", "fixture-admin").env("NATS_PASS", "fixture-admin-only");
+    let (mut pty, slave) = Pty::spawn(command);
+    pty.wait(&["connections"]);
+    pty.open_filtered("core");
+    pty.wait(&["nats.resources", "Subjects"]);
+    pty.open_filtered("Subjects");
+    pty.wait(&["nats.subjects", &subject]);
+    pty.send(b"\r");
+    pty.wait(&["nats.core_messages", "0shown/0loaded"]);
+    assert_eq!(super::core::subscriptions(&subject), 0);
+    pty.send(b"f");
+    pty.wait(&["LIVE", "0retained"]);
+    assert_eq!(super::core::subscriptions(&subject), 1);
+    let admin = super::admin().await;
+    admin
+        .publish(subject.clone(), r#"{"event":"core-inspect"}"#.into())
+        .await
+        .unwrap();
+    admin.flush().await.unwrap();
+    pty.wait(&["LIVE", "1retained", "core-inspect"]);
+    pty.send(b"\r");
+    pty.wait(&["Rowdata", "Followingstopped", "data"]);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while super::core::subscriptions(&subject) != 0 {
+        assert!(Instant::now() < deadline, "inspect did not unsubscribe");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    pty.send(b"q");
+    pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
+    pty.wait_token("ONETUI_DONE", Duration::from_secs(3));
     assert!(
         tcgetattr(&slave)
             .unwrap()

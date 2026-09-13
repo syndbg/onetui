@@ -312,6 +312,9 @@ where
     let outcome = async {
         while !app.quit {
             if let Some(active) = &mut worker {
+                if !app.following {
+                    active.pause_follow();
+                }
                 if app.view.alias.as_deref() != Some(active.alias.as_str()) || app.session != active.session {
                     active.stop();
                 } else if active.request.as_ref().is_some_and(|request| request.id != app.generation) {

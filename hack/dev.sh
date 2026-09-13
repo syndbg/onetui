@@ -106,6 +106,7 @@ case "${1:-}" in
             exit 1
         fi
         cargo run -p onetui-kafka --example seed_redpanda --locked -- --prepare
+        cargo run -p onetui-nats --example seed_nats --locked -- --prepare
         ;;
     down|logs) ;;
     *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|traffic|traffic-kafka|traffic-nats|down|logs}\n' >&2; exit 2 ;;

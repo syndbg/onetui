@@ -1,29 +1,46 @@
 mod browse;
 mod config;
+mod core_subscription;
+mod decoding;
+mod metadata;
 mod provider;
+mod replay;
 pub use provider::{NatsExecutor, NatsProvider};
 
 fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "operations": ["check", "fetch_page", "follow_page"],
+        "operations": ["check", "fetch_page", "query_page", "follow_page", "stop_follow"],
+        "replay": {"resource": "nats.query", "path": ["stream"], "subject": "default >; native subject wildcard matching", "start_sequence": "optional positive inclusive sequence", "end_sequence": "optional positive exclusive sequence", "start_time": "optional RFC3339 timestamp, excludes start_sequence; bounded scan of at most 100 subject-matching messages per page; empty result pages can continue", "bookmarks": "bind query, executor and stream version; no consumer creation or ACKs"},
         "example_toml": "[connections.events]\nkind = 'nats'\nservers = ['tls://nats.example.net:4222']\nusername_env = 'NATS_USERNAME'\npassword_env = 'NATS_PASSWORD'\n",
-        "configuration_behavior": "Unknown fields, wrong types and invalid entries fail even on unselected aliases. No URL/path expansion. No credentials when authentication fields are omitted. Selected secret references must resolve to nonblank Unicode without controls, max 65536 bytes. Names use nonempty ASCII letters, digits, underscores or hyphens. ca_file replaces native roots.",
+        "configuration_behavior": "Unknown fields, wrong types and invalid entries fail even on unselected aliases. No URL/path expansion. No credentials when authentication fields are omitted. Selected secrets must be nonblank Unicode, max 65536 bytes; only credentials_env permits line breaks and tabs. Reference names use ASCII letters, digits, underscores or hyphens. Authentication modes are mutually exclusive. ca_file replaces native roots.",
         "session": "Lazy async-nats client retained for the selected alias; native PING/PONG every 15 seconds. Consecutive reconnect attempts capped at configured server count, TCP connection timeout 1 second. Failed/cancelled requests discard the client; later requests reconnect. Requests and shutdown are deadline bounded.",
         "limits": {"page_rows": 100, "page_bytes": 1048576, "response_bytes": 1048576, "client_queue": 16, "subscription_queue": 16, "rss_guarantee": false},
-        "paths": {"nats.streams": [], "nats.messages": ["stream"], "nats.stream_info": ["stream"]},
+        "paths": {"nats.resources": [], "nats.subjects": [], "nats.core_messages": ["configured subject"], "nats.streams": [], "nats.messages": ["stream"], "nats.query": ["stream"], "nats.stream_info": ["stream"], "nats.consumer_streams": [], "nats.consumers": ["stream"], "nats.consumer_info": ["stream", "consumer"], "nats.kv_buckets": [], "nats.kv_keys": ["bucket"], "nats.kv_history": ["bucket", "key"], "nats.kv_value": ["bucket", "key"], "nats.object_buckets": [], "nats.objects": ["bucket"], "nats.object": ["bucket", "name"], "nats.object_info": ["bucket", "name"], "nats.object_chunks": ["bucket", "name"]},
+        "inspection": "Consumer configuration, pending/ACK/redelivery state are read without consuming. KV keys expose retained revisions and native delete/purge headers; follow watches one key. Object metadata includes deleted entries and links. Contents are lazy original-byte chunks, pinned to metadata version; complete reads check size/chunk count but not digest. Object links are not followed automatically.",
+        "core_subscriptions": "Choose Subjects, open a configured subject, then press f. One subscription per selected connection, no queue group or reply publishing. Stop unsubscribes and discards queued messages; restart has no replay. Queue overflow or disconnect stops following with a loss warning. Core headers are SDK values, not original wire bytes.",
         "paging": "Stream names use server offset pagination. Messages use stream sequences and a captured last-sequence boundary; sparse sequences are skipped by the server. Bookmarks bind executor, resource, stream creation time and window. Reads are not snapshots; retention or stream replacement can invalidate positions.",
-        "values": "Message data and the original NATS header block are bytes; absent headers are null, empty payloads are empty bytes. Subject, sequence and stored timestamp are separate fields. No Protobuf/Avro decoding.",
+        "values": "Message data and the original JetStream NATS header block are bytes; absent headers are null, empty payloads are empty bytes. Subject, sequence and stored timestamp are separate fields. Exact-subject Avro/Protobuf bindings add JSON/native inspection, schema identity and per-message errors without replacing raw data.",
+        "decoding": {"framing": "raw only; no auto-detection or Confluent envelope stripping", "schema_bytes": 262144, "payload_bytes": 65536, "preview_bytes": 65536, "error_bytes": 512, "cache": "selected connection lifetime, including load failures; reselect after file changes", "execution": "bounded blocking parsing with at most two active tasks, deadline/cancellation checks; file reads reject non-regular files", "sources": "self-contained Avro writer and optional reader schema; binary Protobuf FileDescriptorSet including imports; registry/catalog/Buf discovery not yet supported for NATS"},
         "following": {"start": "after the selected stream's current last sequence", "poll_interval_ms": 1000, "buffer_rows": 100, "buffer_bytes": 1048576, "overflow": "oldest displayed rows evicted with visible count", "stop": "f, Ctrl-C, navigation, inspection or error; explicit restart captures a new current end"},
         "configuration": {
-            "kind": {"required": true, "values": ["nats"], "purpose": "Select the NATS JetStream connector"},
+            "kind": {"required": true, "values": ["nats"], "purpose": "Select the NATS connector"},
+            "jetstream": {"required": false, "default": true, "type": "boolean", "purpose": "Enable JetStream views and account validation; false allows Core-only servers"},
+            "subjects": {"required": false, "default": [], "type": "array of 0..32 unique subjects", "values": "1..1024 UTF-8 bytes each, no whitespace/controls or empty tokens; * matches one token, final > matches remaining tokens", "purpose": "Explicit Core subscription choices; never subscribed automatically"},
+            "decoders": {"required": false, "default": [], "type": "array of 0..32 unique exact-subject bindings", "fields": {"subject": "exact subject, no wildcards", "format": "avro or protobuf", "schema_file": "required absolute regular file, max 256 KiB; Avro JSON or Protobuf binary FileDescriptorSet", "reader_schema_file": "optional Avro reader JSON, same file limits", "message_name": "required exact full Protobuf message name, 1..1024 bytes; forbidden for Avro"}, "purpose": "Decode raw data bytes lazily; --check validates every binding; no effect on subscriptions or permissions"},
             "servers": {"required": true, "type": "array of 1..32 strings", "values": "nats://host:port or tls://host:port, max 1024 bytes each; no credentials or extra URL components", "purpose": "Explicit server allowlist; server-advertised addresses are ignored"},
             "tls": {"required": false, "default": true, "type": "boolean", "purpose": "Require verified TLS; false allows only loopback nats:// servers for development"},
             "ca_file": {"required": false, "default": "native trust roots", "type": "absolute PEM file path, max 4096 bytes; regular file max 1 MiB", "purpose": "Replace native trust roots with this CA bundle; requires TLS; read only when connecting"},
+            "cert_file": {"required": "with key_file", "type": "absolute PEM path; max 4096 bytes; regular file max 1 MiB", "purpose": "Client certificate chain for mutual TLS; requires TLS"},
+            "key_file": {"required": "with cert_file", "type": "absolute PEM path; max 4096 bytes; regular file max 1 MiB", "purpose": "Unencrypted client private key for mutual TLS; requires TLS"},
+            "tls_first": {"required": false, "default": false, "type": "boolean", "purpose": "Perform TLS handshake before receiving server INFO; requires TLS and compatible server"},
+            "nkey_env": {"required": false, "type": "environment variable name", "purpose": "NKEY user seed; native nonce signing; excludes other authentication modes"},
+            "credentials_env": {"required": false, "type": "environment variable name", "purpose": "Complete standard .creds text containing user JWT and NKEY seed, max 65536 bytes; multiline allowed; excludes other authentication modes"},
+            "domain": {"required": false, "default": "default $JS.API prefix", "type": "1..255 ASCII letters, digits, underscores or hyphens", "purpose": "Route JetStream requests to $JS.<domain>.API; requires jetstream=true"},
             "token_env": {"required": false, "type": "environment variable name", "purpose": "Token secret reference, resolved on selection; excludes username/password"},
             "username_env": {"required": "with password_env", "type": "environment variable name", "purpose": "Username reference, resolved on selection"},
             "password_env": {"required": "with username_env", "type": "environment variable name", "purpose": "Password reference, resolved on selection"}
         },
-        "permissions": "Publish only $JS.API.INFO, $JS.API.STREAM.LIST, $JS.API.STREAM.INFO.<stream>, $JS.API.STREAM.MSG.GET.<stream>; subscribe to private _INBOX replies. No application-subject publish, consumer creation, pull, ACK or delete permissions needed.",
-        "unsupported": ["Core NATS subscriptions", "consumer administration", "KV and object-store views", "native queries", "publishing", "NKEY/JWT credentials", "client TLS certificates", "custom JetStream domains/API prefixes"]
+        "permissions": "JetStream: publish only $JS.API.INFO, $JS.API.STREAM.LIST, $JS.API.STREAM.INFO.<stream>, $JS.API.STREAM.MSG.GET.<stream>, $JS.API.CONSUMER.LIST.<stream>, $JS.API.CONSUMER.INFO.<stream>.<consumer>; subscribe to private _INBOX replies. Core: subscribe only to the chosen configured subject. No application-subject publish, consumer creation, pull, ACK or delete permissions needed.",
+        "unsupported": ["consumer administration", "publishing", "arbitrary JetStream API prefixes", "encrypted client private keys"]
     })
 }

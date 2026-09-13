@@ -67,6 +67,14 @@ impl Provider for BuiltinProvider {
 }
 
 impl Executor for BuiltinExecutor {
+    async fn stop_follow(&self, context: ShutdownContext) -> Result<()> {
+        match self {
+            Self::Postgres(e) => e.stop_follow(context).await,
+            Self::Qdrant(e) => e.stop_follow(context).await,
+            Self::Kafka(e) => e.stop_follow(context).await,
+            Self::Nats(e) => e.stop_follow(context).await,
+        }
+    }
     async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
         match self {
             Self::Postgres(e) => e.follow_page(request, context).await,
@@ -259,7 +267,7 @@ mod tests {
             Some("kafka.resources")
         );
         assert_eq!(provider.descriptor().query.unwrap().resource, "kafka.query");
-        assert_eq!(provider.descriptor().follow_resource, Some("kafka.records"));
+        assert_eq!(provider.descriptor().follow_resources, &["kafka.records"]);
         let mut executor = provider
             .configure(&options, &|_| panic!("no secret configured"))
             .unwrap();

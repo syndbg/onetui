@@ -1,16 +1,33 @@
 use std::process::Command;
 
 #[test]
-fn nats_catalog_is_offline_and_exposes_only_jetstream_read_operations() {
+fn nats_catalog_is_offline_and_exposes_read_operations() {
     let output = dump(&["--datasource", "nats"]);
     assert!(output.status.success());
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let nats = &schema["datasources"][0];
     assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
-    assert_eq!(nats["entry_resource"], "nats.streams");
-    assert_eq!(nats["follow_resource"], "nats.messages");
-    assert!(nats["query"].is_null());
-    assert_eq!(nats["resources"].as_array().unwrap().len(), 3);
+    assert_eq!(nats["entry_resource"], "nats.resources");
+    assert_eq!(
+        nats["follow_resources"],
+        serde_json::json!(["nats.messages", "nats.core_messages", "nats.kv_history"])
+    );
+    assert_eq!(nats["query"]["resource"], "nats.query");
+    assert_eq!(nats["resources"].as_array().unwrap().len(), 19);
+    for resource in nats["resources"].as_array().unwrap() {
+        assert!(nats["paths"][resource["id"].as_str().unwrap()].is_array());
+    }
+    assert_eq!(nats["configuration"]["tls_first"]["default"], false);
+    assert!(nats["configuration"]["credentials_env"].is_object());
+    assert_eq!(
+        nats["configuration"]["decoders"]["default"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        nats["configuration"]["subjects"]["default"],
+        serde_json::json!([])
+    );
+    assert_eq!(nats["configuration"]["jetstream"]["default"], true);
     assert_eq!(nats["configuration"]["tls"]["default"], true);
     assert_eq!(nats["limits"]["page_rows"], 100);
 }
@@ -232,7 +249,10 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
     assert_eq!(kafka["query"]["path_depth"], 2);
     assert_eq!(kafka["query_max_bytes"], 16384);
     assert!(kafka["replay"]["timestamp_ms"].is_string());
-    assert_eq!(kafka["follow_resource"], "kafka.records");
+    assert_eq!(
+        kafka["follow_resources"],
+        serde_json::json!(["kafka.records"])
+    );
     assert!(
         kafka["operations"]
             .as_array()

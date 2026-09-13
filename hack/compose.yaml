@@ -51,6 +51,29 @@ services:
       - "127.0.0.1:14223:4222"
     environment:
       ONETUI_NATS_TLS: "true"
+  nats-secure:
+    <<: *nats_fixture
+    ports:
+      - "127.0.0.1:14224:4222"
+    environment:
+      ONETUI_NATS_MTLS: "true"
+    volumes:
+      - ./fixtures/nats-secure.conf:/secure.conf:ro
+      - ./fixtures/nats-tls.sh:/nats-tls.sh:ro
+      - ./fixtures/nats-server.ext:/server.ext:ro
+      - ./fixtures/nats-client.ext:/client.ext:ro
+  nats-jwt:
+    <<: *nats_fixture
+    entrypoint: ["nats-server", "-c", "/jwt.conf"]
+    ports:
+      - "127.0.0.1:14225:4222"
+    volumes:
+      - ./fixtures/nats-jwt.conf:/jwt.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8222/healthz"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
   kafka:
     build:
       context: ./fixtures

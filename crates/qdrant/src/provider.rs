@@ -18,12 +18,13 @@ pub struct QdrantProvider;
 static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
-    follow_resource: None,
+    follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "qdrant.query",
         language: "Scroll JSON",
         example: "{\n  \"filter\": {\"must\": []},\n  \"limit\": 100\n}",
         path_depth: 1,
+        scope_resources: &[],
     }),
     kind: "qdrant",
     entry_resource: Some("qdrant.collections"),

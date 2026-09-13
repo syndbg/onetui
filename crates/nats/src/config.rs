@@ -9,9 +9,22 @@ pub(crate) struct Config {
     #[serde(default = "tls_default")]
     pub tls: bool,
     pub ca_file: Option<String>,
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
+    #[serde(default)]
+    pub tls_first: bool,
+    pub nkey_env: Option<String>,
+    pub credentials_env: Option<String>,
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub decoders: Vec<crate::decoding::Binding>,
     pub token_env: Option<String>,
     pub username_env: Option<String>,
     pub password_env: Option<String>,
+    #[serde(default)]
+    pub subjects: Vec<String>,
+    #[serde(default = "tls_default")]
+    pub jetstream: bool,
 }
 
 fn tls_default() -> bool {
@@ -24,6 +37,18 @@ impl Config {
             .clone()
             .try_into()
             .map_err(|_| anyhow!("Invalid NATS config; use schema for supported settings"))?;
+        crate::decoding::validate(&config.decoders)?;
+        ensure!(
+            config.subjects.len() <= 32,
+            "NATS supports at most 32 configured subjects"
+        );
+        for (index, subject) in config.subjects.iter().enumerate() {
+            crate::core_subscription::validate_subject(subject)?;
+            ensure!(
+                !config.subjects[..index].contains(subject),
+                "Duplicate NATS subject"
+            );
+        }
         ensure!(
             (1..=32).contains(&config.servers.len()),
             "NATS servers requires 1..32 URLs"
@@ -63,19 +88,38 @@ impl Config {
                 );
             }
         }
-        if let Some(path) = &config.ca_file {
+        for path in [&config.ca_file, &config.cert_file, &config.key_file]
+            .into_iter()
+            .flatten()
+        {
             ensure!(
                 config.tls
                     && path.len() <= 4096
                     && !path.contains('\0')
                     && std::path::Path::new(path).is_absolute(),
-                "NATS ca_file requires TLS and an absolute path"
+                "NATS certificate/key paths require TLS and an absolute path"
+            );
+        }
+        ensure!(
+            config.cert_file.is_some() == config.key_file.is_some(),
+            "NATS cert_file and key_file must be paired"
+        );
+        ensure!(
+            !config.tls_first || config.tls,
+            "NATS tls_first requires TLS"
+        );
+        if let Some(domain) = &config.domain {
+            ensure!(
+                config.jetstream && safe_name(domain) && domain.len() <= 255,
+                "NATS domain requires JetStream and 1..255 ASCII letters, digits, underscores or hyphens"
             );
         }
         for name in [
             &config.token_env,
             &config.username_env,
             &config.password_env,
+            &config.nkey_env,
+            &config.credentials_env,
         ]
         .into_iter()
         .flatten()
@@ -90,8 +134,17 @@ impl Config {
             "NATS username_env and password_env must be paired"
         );
         ensure!(
-            config.token_env.is_none() || config.username_env.is_none(),
-            "NATS token and username/password authentication are mutually exclusive"
+            [
+                &config.token_env,
+                &config.username_env,
+                &config.nkey_env,
+                &config.credentials_env
+            ]
+            .iter()
+            .filter(|v| v.is_some())
+            .count()
+                <= 1,
+            "NATS token, username/password, NKEY and JWT credentials are mutually exclusive"
         );
         Ok(config)
     }
@@ -110,6 +163,14 @@ impl Config {
             .subscription_capacity(16)
             .client_capacity(16);
         let mut secrets = Vec::new();
+        if self.tls_first {
+            options = options.tls_first();
+        }
+        if let Some(name) = &self.nkey_env {
+            let seed = secret(name, env)?;
+            options = options.nkey(seed.clone());
+            secrets.push(seed);
+        }
         if let Some(name) = &self.token_env {
             let token = secret(name, env)?;
             options = options.token(token.clone());
@@ -127,6 +188,31 @@ impl Config {
                 .all(|s| s.len() <= 65536 && !s.chars().any(char::is_control)),
             "Invalid NATS credential length or controls"
         );
+        if let Some(name) = &self.credentials_env {
+            let credentials = secret(name, env)?;
+            ensure!(
+                credentials.len() <= 65536
+                    && !credentials
+                        .chars()
+                        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')),
+                "Invalid NATS credentials length or controls"
+            );
+            // Native errors can mention one credential component, not the complete .creds document.
+            secrets.extend(
+                credentials
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty() && !line.starts_with('-'))
+                    .map(str::to_owned),
+            );
+            secrets.push(credentials.clone());
+            options = options.credentials(&credentials).map_err(|error| {
+                onetui_core::diagnostic(
+                    error.into(),
+                    &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+            })?;
+        }
         Ok((options, secrets))
     }
 }
@@ -157,6 +243,14 @@ mod tests {
             "servers=['nats://localhost:4222']\ntoken_env='X'\nusername_env='U'\npassword_env='P'",
             "servers=['nats://localhost:4222']\nca_file='relative'",
             "servers=['nats://localhost:4222']\npassword_env='P'",
+            "servers=['nats://localhost:4222']\nsubjects=['a.>.b']",
+            "servers=['nats://localhost:4222']\nsubjects=['a','a']",
+            "servers=['nats://localhost:4222']\njetstream='false'",
+            "servers=['nats://localhost:4222']\ncert_file='/tmp/cert'",
+            "servers=['nats://localhost:4222']\ntls=false\ntls_first=true",
+            "servers=['nats://localhost:4222']\ndomain='other.API'",
+            "servers=['nats://localhost:4222']\njetstream=false\ndomain='OTHER'",
+            "servers=['nats://localhost:4222']\nnkey_env='KEY'\ncredentials_env='CREDS'",
         ] {
             assert!(Config::parse(&toml::from_str(invalid).unwrap()).is_err());
         }
@@ -171,5 +265,14 @@ mod tests {
             ["fixture-only"]
         );
         assert!(config.options(&|_| Some("secret\ncontrol".into())).is_err());
+        let jwt = Config::parse(
+            &toml::from_str("servers=['tls://localhost:4222']\ncredentials_env='CREDS'").unwrap(),
+        )
+        .unwrap();
+        assert!(jwt.options(&|_| Some("x".repeat(65537))).is_err());
+        let creds = include_str!("../../../hack/fixtures/nats-test.creds");
+        let (_, secrets) = jwt.options(&|_| Some(creds.into())).unwrap();
+        assert!(secrets.iter().any(|s| s.starts_with("SUACH")));
+        assert!(secrets.iter().any(|s| s.starts_with("eyJ")));
     }
 }

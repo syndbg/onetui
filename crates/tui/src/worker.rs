@@ -27,6 +27,8 @@ pub(crate) struct Worker {
     commands: mpsc::Sender<(Request, RequestContext)>,
     cancel: Option<oneshot::Sender<()>>,
     stop: Option<oneshot::Sender<()>>,
+    pause: watch::Sender<u64>,
+    follow_active: bool,
 }
 
 impl Worker {
@@ -59,12 +61,19 @@ impl Worker {
         let (commands, mut input) = mpsc::channel::<(Request, RequestContext)>(1);
         let (output, results) = mpsc::channel(1);
         let (stop, mut stopped) = oneshot::channel();
+        let (pause, mut paused) = watch::channel(0u64);
         let status = executor.status();
         let task = tokio::spawn(async move {
             loop {
                 let (request, context) = tokio::select! {
                     biased;
                     _ = &mut stopped => break,
+                    _ = paused.changed() => {
+                        let context = ShutdownContext::new(Duration::from_secs(1));
+                        tokio::time::timeout_at(context.deadline, executor.stop_follow(context))
+                            .await.map_err(|_| anyhow!("live subscription shutdown timed out"))??;
+                        continue;
+                    },
                     next = input.recv() => match next { Some(next) => next, None => break },
                 };
                 let page = PageRequest {
@@ -101,6 +110,8 @@ impl Worker {
             commands,
             cancel: None,
             stop: Some(stop),
+            pause,
+            follow_active: false,
             closing: false,
             closing_deadline: None,
             status_open: true,
@@ -118,6 +129,7 @@ impl Worker {
             .try_send((request.clone(), context))
             .map_err(|_| anyhow!("browsing worker is unavailable"))?;
         self.cancel = Some(cancel);
+        self.follow_active |= request.follow;
         self.request = Some(request);
         Ok(())
     }
@@ -125,6 +137,14 @@ impl Worker {
     pub fn cancel(&mut self) {
         if let Some(cancel) = self.cancel.take() {
             let _ = cancel.send(());
+        }
+    }
+
+    pub fn pause_follow(&mut self) {
+        if self.follow_active {
+            self.follow_active = false;
+            self.cancel();
+            self.pause.send_modify(|generation| *generation += 1);
         }
     }
 
@@ -171,6 +191,13 @@ mod tests {
         }
     }
     impl Executor for Probe {
+        async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
+            self.fetch_page(request, context).await
+        }
+        async fn stop_follow(&self, _: ShutdownContext) -> Result<()> {
+            self.stopped.store(true, Ordering::SeqCst);
+            Ok(())
+        }
         fn status(&self) -> watch::Receiver<ConnectionStatus> {
             self.status.subscribe()
         }
@@ -265,6 +292,45 @@ mod tests {
         (&mut worker.task).await.unwrap().unwrap();
         assert!(stopped.load(Ordering::SeqCst));
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn stopping_between_batches_releases_subscription_without_closing_executor() {
+        let mut app = app();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let mut worker = Worker::new(
+            "a".into(),
+            app.session,
+            Probe {
+                calls: Arc::new(AtomicUsize::new(1)),
+                stopped: stopped.clone(),
+                dropped: dropped.clone(),
+                status: watch::channel(ConnectionStatus::Connected).0,
+            },
+        );
+        let mut request = app.request.take().unwrap();
+        request.follow = true;
+        worker
+            .submit(request.clone(), Duration::from_secs(2))
+            .unwrap();
+        page(&mut worker).await.unwrap();
+        worker.request.take();
+        assert!(!stopped.load(Ordering::SeqCst));
+        worker.pause_follow();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !stopped.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!dropped.load(Ordering::SeqCst));
+        request.follow = false;
+        worker.submit(request, Duration::from_secs(2)).unwrap();
+        page(&mut worker).await.unwrap();
+        worker.stop();
+        (&mut worker.task).await.unwrap().unwrap();
     }
 
     #[tokio::test]

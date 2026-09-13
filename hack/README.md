@@ -22,7 +22,7 @@ For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This de
 | `local_qdrant` | gRPC: `127.0.0.1:16334`; TLS fixture: `16335` |
 | `local_kafka` | Kafka: `127.0.0.1:19092`; TLS: `19093`; SASL/TLS: `19094`; mTLS: `19095`; OAuth: `19096`; GSSAPI: `19097`; KDC: `18888` (TCP/UDP) |
 | `local_redpanda` | Kafka: `127.0.0.1:29092`; Schema Registry: `http://127.0.0.1:18081` |
-| `local_nats` | NATS: `127.0.0.1:14222`; TLS fixture: `14223` |
+| `local_nats` | NATS: `127.0.0.1:14222`; TLS: `14223`; mTLS/NKEY/domain: `14224`; JWT Core: `14225` |
 
 TLS certificates expire after two days; recreate disposable fixtures when expired. The setup does not modify the host trust store. Remote Docker contexts are refused.
 
@@ -55,7 +55,7 @@ Choose `local_kafka` → `demo_live` → partition `0`, then `f`. Use `make dev-
 
 ### NATS traffic
 
-Choose `local_nats` → `DEMO_LIVE`, then `f`. Use `make dev-traffic-nats` for NATS alone.
+Choose `local_nats` → Streams → `DEMO_LIVE`, then `f`. For Core NATS, choose Subjects → `demo.live`, then `f`. Use `make dev-traffic-nats` for NATS alone.
 
 Following starts at the current end. `f` or Ctrl-C stops; navigation pauses it. Restarting follows new arrivals, not missed history.
 
@@ -66,7 +66,7 @@ Following starts at the current end. `f` or Ctrl-C stops; navigation pauses it. 
 | PostgreSQL | `demo` schema: customers, events, type samples and a 65-column table; 8,750 rows |
 | Qdrant | `demo_*` collections: 3,062 points with payloads, dense/sparse/multivectors and an empty collection |
 | Kafka | `demo_events`, `demo_binary`, `demo_tombstones`, `demo_empty` |
-| NATS | `DEMO_EVENTS`, `DEMO_BINARY`, `DEMO_WIDE`, `DEMO_EMPTY`, `DEMO_LIVE` |
+| NATS | `DEMO_EVENTS`, `DEMO_BINARY`, `DEMO_WIDE`, `DEMO_EMPTY`, `DEMO_LIVE`, schema-bound `DEMO_AVRO`/`DEMO_PROTOBUF`, KV `DEMO_SETTINGS`, objects `DEMO_FILES`, durable `demo_reader` |
 
 Use `make dev-seed` to seed existing fixtures without resetting them. Interrupted or changed datasets may need an explicit reset. Small `sample_rows` fixtures test NULL, empty text, Unicode and controls; use `demo` for realistic browsing volume.
 

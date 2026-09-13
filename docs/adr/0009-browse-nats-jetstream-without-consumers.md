@@ -7,7 +7,7 @@ date: 2026-09-10
 
 ## Decision
 
-Use the official `async-nats` client in `onetui-nats`, registered through the existing static provider enums. Start with JetStream streams, configuration/state, stored messages and live following. Reuse the shared table, value viewer, bookmarks and `follow_page` interface.
+Use the official `async-nats` client in `onetui-nats`, registered through the existing static provider enums. Reuse the shared table, value viewer, bookmarks and `follow_page` interface.
 
 Read stored messages through `$JS.API.STREAM.MSG.GET.<stream>`, using a sequence and `next_by_subj: ">"` to skip deleted messages. These reads do not create consumers or acknowledge messages. They also work without enabling direct access on a stream. The [JetStream API](https://docs.nats.io/reference/jetstream/api/) defines these management requests; the [Rust client's raw-message builder](https://docs.rs/async-nats/0.50.0/async_nats/jetstream/stream/struct.RawMessageBuilder.html) exposes the same sequence/subject selection.
 
@@ -24,4 +24,13 @@ Keep one lazy client per selected connection. Use native PING/PONG, bounded reco
 
 The app publishes read-only API requests and subscribes to private replies; it does not publish application data or send ACKs. Grant only the required API subjects and reply subscriptions. A page is not a snapshot, and restarting following does not recover messages missed while stopped.
 
-Protobuf/Avro decoding remains governed by [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
+Core subscriptions use explicit configured subjects and start only on `f`. Retain one bounded SDK subscription between batches, without a queue group. `stop_follow` unsubscribes and flushes before another read; errors or cancellation discard the session. Queue overflow and disconnection stop following with visible loss, including failures between polls. Core is [at-most-once](https://docs.nats.io/learn/core-nats/), so neither reconnect nor restart promises recovery. Disable JetStream checks for Core-only servers with `jetstream = false`. Core header fields expose SDK values rather than claiming to retain the original wire block.
+
+Inspect consumer configuration and counters with `CONSUMER.LIST/INFO`, never by pulling from the consumer. Read KV keys/revisions through their backing stream, retaining delete/purge headers. Read object metadata first, then fetch bounded chunks for that object version. Do not assemble whole objects or follow links implicitly; reject changed versions and incomplete chunk counts.
+
+Replay uses explicit subject and sequence bounds. Timestamp filtering scans bounded batches because leader `STREAM.MSG.GET` lacks a timestamp seek. Empty filtered pages can continue; neither enabling direct access nor creating an ordered consumer is required.
+
+Use native NKEY nonce signing, standard JWT credentials, verified mTLS and domain routing. Keep authentication modes mutually exclusive. Credentials come from explicit environment references; TLS files load only on connection. Authentication rotation requires reselecting the connection.
+
+Bind raw payload decoders to exact subjects. Reuse `onetui-avro` and `onetui-protobuf` for JSON/native inspection, preserve original bytes and report errors per message. Cache schemas for the selected connection and bound parsing outside the TUI. Registry/catalog/Buf resolution is not inherited from the Kafka connector; no dependency between datasource packages is introduced. [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the format boundary.
+

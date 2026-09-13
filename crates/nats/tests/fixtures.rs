@@ -10,6 +10,24 @@ use std::time::Duration;
 #[path = "fixtures/terminal.rs"]
 mod terminal;
 
+#[path = "fixtures/core.rs"]
+mod core;
+
+#[path = "fixtures/metadata.rs"]
+mod metadata;
+
+#[path = "fixtures/replay.rs"]
+mod replay;
+
+#[path = "fixtures/auth.rs"]
+mod auth;
+
+#[path = "fixtures/avro.rs"]
+mod avro;
+
+#[path = "fixtures/protobuf.rs"]
+mod protobuf;
+
 fn executor() -> NatsExecutor {
     configured(
         "servers=['nats://127.0.0.1:14222']\ntls=false",

@@ -8,9 +8,13 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-async-nats.workspace = true
+async-nats = { workspace = true, features = ["kv", "object-store", "nkeys"] }
 base64.workspace = true
+futures-util.workspace = true
 onetui-core = { path = "../core" }
+onetui-avro = { path = "../avro" }
+onetui-protobuf = { path = "../protobuf" }
+nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -18,5 +22,7 @@ toml.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+apache-avro = "0.22"
 tempfile.workspace = true
-nix.workspace = true
+prost = "0.14"
+prost-types = "0.14"
