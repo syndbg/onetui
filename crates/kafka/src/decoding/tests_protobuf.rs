@@ -55,6 +55,7 @@ fn protobuf_binding(catalog: bool) {
         message_name: Some("demo.Event".into()),
         registry: None,
         catalog: None,
+        buf: None,
     };
     if catalog {
         binding.schema_file = None;

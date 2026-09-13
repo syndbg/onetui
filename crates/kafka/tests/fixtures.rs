@@ -4,6 +4,8 @@ use onetui_core::provider::{
 use onetui_core::{Page, Resource, Value};
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
 use std::time::Duration;
+#[path = "support/registry.rs"]
+mod server;
 
 #[cfg(unix)]
 #[path = "fixtures/terminal.rs"]

@@ -58,6 +58,18 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    pub(crate) fn bearer(url: String, ca_file: Option<String>, token_env: Option<String>) -> Self {
+        Self {
+            url,
+            ca_file,
+            token_env,
+            username_env: None,
+            password_env: None,
+            authorization: None,
+            secrets: Vec::new(),
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         let url = url::Url::parse(&self.url)?;
         ensure!(
@@ -157,7 +169,29 @@ pub(crate) struct Registry {
 
 impl Registry {
     pub fn new(config: Config, format: Format) -> Result<Self> {
-        let roots = if let Some(path) = &config.ca_file {
+        let agent = config.agent()?;
+        Ok(Self {
+            config,
+            agent,
+            format,
+            cache: VecDeque::new(),
+        })
+    }
+
+    fn request(
+        &self,
+        segments: &[&str],
+        deadline: Instant,
+        remaining: &impl Fn() -> Result<()>,
+    ) -> Result<Vec<u8>> {
+        self.config
+            .request(&self.agent, segments, None, deadline, remaining)
+    }
+}
+
+impl Config {
+    pub(crate) fn agent(&self) -> Result<ureq::Agent> {
+        let roots = if let Some(path) = &self.ca_file {
             let pem = super::decoding::read_file(path, 1024 * 1024)?;
             let mut certs = Vec::new();
             for item in ureq::tls::parse_pem(&pem) {
@@ -183,17 +217,14 @@ impl Registry {
             .timeout_global(Some(Duration::from_secs(2)))
             .build()
             .into();
-        Ok(Self {
-            config,
-            agent,
-            format,
-            cache: VecDeque::new(),
-        })
+        Ok(agent)
     }
 
-    fn request(
+    pub(crate) fn request(
         &self,
+        agent: &ureq::Agent,
         segments: &[&str],
+        body: Option<&serde_json::Value>,
         deadline: Instant,
         remaining: &impl Fn() -> Result<()>,
     ) -> Result<Vec<u8>> {
@@ -201,21 +232,34 @@ impl Registry {
         let timeout = deadline
             .checked_duration_since(Instant::now())
             .ok_or_else(|| anyhow!("Registry resolution exceeded two seconds"))?;
-        let mut url = url::Url::parse(&self.config.url)?;
+        let mut url = url::Url::parse(&self.url)?;
         url.path_segments_mut()
             .map_err(|_| anyhow!("Invalid registry base URL"))?
             .pop_if_empty()
             .extend(segments);
-        let mut request = self
-            .agent
-            .get(url.as_str())
-            .config()
-            .timeout_global(Some(timeout))
-            .build();
-        if let Some(auth) = &self.config.authorization {
-            request = request.header("Authorization", auth);
-        }
-        let mut response = request.call()?;
+        let mut response = if let Some(body) = body {
+            let mut request = agent
+                .post(url.as_str())
+                .config()
+                .timeout_global(Some(timeout))
+                .build()
+                .header("Content-Type", "application/json")
+                .header("Connect-Protocol-Version", "1");
+            if let Some(auth) = &self.authorization {
+                request = request.header("Authorization", auth);
+            }
+            request.send(body.to_string())?
+        } else {
+            let mut request = agent
+                .get(url.as_str())
+                .config()
+                .timeout_global(Some(timeout))
+                .build();
+            if let Some(auth) = &self.authorization {
+                request = request.header("Authorization", auth);
+            }
+            request.call()?
+        };
         let status = response.status();
         let mut bytes = Vec::new();
         response
@@ -236,6 +280,16 @@ impl Registry {
         Ok(bytes)
     }
 
+    pub(crate) fn diagnostic(&self, error: anyhow::Error) -> String {
+        onetui_core::diagnostic(
+            error,
+            &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+        .to_string()
+    }
+}
+
+impl Registry {
     pub fn check(&self, remaining: &impl Fn() -> Result<()>) -> Result<()> {
         let bytes = self.request(
             &["schemas", "types"],

@@ -158,7 +158,7 @@ fn read_at(directory: &nix::dir::Dir, name: &str, budget: usize) -> Result<Vec<u
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "required": false, "default": "none", "type": "table; raw framing only; mutually exclusive with schema_file and registry",
+        "required": false, "default": "none", "type": "table; raw framing only; mutually exclusive with schema_file, registry and buf",
         "fields": {
             "directory": {"required": true, "type": "absolute directory path up to 4096 UTF-8 bytes without controls", "purpose": "Flat .avsc/.pb inventory on Unix; no recursive scan or path expansion"},
             "schema": {"required": true, "type": "filename stem, 1..128 ASCII letters/digits/dot/underscore/hyphen; not dot or dot-dot", "purpose": "Exact identity; no trial decoding. Duplicate stems across extensions fail."},

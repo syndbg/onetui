@@ -8,18 +8,38 @@ use rdkafka::{
 #[tokio::test]
 #[ignore = "creates and removes one protobuf topic on the disposable Kafka fixture"]
 async fn kafka_protobuf_bindings_browse_replay_and_follow_without_losing_raw_data() {
-    exercise_binding(false).await;
+    exercise_binding(Source::File).await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "creates and removes one protobuf catalog topic on the disposable Kafka fixture"]
 async fn kafka_protobuf_catalog_browse_replay_and_follow() {
-    exercise_binding(true).await;
+    exercise_binding(Source::Catalog).await;
 }
 
-async fn exercise_binding(catalog: bool) {
-    let topic = format!("onetui_protobuf_{}_{}", std::process::id(), catalog);
+#[tokio::test]
+#[ignore = "creates and removes one Buf Protobuf topic on the disposable Kafka fixture"]
+async fn kafka_buf_protobuf_browse_replay_and_follow() {
+    exercise_binding(Source::Buf).await;
+}
+
+#[tokio::test]
+#[ignore = "creates and removes one Buf-label Protobuf topic on the disposable Kafka fixture"]
+async fn kafka_buf_label_protobuf_browse_replay_and_follow() {
+    exercise_binding(Source::BufLabel).await;
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Source {
+    File,
+    Catalog,
+    Buf,
+    BufLabel,
+}
+
+async fn exercise_binding(source: Source) {
+    let topic = format!("onetui_protobuf_{}_{source:?}", std::process::id());
     let dir = tempfile::tempdir().unwrap();
     let schema = dir.path().join("event.pb");
     use prost::Message;
@@ -46,7 +66,38 @@ async fn exercise_binding(catalog: bool) {
         }],
     }
     .encode_to_vec();
-    std::fs::write(&schema, descriptor).unwrap();
+    std::fs::write(&schema, &descriptor).unwrap();
+    let server = matches!(source, Source::Buf | Source::BufLabel).then(|| {
+        server::Server::start_bytes(true, move |request| {
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer fixture-buf-token")
+            );
+            if request.starts_with("POST ") {
+                assert!(
+                    request.starts_with("POST /buf.registry.module.v1.CommitService/GetCommits ")
+                );
+                let body: serde_json::Value =
+                    serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+                assert_eq!(body["resourceRefs"][0]["name"]["labelName"], "main");
+                return (
+                    200,
+                    br#"{"commits":[{"id":"0123456789abcdef0123456789abcdef"}]}"#.to_vec(),
+                );
+            }
+            assert_eq!(
+                request.split_whitespace().nth(1).unwrap(),
+                "/demo/events/descriptor/0123456789abcdef0123456789abcdef"
+            );
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer fixture-buf-token")
+            );
+            (200, descriptor.clone())
+        })
+    });
     let mut options = toml::Table::new();
     options.insert(
         "bootstrap_servers".into(),
@@ -58,7 +109,15 @@ async fn exercise_binding(catalog: bool) {
     binding.insert("field".into(), "key".into());
     binding.insert("format".into(), "protobuf".into());
     binding.insert("framing".into(), "raw".into());
-    if catalog {
+    if let Some(server) = &server {
+        let reference = if source == Source::BufLabel {
+            "label='main'"
+        } else {
+            "revision='0123456789abcdef0123456789abcdef'"
+        };
+        let buf = toml::from_str::<toml::Table>(&format!("url={:?}\nmodule='demo/events'\n{reference}\nca_file={:?}\ntoken_env='BUF_FIXTURE_TOKEN'", server.url, server.ca_file.as_ref().unwrap())).unwrap();
+        binding.insert("buf".into(), buf.into());
+    } else if source == Source::Catalog {
         let mut source = toml::Table::new();
         source.insert("directory".into(), dir.path().to_str().unwrap().into());
         source.insert("schema".into(), "event".into());
@@ -88,9 +147,15 @@ async fn exercise_binding(catalog: bool) {
         result.unwrap();
     }
     let task_topic = topic.clone();
+    let expected_requests = if source == Source::BufLabel { 2 } else { 1 };
     let tested = tokio::spawn(async move {
         let topic = task_topic;
-        let mut executor = KafkaProvider.configure(&options, &|_| None).unwrap();
+        let mut executor = KafkaProvider
+            .configure(&options, &|name| {
+                assert_eq!(name, "BUF_FIXTURE_TOKEN");
+                Some("fixture-buf-token".into())
+            })
+            .unwrap();
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         executor.check(context).await.unwrap();
         let resource = Resource::new("kafka.records", vec![topic.clone(), "0".into()]);
@@ -120,7 +185,7 @@ async fn exercise_binding(catalog: bool) {
         }
         let first = fetch(&executor, resource.clone(), None).await;
         assert_eq!(first.rows.len(), 100);
-        if catalog {
+        if source == Source::Catalog {
             assert!(
                 first.rows[0].cells[6]
                     .as_ref()
@@ -131,6 +196,16 @@ async fn exercise_binding(catalog: bool) {
             );
             // Refresh and follow must keep the binding snapshot after a file edit.
             std::fs::write(&schema, b"invalid replacement").unwrap();
+        }
+        if matches!(source, Source::Buf | Source::BufLabel) {
+            assert!(
+                first.rows[0].cells[6]
+                    .as_ref()
+                    .unwrap()
+                    .text()
+                    .unwrap()
+                    .contains("#commit=0123456789abcdef0123456789abcdef:")
+            );
         }
         assert_eq!(
             first.rows[0].cells[5],
@@ -215,4 +290,7 @@ async fn exercise_binding(catalog: bool) {
         result.unwrap();
     }
     tested.unwrap();
+    if let Some(server) = &server {
+        assert_eq!(server.requests.lock().unwrap().len(), expected_requests);
+    }
 }

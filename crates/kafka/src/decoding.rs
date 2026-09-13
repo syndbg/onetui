@@ -48,6 +48,7 @@ pub(crate) struct Binding {
     pub message_name: Option<String>,
     pub registry: Option<crate::registry::Config>,
     pub catalog: Option<crate::catalog::Config>,
+    pub buf: Option<crate::buf::Config>,
 }
 
 pub(crate) fn validate_path(path: &str) -> Result<()> {
@@ -91,14 +92,26 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
         match binding.framing {
             Framing::Raw => {
                 ensure!(
-                    binding.schema_file.is_some() != binding.catalog.is_some(),
-                    "Raw binding requires exactly one of schema_file or catalog"
+                    [
+                        binding.schema_file.is_some(),
+                        binding.catalog.is_some(),
+                        binding.buf.is_some()
+                    ]
+                    .into_iter()
+                    .filter(|present| *present)
+                    .count()
+                        == 1,
+                    "Raw binding requires exactly one of schema_file, catalog or buf"
                 );
                 if let Some(path) = &binding.schema_file {
                     validate_path(path)?;
                 }
                 if let Some(catalog) = &binding.catalog {
                     catalog.validate(binding.format)?;
+                }
+                if let Some(buf) = &binding.buf {
+                    ensure!(binding.format == Format::Protobuf, "Buf requires Protobuf");
+                    buf.validate()?;
                 }
                 ensure!(
                     binding.registry.is_none(),
@@ -107,8 +120,10 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
             }
             Framing::Confluent => {
                 ensure!(
-                    binding.schema_file.is_none() && binding.catalog.is_none(),
-                    "Registry binding does not accept schema_file or catalog"
+                    binding.schema_file.is_none()
+                        && binding.catalog.is_none()
+                        && binding.buf.is_none(),
+                    "Registry binding does not accept schema_file, catalog or buf"
                 );
                 binding
                     .registry
@@ -152,9 +167,14 @@ enum Decoder {
 }
 
 impl Decoder {
-    fn load(binding: &Binding, remaining: &impl Fn() -> Result<()>) -> Result<Self> {
+    fn load(binding: &mut Binding, remaining: &impl Fn() -> Result<()>) -> Result<Self> {
         remaining()?;
-        let bundle = if let Some(catalog) = &binding.catalog {
+        let bundle = if let Some(buf) = &mut binding.buf {
+            crate::catalog::Bundle {
+                schema: buf.load(remaining)?,
+                references: Vec::new(),
+            }
+        } else if let Some(catalog) = &binding.catalog {
             catalog.load(binding.format, remaining)?
         } else {
             crate::catalog::Bundle {
@@ -217,6 +237,16 @@ struct Loaded {
 }
 
 impl Entry {
+    fn buf_identity(&self) -> Option<String> {
+        self.binding.buf.as_ref().map(|buf| {
+            format!(
+                "{}:message={}",
+                buf.identity(),
+                self.binding.message_name.as_deref().unwrap_or_default()
+            )
+        })
+    }
+
     fn registry(&mut self) -> Result<&mut crate::registry::Registry> {
         self.registry
             .get_or_insert_with(|| {
@@ -242,26 +272,31 @@ impl Entry {
             };
         }
         let decoder = self.load(remaining);
-        (
-            decoder.as_ref().ok().map(|d| d.identity.clone()),
-            decoder
-                .as_ref()
-                .map_err(|error| anyhow::anyhow!("{error}"))
-                .and_then(|d| d.decoder.json(raw)),
-        )
+        let identity = decoder.as_ref().ok().map(|d| d.identity.clone());
+        let result = decoder
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error}"))
+            .and_then(|d| d.decoder.json(raw));
+        (identity.or_else(|| self.buf_identity()), result)
     }
     fn load(&mut self, remaining: &impl Fn() -> Result<()>) -> &Result<Loaded, String> {
         self.loaded.get_or_insert_with(|| {
             (|| {
-                let decoder = Decoder::load(&self.binding, remaining)?;
+                let decoder = Decoder::load(&mut self.binding, remaining)?;
                 remaining()?;
-                let identity = match &self.binding.catalog {
-                    Some(catalog) => format!("{}:{}", catalog.identity(), decoder.schema_id()),
-                    None => decoder.schema_id().to_owned(),
+                let identity = if let Some(buf) = &self.binding.buf {
+                    format!("{}:{}", buf.identity(), decoder.schema_id())
+                } else if let Some(catalog) = &self.binding.catalog {
+                    format!("{}:{}", catalog.identity(), decoder.schema_id())
+                } else {
+                    decoder.schema_id().to_owned()
                 };
                 Ok(Loaded { decoder, identity })
             })()
-            .map_err(|error: anyhow::Error| format!("{error:#}"))
+            .map_err(|error: anyhow::Error| match &self.binding.buf {
+                Some(buf) => buf.diagnostic(error),
+                None => format!("{error:#}"),
+            })
         })
     }
 }
@@ -334,6 +369,7 @@ impl Bindings {
                     .as_ref()
                     .ok()
                     .map(|d| d.identity.clone())
+                    .or_else(|| entry.buf_identity())
             };
             remaining()?;
             let identity_bytes = if entry.binding.registry.is_some() {

@@ -4,8 +4,6 @@ use rdkafka::{
     admin::{AdminClient, AdminOptions, NewTopic, TopicReplication},
     producer::{FutureProducer, FutureRecord},
 };
-#[path = "../support/registry.rs"]
-mod server;
 
 #[tokio::test]
 #[ignore = "creates one topic on disposable Kafka and a local registry protocol fixture"]

@@ -20,6 +20,16 @@ pub struct Server {
 
 impl Server {
     pub fn start(tls: bool, handler: impl Fn(&str) -> (u16, String) + Send + 'static) -> Self {
+        Self::start_bytes(tls, move |request| {
+            let (status, body) = handler(request);
+            (status, body.into_bytes())
+        })
+    }
+
+    pub fn start_bytes(
+        tls: bool,
+        handler: impl Fn(&str) -> (u16, Vec<u8>) + Send + 'static,
+    ) -> Self {
         let files = tempfile::tempdir().unwrap();
         let cert = files.path().join("cert.pem");
         let key = files.path().join("key.pem");
@@ -107,7 +117,7 @@ impl Server {
 
 fn serve(
     mut stream: impl Read + Write,
-    handler: &impl Fn(&str) -> (u16, String),
+    handler: &impl Fn(&str) -> (u16, Vec<u8>),
     requests: &Mutex<Vec<String>>,
 ) {
     let mut request = Vec::new();
@@ -118,6 +128,21 @@ fn serve(
         }
         request.push(b[0]);
     }
+    let headers = String::from_utf8(request.clone()).unwrap();
+    let length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().unwrap())
+        })
+        .unwrap_or(0);
+    assert!(length <= 16_384, "test request body exceeds bound");
+    let mut body = vec![0; length];
+    if stream.read_exact(&mut body).is_err() {
+        return;
+    }
+    request.extend(body);
     let request = String::from_utf8(request).unwrap();
     requests.lock().unwrap().push(request.clone());
     let (status, body) = handler(&request);
@@ -128,9 +153,10 @@ fn serve(
     };
     let _ = write!(
         stream,
-        "HTTP/1.1 {status} Test\r\n{location}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} Test\r\n{location}Content-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
+    let _ = stream.write_all(&body);
     let _ = stream.flush();
 }
 

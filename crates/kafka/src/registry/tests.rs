@@ -1,7 +1,5 @@
 use super::*;
-#[path = "../../tests/support/registry.rs"]
-mod server;
-use server::Server;
+use crate::test_server::Server;
 
 fn config(server: &Server) -> Config {
     Config {

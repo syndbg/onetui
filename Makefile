@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package
 
 help:
 	@printf '%s\n' \
@@ -23,6 +23,7 @@ help:
 	  'check-local            Check all local fixtures, including Redpanda Schema Registry' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
 	  'test-integration       Start fresh fixtures, test, then clean up (refuses existing fixtures)' \
+	  'test-buf-live          Verify public Buf label/commit discovery and decoding (Internet)' \
 	  'release-check TAG=v...  Verify the release tag matches Cargo version' \
 	  'package TAG=v...        Build a native archive and SHA-256 file under dist/'
 
@@ -82,6 +83,9 @@ check-local: build
 
 test-integration: build
 	bash hack/dev.sh test
+
+test-buf-live:
+	cargo test -p onetui-kafka --lib hosted_buf_label_and_pinned_commit_decode_the_same_message --locked -- --ignored --nocapture
 
 release-check:
 	bash hack/release.sh check "$$TAG"

@@ -10,6 +10,8 @@ Topic/broker configuration and consumer-group committed offsets use read-only na
 
 The native build uses CMake, a C/C++ toolchain, Make and Perl. Cargo builds librdkafka, OpenSSL, zlib and Zstandard from source; do not install a system librdkafka for this build. Broker TLS uses OpenSSL. Optional [Confluent Avro/Protobuf registry resolution](../../docs/kafka.md#confluent-avro-registry) uses `ureq` with Rustls on the existing native worker, with separate credentials, trust and bounded caches. It does not add a Tokio runtime or put registry dependencies in either decoder package. Registry TLS tests use the `openssl` executable to create temporary certificates.
 
+[Buf descriptors](../../docs/kafka.md#buf-protobuf-descriptors) reuse that HTTP transport and the Protobuf decoder. Explicit labels resolve to immutable commits for the session. Buf source tests stay in this package; `make test-buf-live` checks the public registry separately.
+
 On Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev`. The pinned librdkafka CMake template defines a disabled OIDC macro as zero, but one source include checks whether it exists; CURL headers are therefore needed even though CURL linking and OAuth are disabled. macOS supplies these headers through its SDK. Recheck this prerequisite when updating librdkafka.
 
 ```sh

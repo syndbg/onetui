@@ -59,6 +59,9 @@ impl Provider for KafkaProvider {
             if let Some(registry) = &mut binding.registry {
                 secrets.extend(registry.resolve(env)?);
             }
+            if let Some(buf) = &mut binding.buf {
+                secrets.extend(buf.resolve(env)?);
+            }
         }
         Ok(KafkaExecutor {
             config,

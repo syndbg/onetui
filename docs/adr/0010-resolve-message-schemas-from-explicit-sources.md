@@ -9,7 +9,7 @@ date: 2026-09-11
 
 Load schemas dynamically through built-in source implementations. Keep `onetui-avro` and `onetui-protobuf` independent: they parse schemas and decode bytes, while source adapters handle files, registry protocols, authentication and caching. Use static enum dispatch as in [ADR-0002](0002-use-static-enum-dispatch-for-built-in-providers.md). User schemas are data, not runtime plugins.
 
-This extends [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md). Kafka supports explicit files, directory catalogs and Confluent Avro/Protobuf registries. Buf discovery remains pending.
+This extends [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md). Kafka supports explicit files, directory catalogs, Confluent Avro/Protobuf registries and Buf Protobuf descriptors. Explicit Buf labels resolve to immutable commits for the session.
 
 Keep schema source, framing and message selection distinct. Discovering a directory or registry's schemas does not identify which schema encoded a record. Raw messages require an explicit binding; framed messages resolve the identity carried by their configured envelope. Kafka keys and values remain independently bound. Future NATS bindings use the same decoding rules without inheriting Kafka topic semantics.
 

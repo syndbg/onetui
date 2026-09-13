@@ -36,6 +36,21 @@ framing = "raw"
 message_name = "demo.Event"
 catalog = { directory = "/absolute/schemas", schema = "event_proto" }
 
+# Replace module, commit and message with your published Protobuf schema.
+[[connections.local_kafka.decoders]]
+topic = "buf_events"
+field = "value"
+format = "protobuf"
+framing = "raw"
+message_name = "demo.Event"
+[connections.local_kafka.decoders.buf]
+url = "https://buf.build"
+module = "your-org/your-module"
+revision = "0123456789abcdef0123456789abcdef"
+# Or replace revision with label = "main"; reconnect to resolve it again.
+# token_env = "BUF_TOKEN"
+# ca_file = "/absolute/path/to/buf-ca.pem"
+
 # Custom endpoint example. For the seeded local registry, use local_redpanda
 # from target/demo-onetui.toml after make dev-up.
 # Keep only bindings for topics you use. This endpoint is a placeholder.

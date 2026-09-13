@@ -11,6 +11,7 @@ fn binding(path: &Path) -> Binding {
         message_name: None,
         registry: None,
         catalog: None,
+        buf: None,
     }
 }
 

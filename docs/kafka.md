@@ -150,9 +150,10 @@ onetui --config "$HOME/onetui.toml" --connection events
 | `topic` | Required exact name, 1..249 ASCII letters/digits/dot/underscore/hyphen; not `.` or `..`. No wildcards. |
 | `field` | Required `"key"` or `"value"`. Each topic/field pair may appear once. |
 | `format` | Required `"avro"` or `"protobuf"`; case-sensitive. |
-| `framing` | Required `"raw"` or `"confluent"`. Raw requires exactly one of `schema_file` or `catalog`; Confluent requires `registry`. No automatic detection. |
-| `schema_file` | Raw framing only, mutually exclusive with `catalog`. Absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. No path expansion. |
+| `framing` | Required `"raw"` or `"confluent"`. Raw requires exactly one of `schema_file`, `catalog` or `buf`; Confluent requires `registry`. No automatic detection. |
+| `schema_file` | Raw framing only, mutually exclusive with `catalog` and `buf`. Absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. No path expansion. |
 | `catalog` | Optional local-directory source for raw framing; see below. |
+| `buf` | Optional Buf descriptor source for raw Protobuf; explicit commit or label, pinned for the session. |
 | `message_name` | Required for raw Protobuf: exact full name, 1..1,024 UTF-8 bytes without controls. Forbidden for Avro and Confluent framing; Protobuf registry records select their message through envelope indexes. |
 
 Unknown keys, missing required fields, wrong types and duplicate bindings fail validation even for unselected aliases. Omitted bindings retain Auto display. Bindings apply to partition and topic-wide `kafka.records`, following, and `kafka.query` replay for that topic.
@@ -180,6 +181,28 @@ IDs are filename stems: `event.avsc` selects an Avro writer schema, `event.pb` a
 The directory is limited to 128 entries and 64 schemas; the selected bundle to 256 KiB. Duplicate IDs, traversal, symlinks and non-regular schema files are rejected. Reopen the connection to reload a binding; refresh and following retain its cached schema, including failures. Retained values are unchanged. `FIELD_schema` includes the directory, ID and content hash.
 
 Build `.pb` files outside OneTUI with the [protoc example](../crates/protobuf/README.md#try-a-raw-message) or `buf build --as-file-descriptor-set -o /absolute/schemas/event.pb` from your Buf workspace. See [Buf build](https://buf.build/docs/reference/cli/buf/build/). Catalogs require Linux/macOS. Use `onetui schema --datasource kafka` for supported settings and limits; [example bindings](../hack/kafka-decoders.toml.example) cover both formats.
+
+### Buf Protobuf descriptors
+
+For raw Protobuf, replace `schema_file` with a Buf binding. Set your published module, exact 32-character commit ID and fully qualified message name:
+
+```toml
+[[connections.events.decoders]]
+topic = "buf_events"
+field = "value"
+format = "protobuf"
+framing = "raw"
+message_name = "demo.Event"
+buf = { url = "https://buf.build", module = "your-org/your-module", revision = "0123456789abcdef0123456789abcdef" }
+```
+
+Add `token_env = "BUF_TOKEN"` inside `buf` for a private module, or `ca_file` for private TLS trust. Credentials are independent of Kafka. `url` accepts an HTTPS origin, without a base path; HTTP is limited to literal loopback addresses. Use `onetui schema --datasource kafka` for all settings and limits.
+
+To select a moving label, replace `revision` with `label = "main"` or your release label. OneTUI resolves it through Buf's `GetCommits` API, then fetches descriptors by the returned commit. Exactly one of `revision` or `label` is required; there is no implicit latest/default lookup.
+
+OneTUI downloads the [compiled descriptor set with imports](https://buf.build/docs/bsr/module/descriptor/), capped at 256 KiB per response. Label resolution and descriptor fetching share a two-second HTTP deadline. Redirects and environment proxies are disabled. `--check` validates the selected message. Successes and failures stay cached until reconnect; refresh and following do not re-resolve a label. `FIELD_schema` shows the source, resolved commit and message, plus the descriptor fingerprint after a successful load. Lookup failures show the requested label if no commit was resolved. Raw data remains available on failure.
+
+Use `make test-buf-live` for a read-only public BSR check. Buf does not supply Avro schemas or identify the schema of an arbitrary record.
 
 ### Confluent Avro registry
 
