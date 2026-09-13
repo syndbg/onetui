@@ -6,7 +6,7 @@ Check relevant ADRs before larger changes.
 
 Install rustup, Make, Bash and Docker Compose. Rust is pinned in [rust-toolchain.toml](rust-toolchain.toml). Native builds need a C/C++ compiler, CMake and Perl; fixtures need OpenSSL, workflow lint needs Go.
 
-On macOS, install Xcode Command Line Tools and `brew install cmake`. On Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev`.
+On macOS, install Xcode Command Line Tools and `brew install cmake`; SASL/Kerberos comes from the system. On Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit`.
 
 Use `make dev-up`, then `make run`. See [local fixtures](hack/README.md) and `make help`. `make dev-down` deletes the disposable data.
 
@@ -47,6 +47,8 @@ shasum -a 256 -c onetui-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
 ```
 
 Use the filename matching your platform. Packaging refuses existing artifacts. Releases are unsigned/unnotarized; older GNU libc and musl compatibility is unverified. Review native dependency licenses when updating them.
+
+Linux binaries dynamically link system SASL (`libsasl2-2` on Debian/Ubuntu); GSSAPI also needs `libsasl2-modules-gssapi-mit`. Kerberos libraries are not bundled.
 
 ### Validation status
 

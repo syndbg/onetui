@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 umask 077
+/bin/sh /onetui-kafka-kerberos.sh
 # Fixture-only trust; no host trust-store changes or persistent private keys.
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
     -subj /CN=localhost -addext subjectAltName=DNS:localhost \

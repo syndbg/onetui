@@ -243,6 +243,20 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
             .contains(&serde_json::json!("OAUTHBEARER"))
     );
     let oauth = &kafka["configuration"]["oauth"];
+    assert!(
+        kafka["configuration"]["sasl_mechanism"]["values"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("GSSAPI"))
+    );
+    assert_eq!(
+        kafka["configuration"]["kerberos_principal"]["required"],
+        "with GSSAPI; forbidden otherwise"
+    );
+    assert_eq!(
+        kafka["configuration"]["kerberos_service_name"]["default"],
+        "kafka"
+    );
     assert_eq!(oauth["fields"]["client_secret_env"]["required"], true);
     assert_eq!(oauth["fields"]["ca_file"]["default"], "platform trust");
     assert_eq!(oauth["limits"]["response_bytes"], 65536);

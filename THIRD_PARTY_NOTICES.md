@@ -4,6 +4,8 @@ OneTUI is licensed under Apache-2.0. The following notices accompany the Kafka c
 
 ## rust-rdkafka 0.39.0 and rdkafka-sys 4.10.0
 
+GSSAPI uses `sasl2-sys 0.1.22+2.1.28` (Apache-2.0, Copyright Materialize, Inc.) to link system Cyrus SASL. Cyrus SASL and Kerberos libraries are not bundled; their distribution supplies their notices.
+
 Source: `rdkafka-0.39.0/LICENSE` in the downloaded Cargo crate.
 
 ```text

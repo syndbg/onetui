@@ -222,6 +222,36 @@ async fn kafka_topic_follow_transactions_limits_and_partition_changes() {
         {
             result.unwrap();
         }
+        // The controller can acknowledge expansion before the new partition is readable.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let ready = producer
+                .client()
+                .fetch_metadata(Some(&owned), Duration::from_millis(200))
+                .is_ok_and(|metadata| {
+                    metadata.topics().iter().any(|topic| {
+                        topic.name() == owned
+                            && topic.error().is_none()
+                            && topic.partitions().len() == 4
+                            && topic.partitions().iter().all(|partition| {
+                                partition.error().is_none() && partition.leader() >= 0
+                            })
+                    })
+                });
+            if ready
+                && producer
+                    .client()
+                    .fetch_watermarks(&owned, 3, Duration::from_millis(200))
+                    .is_ok()
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "new partition did not become readable"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let error = executor
             .follow_page(

@@ -49,6 +49,25 @@ Restrict private-key file permissions. Files are read on the first native reques
 
 Unknown settings are rejected. Broker metadata can advertise endpoints other than the bootstrap addresses; those addresses must be reachable from the machine running OneTUI. The plaintext bootstrap restriction is not an outbound network allowlist. Prefer TLS for all non-disposable environments. Broker ACLs remain the authorization boundary.
 
+### Kerberos (GSSAPI)
+
+Obtain a ticket with your system's Kerberos tools before starting OneTUI:
+
+```toml
+[connections.kafka_kerberos]
+kind = "kafka"
+bootstrap_servers = ["broker.example:9093"]
+security_protocol = "SASL_SSL"
+sasl_mechanism = "GSSAPI"
+kerberos_principal = "reader@EXAMPLE.COM"
+# kerberos_service_name = "kafka" # default
+# ca_file = "/absolute/path/to/kafka-ca.pem"
+```
+
+The principal must match your ticket cache. Set `KRB5_CONFIG` and `KRB5CCNAME` before launching OneTUI when using a non-default configuration or cache. Advertised broker hostnames must match their service principals. See [system dependencies](../CONTRIBUTING.md#local-setup).
+
+Ticket acquisition and renewal stay external. OneTUI never invokes `kinit`, changes process-wide credentials or provides per-alias caches/keytabs. Restart after replacing expired tickets or changing caches: system GSSAPI can retain failed lookups across connection reopen. Existing authenticated connections may outlive a ticket; expiry becomes visible when authentication is required again.
+
 ### OAuth
 
 Use a client-credentials token endpoint returning signed JWT access tokens:
@@ -295,4 +314,4 @@ Following adds no `onetui.toml` settings. The existing request timeout applies t
 
 For sample arrivals, use [Kafka traffic](../hack/README.md#kafka-traffic).
 
-SQL, publishing from the app, consumer-group administration and GSSAPI are not exposed.
+SQL, publishing from the app and consumer-group administration are not exposed.

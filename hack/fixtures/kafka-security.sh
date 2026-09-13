@@ -9,6 +9,8 @@ done
 /opt/kafka/bin/kafka-acls.sh --bootstrap-server localhost:9092 \
     --add --allow-principal User:fixture-reader --allow-principal User:CN=fixture-reader --operation Read --operation Describe \
     --topic demo_ --resource-pattern-type prefixed
+# Let denied identities find their private coordinator so topic denial is deterministic.
 /opt/kafka/bin/kafka-acls.sh --bootstrap-server localhost:9092 \
-    --add --allow-principal User:fixture-reader --allow-principal User:CN=fixture-reader --operation Describe \
+    --add --allow-principal User:fixture-reader --allow-principal User:CN=fixture-reader \
+    --allow-principal User:fixture-denied --allow-principal User:CN=fixture-denied --operation Describe \
     --group onetui- --resource-pattern-type prefixed
