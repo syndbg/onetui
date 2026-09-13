@@ -346,6 +346,14 @@ fn dynamodb_catalog_exposes_native_read_configuration_without_credentials() {
     assert_eq!(dynamodb["configuration"]["region"]["required"], true);
     assert_eq!(dynamodb["limits"]["page_rows"], 100);
     assert_eq!(
+        dynamodb["follow_resources"],
+        serde_json::json!(["dynamodb.records"])
+    );
+    assert_eq!(
+        dynamodb["paths"]["dynamodb.records"],
+        serde_json::json!(["stream ARN", "shard ID"])
+    );
+    assert_eq!(
         dynamodb["query_syntax"]["operations"],
         serde_json::json!(["Scan", "Query", "GetItem"])
     );

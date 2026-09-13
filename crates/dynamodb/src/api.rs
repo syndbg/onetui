@@ -118,6 +118,7 @@ pub(crate) async fn query(
 ) -> Result<Value> {
     let key = cursor.map(attributes::item).transpose()?;
     match query {
+        Read::GetRecords { .. } => bail!("GetRecords requires a Streams client"),
         Read::Scan {
             index,
             filter_expression,

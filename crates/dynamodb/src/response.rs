@@ -116,6 +116,14 @@ impl Intercept for Capture {
 
 impl Capture {
     pub fn finish(&self, result: Result<()>) -> Result<serde_json::Value> {
+        self.finish_json(result, false)
+    }
+
+    pub(crate) fn finish_json(
+        &self,
+        result: Result<()>,
+        raw_success: bool,
+    ) -> Result<serde_json::Value> {
         ensure!(
             !self.limit_exceeded.load(Ordering::Relaxed),
             "DynamoDB response exceeds 8 MiB"
@@ -135,7 +143,9 @@ impl Capture {
                     }
                 ));
             }
-            result?;
+            if !raw_success {
+                result?;
+            }
             ensure!(
                 bytes.len() <= RESPONSE_BYTES,
                 "DynamoDB response exceeds 8 MiB"

@@ -13,6 +13,21 @@ resources![
         "Choose tables or account metadata; no item scan"
     ),
     ("dynamodb.tables", "Table names"),
+    ("dynamodb.streams", "Stream inventory"),
+    ("dynamodb.table_streams", "Streams for the selected table"),
+    ("dynamodb.stream", "Choose stream details or shards"),
+    (
+        "dynamodb.stream_info",
+        "Stream description, with bounded shard pages"
+    ),
+    (
+        "dynamodb.shards",
+        "Shard descriptions and parent relationships"
+    ),
+    (
+        "dynamodb.records",
+        "Bounded shard records; original typed images retained"
+    ),
     ("dynamodb.table", "Choose item reads or table metadata"),
     (
         "dynamodb.items",
@@ -20,7 +35,7 @@ resources![
     ),
     (
         "dynamodb.query",
-        "Read-only native Query, Scan or GetItem JSON"
+        "Read-only native Query, Scan, GetItem or Streams GetRecords JSON"
     ),
     ("dynamodb.table_info", "Complete DescribeTable response"),
     (
@@ -61,6 +76,7 @@ resources![
 pub(crate) fn depth(id: &str) -> usize {
     match id {
         "dynamodb.resources"
+        | "dynamodb.streams"
         | "dynamodb.tables"
         | "dynamodb.backups"
         | "dynamodb.exports"
@@ -69,6 +85,7 @@ pub(crate) fn depth(id: &str) -> usize {
         | "dynamodb.account_insights"
         | "dynamodb.limits"
         | "dynamodb.endpoints" => 0,
+        "dynamodb.records" => 2,
         _ => 1,
     }
 }
@@ -160,6 +177,7 @@ pub(crate) fn menu(id: &str, path: &[String]) -> Page {
     let choices: &[(&str, &str)] = if id == "dynamodb.resources" {
         &[
             ("dynamodb.tables", "Tables"),
+            ("dynamodb.streams", "Streams"),
             ("dynamodb.backups", "Backups"),
             ("dynamodb.exports", "Exports"),
             ("dynamodb.imports", "Imports"),
@@ -168,9 +186,15 @@ pub(crate) fn menu(id: &str, path: &[String]) -> Page {
             ("dynamodb.limits", "Limits"),
             ("dynamodb.endpoints", "Endpoints"),
         ]
+    } else if id == "dynamodb.stream" {
+        &[
+            ("dynamodb.shards", "Shards"),
+            ("dynamodb.stream_info", "Stream details"),
+        ]
     } else {
         &[
             ("dynamodb.items", "Scan items"),
+            ("dynamodb.table_streams", "Streams"),
             ("dynamodb.table_info", "Table details"),
             ("dynamodb.indexes", "Indexes"),
             ("dynamodb.replicas", "Replicas"),

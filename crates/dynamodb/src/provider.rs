@@ -1,8 +1,5 @@
 use anyhow::{Result, anyhow, ensure};
-use aws_sdk_dynamodb::{
-    Client,
-    config::{Credentials, retry::RetryConfig, timeout::TimeoutConfig},
-};
+use aws_sdk_dynamodb::{Client, config::Credentials};
 use onetui_core::{
     Page,
     provider::{
@@ -10,10 +7,7 @@ use onetui_core::{
         QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
     },
 };
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{Mutex, MutexGuard, watch};
 
 pub struct DynamoDbProvider;
@@ -21,8 +15,8 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     kind: "dynamodb",
     entry_resource: Some("dynamodb.resources"),
-    browsing: "tables / items / metadata / replicas",
-    follow_resources: &[],
+    browsing: "tables / items / metadata / replicas / streams / shards / records",
+    follow_resources: &["dynamodb.records"],
     query: Some(QueryDescriptor {
         resource: "dynamodb.query",
         language: "DynamoDB read JSON",
@@ -34,6 +28,10 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
             "dynamodb.query",
             "dynamodb.table_info",
             "dynamodb.indexes",
+            "dynamodb.stream",
+            "dynamodb.stream_info",
+            "dynamodb.shards",
+            "dynamodb.records",
         ],
     }),
     resources: crate::browse::RESOURCES,
@@ -71,14 +69,19 @@ pub struct DynamoDbExecutor {
     config: crate::config::Config,
     credentials: Option<Credentials>,
     secrets: Vec<String>,
-    client: Mutex<Option<Client>>,
+    client: Mutex<Option<Session>>,
     session: u64,
     status: watch::Sender<ConnectionStatus>,
     closed: bool,
 }
 
+struct Session {
+    database: Client,
+    streams: aws_sdk_dynamodbstreams::Client,
+}
+
 struct Lease<'a> {
-    client: MutexGuard<'a, Option<Client>>,
+    client: MutexGuard<'a, Option<Session>>,
     status: &'a watch::Sender<ConnectionStatus>,
     clean: bool,
 }
@@ -92,31 +95,37 @@ impl Drop for Lease<'_> {
 }
 
 impl DynamoDbExecutor {
-    async fn client(&self) -> Client {
-        let shared = self.config.load(self.credentials.clone()).await;
-        let mut config = aws_sdk_dynamodb::config::Builder::from(&shared)
-            .retry_config(RetryConfig::standard().with_max_attempts(3))
-            .timeout_config(
-                TimeoutConfig::builder()
-                    .connect_timeout(Duration::from_secs(2))
-                    .read_timeout(Duration::from_secs(5))
-                    .operation_timeout(Duration::from_secs(10))
-                    .build(),
-            );
+    async fn client(&self) -> Result<Session> {
+        let shared = self.config.load(self.credentials.clone()).await?;
+        let mut config = aws_sdk_dynamodb::config::Builder::from(&shared);
         // Endpoint selection belongs to this alias, not AWS_ENDPOINT_URL or profile services.
         config.set_endpoint_url(self.config.endpoint_url.clone());
-        Client::from_conf(config.build())
+        let mut streams = aws_sdk_dynamodbstreams::config::Builder::from(&shared);
+        streams.set_endpoint_url(self.config.streams_endpoint_url.clone());
+        Ok(Session {
+            database: Client::from_conf(config.build()),
+            streams: aws_sdk_dynamodbstreams::Client::from_conf(streams.build()),
+        })
     }
 
     async fn read(
         &self,
         request: PageRequest,
         text: &str,
+        follow: bool,
         mut context: RequestContext,
     ) -> Result<Page> {
         ensure!(!self.closed, "DynamoDB session is closed");
-        let position = crate::browse::position(&request, self.session, text)?;
-        if matches!(request.resource.id, "dynamodb.resources" | "dynamodb.table") {
+        ensure!(
+            !follow || request.resource.id == "dynamodb.records",
+            "Only DynamoDB shard records support following"
+        );
+        let bookmark_scope = if follow { "follow" } else { text };
+        let position = crate::browse::position(&request, self.session, bookmark_scope)?;
+        if matches!(
+            request.resource.id,
+            "dynamodb.resources" | "dynamodb.table" | "dynamodb.stream"
+        ) {
             ensure!(position.is_none(), "DynamoDB menus have no continuation");
             return context
                 .run(async { crate::browse::menu(request.resource.id, &request.resource.path) })
@@ -127,6 +136,22 @@ impl DynamoDbExecutor {
         } else {
             None
         };
+        let stream_read = crate::streams::is_resource(request.resource.id)
+            || matches!(query, Some(crate::query::Read::GetRecords { .. }));
+        ensure!(
+            !stream_read
+                || self.config.endpoint_url.is_none()
+                || self.config.streams_endpoint_url.is_some(),
+            "Custom DynamoDB endpoints require streams_endpoint_url for Streams reads"
+        );
+        if matches!(query, Some(crate::query::Read::GetRecords { .. })) {
+            ensure!(
+                request.resource.path[0].starts_with("arn:")
+                    && request.resource.path[0].contains(":table/")
+                    && request.resource.path[0].contains("/stream/"),
+                "GetRecords requires a selected stream ARN; open Streams first"
+            );
+        }
         let mut lease = Lease {
             client: context.run(self.client.lock()).await?,
             status: &self.status,
@@ -136,16 +161,42 @@ impl DynamoDbExecutor {
             .run(async {
                 if lease.client.is_none() {
                     self.status.send_replace(ConnectionStatus::Connecting);
-                    *lease.client = Some(self.client().await);
+                    *lease.client = Some(self.client().await?);
                 }
-                let client = lease.client.as_ref().unwrap();
+                let session = lease.client.as_ref().unwrap();
+                let client = &session.database;
                 let name = request
                     .resource
                     .path
                     .first()
                     .map(String::as_str)
                     .unwrap_or("");
-                let (mut page, token) = if let Some(query) = query {
+                let (mut page, token) = if let Some(crate::query::Read::GetRecords {
+                    shard_id,
+                    sequence_number,
+                    after,
+                    limit,
+                }) = &query
+                {
+                    crate::streams::replay(
+                        &session.streams,
+                        name,
+                        shard_id,
+                        sequence_number,
+                        *after,
+                        *limit,
+                        position.as_ref(),
+                    )
+                    .await?
+                } else if stream_read {
+                    crate::streams::read(
+                        &session.streams,
+                        &request.resource,
+                        position.as_ref(),
+                        follow,
+                    )
+                    .await?
+                } else if let Some(query) = query {
                     crate::browse::items(
                         crate::api::query(client, name, query, position.as_ref()).await?,
                     )?
@@ -156,7 +207,23 @@ impl DynamoDbExecutor {
                             .await?,
                     )?
                 };
-                crate::browse::continuation(&mut page, &request, self.session, text, token)?;
+                let closed = stream_read && token.as_ref().is_some_and(crate::streams::closed);
+                crate::browse::continuation(
+                    &mut page,
+                    &request,
+                    self.session,
+                    bookmark_scope,
+                    token,
+                )?;
+                if closed {
+                    page.next = false;
+                }
+                if follow {
+                    ensure!(
+                        page.continuation.as_ref().is_some_and(|c| c.len() <= 4096),
+                        "DynamoDB live bookmark exceeds 4 KiB"
+                    );
+                }
                 Ok::<_, anyhow::Error>(page)
             })
             .await
@@ -189,13 +256,14 @@ impl Executor for DynamoDbExecutor {
             .run(async {
                 if lease.client.is_none() {
                     self.status.send_replace(ConnectionStatus::Connecting);
-                    *lease.client = Some(self.client().await);
+                    *lease.client = Some(self.client().await?);
                 }
                 let capture = crate::response::Capture::default();
                 let result = lease
                     .client
                     .as_ref()
                     .unwrap()
+                    .database
                     .list_tables()
                     .limit(1)
                     .customize()
@@ -235,7 +303,10 @@ impl Executor for DynamoDbExecutor {
         } else {
             ""
         };
-        self.read(request, text, context).await
+        self.read(request, text, false, context).await
+    }
+    async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
+        self.read(request, "", true, context).await
     }
     async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
         request.validate()?;
@@ -243,7 +314,7 @@ impl Executor for DynamoDbExecutor {
             request.page.resource.id == "dynamodb.query",
             "Invalid DynamoDB query resource"
         );
-        self.read(request.page, &request.text, context).await
+        self.read(request.page, &request.text, false, context).await
     }
     async fn shutdown(&mut self, context: ShutdownContext) -> Result<()> {
         self.status.send_replace(ConnectionStatus::Closing);

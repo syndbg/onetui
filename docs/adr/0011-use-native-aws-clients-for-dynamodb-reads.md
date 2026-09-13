@@ -13,6 +13,10 @@ Allow only implemented read operations. Opening metadata never starts a Scan; sc
 
 Retain AttributeValue tags, decimal strings and binary bytes in their base64 wire representation. Capture bounded JSON responses through an SDK interceptor so metadata fields are not lost when the SDK model lags the service. Native errors retain their returned details after secret redaction and terminal escaping. [AWS interceptor API](https://docs.aws.amazon.com/sdk-for-rust/latest/dg/interceptors.html)
 
+Stream bookmarks retain the last displayed sequence and native iterator. Expired iterators renew only from that sequence; an unanchored expiration fails visibly. Shard closure retains the final batch and requires explicit child-shard selection. This avoids skipping records by silently restarting at `LATEST`. [Streams iterator behavior](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_streams_GetRecords.html)
+
+For successful Streams responses that the SDK model cannot decode, keep the original bounded JSON with a decoding warning. DynamoDB Local returns untagged `{}` for some empty-map images; inferring `M` would alter the returned data. HTTP failures, malformed JSON and missing record identities still fail the request.
+
 ## Rejected alternatives
 
 - Shelling out to the AWS CLI adds a subprocess lifecycle and output-format dependency.

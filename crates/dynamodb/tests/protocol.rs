@@ -15,6 +15,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "protocol/streams.rs"]
+mod streams;
+
 struct Server {
     endpoint: String,
     requests: mpsc::Receiver<(String, Json)>,
@@ -94,7 +97,7 @@ impl Server {
 
     fn executor(&self) -> DynamoDbExecutor {
         DynamoDbProvider.configure(&toml::from_str(&format!(
-            "region='us-east-1'\nendpoint_url='{}'\naccess_key_id_env='TEST_KEY'\nsecret_access_key_env='TEST_SECRET'\nsession_token_env='TEST_TOKEN'", self.endpoint
+            "region='us-east-1'\nendpoint_url='{0}'\nstreams_endpoint_url='{0}'\naccess_key_id_env='TEST_KEY'\nsecret_access_key_env='TEST_SECRET'\nsession_token_env='TEST_TOKEN'", self.endpoint
         )).unwrap(), &|name| Some(match name {
             "TEST_KEY" => "fixture-access-key", "TEST_SECRET" => "fixture-secret", "TEST_TOKEN" => "fixture-session-token", _ => panic!("unexpected secret"),
         }.into())).unwrap()
@@ -514,10 +517,15 @@ async fn native_transient_retries_remain_enabled() {
 async fn cancellation_discards_the_inflight_client_then_recovers() {
     let body = json!({"TableNames":[]}).to_string();
     let server = Server::delayed(
-        vec![(200, body.clone()), (200, body)],
+        vec![(200, body.clone()), (200, body.clone()), (200, body)],
         Duration::from_millis(150),
     );
     let executor = server.executor();
+    // Isolate in-flight cancellation from the separately tested native trust-loading queue.
+    fetch(&executor, request("dynamodb.tables", &[], None))
+        .await
+        .unwrap();
+    server.requests.try_recv().unwrap();
     let (cancel, context) = RequestContext::new(Duration::from_secs(5));
     let operation = executor.fetch_page(request("dynamodb.tables", &[], None), context);
     let cancel_after_request = async {

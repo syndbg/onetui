@@ -1,7 +1,29 @@
 use anyhow::{Result, anyhow, ensure};
 use aws_sdk_dynamodb::config::{Credentials, Region};
+use aws_smithy_runtime_api::client::http::SharedHttpClient;
 use onetui_core::config::{safe_name, secret};
 use serde::Deserialize;
+use std::time::Duration;
+
+// ponytail: one trust job; retries cannot accumulate threads behind a stalled OS read.
+static TRUST_LOAD: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn load_http(
+    build: impl FnOnce() -> SharedHttpClient + Send + 'static,
+) -> Result<SharedHttpClient> {
+    let permit = TRUST_LOAD
+        .acquire()
+        .await
+        .expect("trust semaphore stays open");
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        build()
+    })
+    .await
+    .map_err(|error| anyhow!("DynamoDB trust loading failed: {error}"))
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,17 +150,43 @@ impl Config {
         Ok((credentials, secrets))
     }
 
-    pub async fn load(&self, credentials: Option<Credentials>) -> aws_config::SdkConfig {
+    pub async fn load(&self, credentials: Option<Credentials>) -> Result<aws_config::SdkConfig> {
         use aws_smithy_http_client::{
-            Builder,
+            Connector,
             tls::{Provider, rustls_provider::CryptoMode},
         };
-        // Reuse the workspace's ring provider; enabling two Rustls defaults can panic.
-        let http = Builder::new()
-            .tls_provider(Provider::Rustls(CryptoMode::Ring))
-            .build_https();
+        use aws_smithy_runtime_api::client::http::{
+            HttpConnectorSettings, SharedHttpConnector, http_client_fn,
+        };
+        let http = load_http(|| {
+            // Build eagerly here: the SDK's lazy HTTP builder loads native roots during send.
+            let connector = SharedHttpConnector::new(
+                Connector::builder()
+                    .tls_provider(Provider::Rustls(CryptoMode::Ring))
+                    .sleep_impl(aws_smithy_async::rt::sleep::TokioSleep::new())
+                    .connector_settings(
+                        HttpConnectorSettings::builder()
+                            .connect_timeout(CONNECT_TIMEOUT)
+                            .read_timeout(READ_TIMEOUT)
+                            .build(),
+                    )
+                    .build(),
+            );
+            http_client_fn(move |_, _| connector.clone())
+        })
+        .await?;
         let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(Region::new(self.region.clone()))
+            .retry_config(
+                aws_sdk_dynamodb::config::retry::RetryConfig::standard().with_max_attempts(3),
+            )
+            .timeout_config(
+                aws_sdk_dynamodb::config::timeout::TimeoutConfig::builder()
+                    .connect_timeout(CONNECT_TIMEOUT)
+                    .read_timeout(READ_TIMEOUT)
+                    .operation_timeout(Duration::from_secs(10))
+                    .build(),
+            )
             .http_client(http);
         if let Some(profile) = &self.profile {
             loader = loader.profile_name(profile);
@@ -146,13 +194,68 @@ impl Config {
         if let Some(credentials) = credentials {
             loader = loader.credentials_provider(credentials);
         }
-        loader.load().await
+        Ok(loader.load().await)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_trust_loading_retains_slot_until_native_work_finishes() {
+        use onetui_core::provider::RequestContext;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        fn unused_http() -> SharedHttpClient {
+            aws_smithy_http_client::Builder::new()
+                .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+                    aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
+                ))
+                .build_https()
+        }
+
+        let (release, blocked) = std::sync::mpsc::channel::<()>();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (cancel, mut context) = RequestContext::new(Duration::from_secs(3));
+        let first = tokio::spawn(async move {
+            context
+                .run(load_http(move || {
+                    let _ = started.send(());
+                    let _ = blocked.recv();
+                    unused_http()
+                }))
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), ready)
+            .await
+            .unwrap()
+            .unwrap();
+        cancel.send(()).unwrap();
+        assert!(first.await.unwrap().is_err());
+
+        let entered = Arc::new(AtomicBool::new(false));
+        let marker = entered.clone();
+        let (_cancel, mut context) = RequestContext::new(Duration::from_millis(30));
+        assert!(
+            context
+                .run(load_http(move || {
+                    marker.store(true, Ordering::SeqCst);
+                    unused_http()
+                }))
+                .await
+                .is_err()
+        );
+        assert!(!entered.load(Ordering::SeqCst));
+
+        release.send(()).unwrap();
+        let (_cancel, mut context) = RequestContext::new(Duration::from_secs(1));
+        context.run(load_http(unused_http)).await.unwrap().unwrap();
+    }
+
     #[test]
     fn strict_offline_config_and_explicit_local_credentials() {
         let config = Config::parse(&toml::from_str("region='eu-west-1'").unwrap()).unwrap();
