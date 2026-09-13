@@ -96,7 +96,7 @@ async fn fixture_streams_preserve_seed_images_and_sequence_bookmarks() {
     let page = e
         .fetch_page(
             PageRequest {
-                resource,
+                resource: resource.clone(),
                 continuation,
             },
             ctx,
@@ -104,6 +104,14 @@ async fn fixture_streams_preserve_seed_images_and_sequence_bookmarks() {
         .await
         .unwrap();
     assert_eq!(cell(&page, 0, "record"), expected);
+    let sequence = expected["dynamodb"]["SequenceNumber"].as_str().unwrap();
+    let mut read = json!({"operation":"GetRecords","shard_id":resource.path[1],"sequence_number":sequence,"limit":2});
+    let inclusive = query(&e, &resource.path[0], &read.to_string(), None).await;
+    assert_eq!(cell(&inclusive, 0, "record"), expected);
+    assert_eq!(inclusive.rows.len(), 2);
+    read["after"] = json!(true);
+    let exclusive = query(&e, &resource.path[0], &read.to_string(), None).await;
+    assert_eq!(cell(&exclusive, 0, "record"), cell(&inclusive, 1, "record"));
 }
 
 #[tokio::test]

@@ -34,6 +34,14 @@ Open **Streams** → a stream → **Shards** → a shard to read retained record
 
 For custom endpoints, also set `streams_endpoint_url`; OneTUI never guesses it. DynamoDB Local sometimes returns untagged `{}` for empty maps in stream images. The SDK rejects those values; OneTUI shows the original JSON and a decoding warning, without guessing the missing type.
 
+On a shard or record, `:query` fills in the selected shard and sequence for replay:
+
+```json
+{"operation":"GetRecords","shard_id":"shard-id","sequence_number":"123","after":false,"limit":100}
+```
+
+Replace the sample identifiers with values from the stream. `after: false` includes the requested sequence; `true` starts after it. Stream scope comes from the current view. Empty pages retain that start position, and trimmed sequences return the native error. All fields are listed in `onetui schema --datasource dynamodb`.
+
 Batch/transactional reads and PartiQL are not supported yet. No writes or administration.
 
 For local samples, use `make dev-up`, then `make run` → `local_dynamodb`. The fixture uses fake credentials and keeps its data in memory. `make test-integration` includes package-owned DynamoDB Local tests; it refuses to reset existing fixtures.

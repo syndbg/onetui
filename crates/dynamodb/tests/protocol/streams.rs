@@ -18,6 +18,106 @@ fn records_request(continuation: Option<String>) -> PageRequest {
     request("dynamodb.records", &[ARN, SHARD], continuation)
 }
 
+async fn replay(
+    e: &DynamoDbExecutor,
+    text: &str,
+    continuation: Option<String>,
+) -> anyhow::Result<Page> {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    e.query_page(
+        QueryRequest {
+            page: request("dynamodb.query", &[ARN], continuation),
+            text: text.into(),
+        },
+        context,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn inclusive_replay_survives_empty_pages_and_expiry_without_skipping_start() {
+    let expired = (
+        400,
+        json!({"__type":"ExpiredIteratorException","message":"iterator expired"}).to_string(),
+    );
+    let mut responses = replies(vec![
+        json!({"ShardIterator":"at-start"}),
+        json!({"Records":[],"NextShardIterator":"empty"}),
+    ]);
+    responses.push(expired.clone());
+    responses.extend(replies(vec![
+        json!({"ShardIterator":"renewed-at-start"}),
+        json!({"Records":[record("9"),record("00010")],"NextShardIterator":"after-ten"}),
+    ]));
+    responses.push(expired);
+    responses.extend(replies(vec![
+        json!({"ShardIterator":"renewed-after-ten"}),
+        json!({"Records":[record("11")]}),
+    ]));
+    let server = Server::start(responses);
+    let e = server.executor();
+    let text = format!(
+        r#"{{"operation":"GetRecords","shard_id":"{SHARD}","sequence_number":"0009","limit":2}}"#
+    );
+    let first = replay(&e, &text, None).await.unwrap();
+    assert!(first.rows.is_empty() && first.next);
+    let changed = text.replace("0009", "0008");
+    assert!(
+        replay(&e, &changed, first.continuation.clone())
+            .await
+            .is_err()
+    );
+    let second = replay(&e, &text, first.continuation).await.unwrap();
+    assert_eq!(
+        cell(&second, 0, "record").unwrap()["dynamodb"]["SequenceNumber"],
+        "9"
+    );
+    let third = replay(&e, &text, second.continuation).await.unwrap();
+    assert_eq!(
+        cell(&third, 0, "record").unwrap()["dynamodb"]["SequenceNumber"],
+        "11"
+    );
+    assert!(!third.next);
+    let calls = server.finish();
+    assert_eq!(calls[0].1["ShardIteratorType"], "AT_SEQUENCE_NUMBER");
+    assert_eq!(calls[0].1["SequenceNumber"], "0009");
+    assert_eq!(calls[1].1["Limit"], 2);
+    assert_eq!(calls[3].1["ShardIteratorType"], "AT_SEQUENCE_NUMBER");
+    assert_eq!(calls[3].1["SequenceNumber"], "0009");
+    assert_eq!(calls[6].1["ShardIteratorType"], "AFTER_SEQUENCE_NUMBER");
+    assert_eq!(calls[6].1["SequenceNumber"], "00010");
+}
+
+#[tokio::test]
+async fn explicit_after_replay_and_trimmed_sequences_keep_native_semantics() {
+    let mut responses = replies(vec![
+        json!({"ShardIterator":"after"}),
+        json!({"Records":[record("11")]}),
+    ]);
+    responses.push((
+        400,
+        json!({"__type":"TrimmedDataAccessException","message":"requested sequence was trimmed"})
+            .to_string(),
+    ));
+    let server = Server::start(responses);
+    let e = server.executor();
+    let text = format!(
+        r#"{{"operation":"GetRecords","shard_id":"{SHARD}","sequence_number":"10","after":true,"limit":1}}"#
+    );
+    let page = replay(&e, &text, None).await.unwrap();
+    assert_eq!(page.rows.len(), 1);
+    let error = replay(&e, &text, None).await.unwrap_err().to_string();
+    assert!(
+        error.contains("TrimmedDataAccessException")
+            && error.contains("requested sequence was trimmed"),
+        "{error}"
+    );
+    let calls = server.finish();
+    assert_eq!(calls[0].1["ShardIteratorType"], "AFTER_SEQUENCE_NUMBER");
+    assert_eq!(calls[1].1["Limit"], 1);
+    assert_eq!(calls.len(), 3);
+}
+
 #[tokio::test]
 async fn inventory_shards_and_descriptions_use_only_native_streams_reads() {
     let server = Server::start(replies(vec![

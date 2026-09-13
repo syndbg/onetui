@@ -262,6 +262,24 @@ mod tests {
         assert!(scoped.accepts(&Resource::new("messages", vec!["stream".into()])));
         assert!(!scoped.accepts(&Resource::new("messages", vec![])));
         assert!(!scoped.accepts(&Resource::new("objects", vec!["bucket".into()])));
+        assert_eq!(
+            scoped.initial_text(&Resource::new("messages", vec!["stream".into()]), None),
+            "{}"
+        );
+        let contextual = QueryDescriptor {
+            contextual_example: Some(|resource, _| resource.path[0].clone()),
+            ..scoped
+        };
+        assert_eq!(
+            contextual.initial_text(&Resource::new("messages", vec!["stream".into()]), None),
+            "stream"
+        );
+        assert!(
+            serde_json::to_value(contextual)
+                .unwrap()
+                .get("contextual_example")
+                .is_none()
+        );
         assert!(
             QueryDescriptor {
                 scope_resources: &[],
