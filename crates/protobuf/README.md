@@ -49,6 +49,8 @@ fn main() -> anyhow::Result<()> {
 
 `Decoded::value()` preserves bytes, unknown fields and enum numbers. Protobuf JSON represents 64-bit integers as strings and bytes as base64; it can omit type information and unknown fields, so it is not a lossless export. Raw bytes remain available after a JSON-presentation error. `decode` borrows its input; an error leaves the caller's data untouched. The decoder never falls back to another format.
 
+`Decoded::native()` produces typed JSON with field names/numbers/types, byte arrays, enum numbers and unknown field wire types/re-encoded bytes. It includes populated fields and extensions, not a dump of every absent schema field. Maps have stable key ordering. Re-encoding is not an exact original wire slice; retain `raw()` for that. The 1 MiB streaming output limit applies, independently of JSON conversion, including for `Any` and non-finite floats.
+
 ## Bounds and limitations
 
 | Limit | Enforcement |

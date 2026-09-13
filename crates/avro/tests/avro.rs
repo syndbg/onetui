@@ -37,6 +37,14 @@ fn writer_schema_preserves_union_bytes_logical_types_and_provenance() {
     let json: serde_json::Value = serde_json::from_str(&decoded.json().unwrap()).unwrap();
     assert_eq!(json["data"], serde_json::json!([255, 0]));
     assert_eq!(json["note"], "Hi");
+    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    assert_eq!(native["type"], "record");
+    assert_eq!(native["fields"][1][1]["type"], "bytes");
+    assert_eq!(native["fields"][1][1]["value"], serde_json::json!([255, 0]));
+    assert_eq!(native["fields"][2][1]["branch"], 1);
+    assert_eq!(native["fields"][2][1]["value"]["type"], "string");
+    assert_eq!(native["fields"][3][1]["type"], "date");
+    assert_eq!(native["fields"][4][1]["type"], "decimal");
     assert_ne!(
         decoder.schema_id(),
         Decoder::new(&format!("{schema} ")).unwrap().schema_id()
@@ -146,6 +154,8 @@ fn unsupported_decimal_and_json_failure_keep_raw_access() {
     let raw = f64::NAN.to_le_bytes();
     let decoded = double.decode(&raw).unwrap();
     assert!(decoded.json().is_err());
+    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    assert_eq!(native, serde_json::json!({"type":"double","value":"NaN"}));
     assert_eq!(decoded.raw(), raw);
     assert!(matches!(decoded.value(), Value::Double(v) if v.is_nan()));
 }

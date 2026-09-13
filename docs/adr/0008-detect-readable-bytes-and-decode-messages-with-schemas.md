@@ -13,7 +13,7 @@ This replaces only the opaque-bytes-always-use-hex rule in [ADR-0004](0004-prese
 
 Protobuf and Avro decoding requires explicit schema and framing choices. Auto is a display convenience, not serialization detection: binary messages can happen to be valid UTF-8. A successful decode also cannot prove that the selected schema is correct.
 
-Readable Auto display, raw decoder libraries and Kafka JSON-preview bindings are implemented. Confluent Avro and Protobuf registry access is implemented; reader-schema resolution and native-type inspection remain planned. The [Protobuf](../../crates/protobuf/README.md) and [Avro](../../crates/avro/README.md) guides describe each library's bounds and unsupported types. [Kafka usage](../kafka.md#schema-bound-key-and-value-previews) documents the implemented settings.
+The [Protobuf](../../crates/protobuf/README.md) and [Avro](../../crates/avro/README.md) guides describe library bounds; [Kafka usage](../kafka.md#schema-bound-key-and-value-previews) documents bindings.
 
 ## Decoder boundary
 
@@ -43,6 +43,10 @@ For Protobuf, use `prost-reflect`: its `DescriptorPool` loads a `FileDescriptorS
 For Avro, use `apache-avro`'s generic datum reader with the writer schema. Reader-schema resolution is an explicit optional choice, not a substitution of the latest schema. Raw datums are not object-container files; the container reader is not interchangeable with datum decoding. [Datum-reader documentation](https://docs.rs/apache-avro/latest/apache_avro/reader/datum/fn.from_avro_datum.html)
 
 Preserve decoded type information for Protobuf bytes, unknown fields and enum values, and Avro bytes, unions and logical types. A JSON presentation is a derived interpretation, not a lossless export format; raw bytes remain authoritative. Missing Protobuf imports or `Any` descriptors produce a visible limitation rather than an automatic network fetch.
+
+Expose typed inspection through the existing row/value viewer, alongside JSON. Keep each representation's errors separate. Protobuf unknown fields include their number, wire type and re-encoded bytes; do not present those bytes as an exact original wire slice.
+
+An optional Avro reader schema changes the JSON projection, not the retained writer value. Inspect writer and reader values together, identify both schemas, and keep writer inspection available when resolution fails. Bound default expansion before native resolution. Never choose a reader schema automatically from a registry's latest version.
 
 ## Framing and registry access
 

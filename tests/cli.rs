@@ -5,6 +5,14 @@ fn binary() -> Command {
 }
 
 #[test]
+fn publishing_is_not_a_cli_command() {
+    let output = binary().args(["write", "kafka.publish"]).output().unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("unrecognized subcommand 'write'"), "{error}");
+}
+
+#[test]
 fn help_version_and_nonterminal_error_work_without_configuration() {
     for arg in ["--help", "--version"] {
         let output = binary().arg(arg).output().unwrap();

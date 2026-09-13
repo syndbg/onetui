@@ -22,7 +22,9 @@ async fn exercise_binding(catalog: bool) {
     let topic = format!("onetui_avro_{}_{}", std::process::id(), catalog);
     let dir = tempfile::tempdir().unwrap();
     let schema = dir.path().join("event.avsc");
-    std::fs::write(&schema, r#""long""#).unwrap();
+    std::fs::write(&schema, r#""int""#).unwrap();
+    let reader = dir.path().join("reader.avsc");
+    std::fs::write(&reader, r#""long""#).unwrap();
     let mut options = toml::Table::new();
     options.insert(
         "bootstrap_servers".into(),
@@ -34,6 +36,7 @@ async fn exercise_binding(catalog: bool) {
     binding.insert("field".into(), "value".into());
     binding.insert("format".into(), "avro".into());
     binding.insert("framing".into(), "raw".into());
+    binding.insert("reader_schema_file".into(), reader.to_str().unwrap().into());
     if catalog {
         let mut source = toml::Table::new();
         source.insert("directory".into(), dir.path().to_str().unwrap().into());
@@ -109,6 +112,18 @@ async fn exercise_binding(catalog: bool) {
             std::fs::write(&schema, b"invalid replacement").unwrap();
         }
         assert_eq!(first.rows[0].cells[5], Some(Value::Json("7".into())));
+        let native: serde_json::Value =
+            serde_json::from_slice(first.rows[0].cells[8].as_ref().unwrap().bytes()).unwrap();
+        assert_eq!(native["writer"]["type"], "int");
+        assert_eq!(native["reader"]["type"], "long");
+        assert!(
+            first.rows[0].cells[6]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("&reader=")
+        );
         assert!(first.rows[1].cells[5].is_none() && first.rows[1].cells[7].is_some());
         assert!(first.rows[2].cells[7].is_some());
         assert!(first.rows[3].cells[5].is_none() && first.rows[3].cells[7].is_none());

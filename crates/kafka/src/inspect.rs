@@ -194,6 +194,7 @@ unsafe fn configs(
                             .into(),
                     ),
                     Some(sensitive.to_string().into()),
+                    Some(config_synonyms(entry, sensitive)?),
                 ],
                 target: None,
             });
@@ -211,6 +212,53 @@ unsafe fn config_value(sensitive: bool, value: *const std::ffi::c_char) -> Resul
         Ok(None)
     } else {
         Ok(Some(unsafe { text(value)? }.into()))
+    }
+}
+
+unsafe fn config_synonyms(
+    entry: *const native::rd_kafka_ConfigEntry_t,
+    sensitive: bool,
+) -> Result<Value> {
+    // Synonyms borrow the same event as their parent. Preserve broker precedence,
+    // and never expose a sensitive parent's value through a synonym.
+    unsafe {
+        let mut count = 0;
+        let entries = native::rd_kafka_ConfigEntry_synonyms(entry, &mut count);
+        let mut json = String::from("[");
+        for &synonym in slice(entries, i32::try_from(count)?)? {
+            ensure!(
+                !synonym.is_null(),
+                "Kafka returned a null configuration synonym"
+            );
+            let name = text(native::rd_kafka_ConfigEntry_name(synonym))?;
+            let source = text(native::rd_kafka_ConfigSource_name(
+                native::rd_kafka_ConfigEntry_source(synonym),
+            ))?;
+            let hidden = sensitive || native::rd_kafka_ConfigEntry_is_sensitive(synonym) != 0;
+            let value = native::rd_kafka_ConfigEntry_value(synonym);
+            let value = if hidden || value.is_null() {
+                None
+            } else {
+                Some(text(value)?)
+            };
+            ensure!(
+                name.len() + source.len() + value.map_or(0, str::len) <= PAGE_BYTES,
+                "Kafka configuration synonym exceeds 1 MiB"
+            );
+            let item = serde_json::to_string(&serde_json::json!({
+                "name": name, "value": value, "source": source
+            }))?;
+            ensure!(
+                json.len() + item.len() + 2 <= PAGE_BYTES,
+                "Kafka configuration synonyms exceed 1 MiB"
+            );
+            if json.len() > 1 {
+                json.push(',');
+            }
+            json.push_str(&item);
+        }
+        json.push(']');
+        Ok(Value::Json(json))
     }
 }
 

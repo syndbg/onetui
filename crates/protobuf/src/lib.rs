@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 mod bounds;
+mod inspect;
 mod protobuf;
 mod source;
 
@@ -94,5 +95,10 @@ impl Decoded {
     pub fn json(&self) -> Result<String> {
         protobuf::check_json(&self.value)?;
         bounds::json(&self.value)
+    }
+
+    /// Typed inspection, including unknown field wire types and re-encoded bytes.
+    pub fn native(&self) -> Result<String> {
+        bounds::json(&inspect::Message(&self.value))
     }
 }

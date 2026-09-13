@@ -24,6 +24,8 @@ Register the connector through the built-in provider and executor enums in [ADR-
 
 ## Browsing contract
 
+Browsing and following use one selected topic, optionally one partition. Cross-topic views are permanently rejected; topic selection is the browsing boundary.
+
 The browsing path is `kafka.topics` → `kafka.partitions` → `kafka.records`. `check` reads metadata only. Opening records explicitly reads one selected partition at a numeric offset; it does not subscribe to a topic or participate in an application's consumer group.
 
 Disable automatic commits, automatic offset storage and topic auto-creation. Set `auto.offset.reset=error` and assign explicit offsets rather than consulting committed positions. The high-level client requires a group ID for assignment, so generate a private session ID with the `onetui-` prefix. Its coordinator lookup requires group `Describe` permission; it does not require group `Read` permission or authorize subscribing, committing or resetting offsets. These safety settings are connector-owned, not arbitrary user overrides.

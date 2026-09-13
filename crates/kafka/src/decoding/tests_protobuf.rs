@@ -47,6 +47,7 @@ fn protobuf_binding(catalog: bool) {
     .encode_to_vec();
     std::fs::write(&path, &schema).unwrap();
     let mut binding = Binding {
+        reader_schema_file: None,
         topic: "events".into(),
         field: Field::Key,
         format: Format::Protobuf,

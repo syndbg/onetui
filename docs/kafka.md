@@ -1,5 +1,7 @@
 # Kafka browsing
 
+Browsing and following stay within one selected topic. Cross-topic views will not be supported.
+
 The Kafka connector uses `rdkafka` with a dedicated native owner thread and the same provider interface as the other datasources. It supports historical browsing and live following of a partition or a whole topic.
 
 ## Configuration
@@ -104,7 +106,7 @@ Group/member arrays are limited to 4 MiB of native structures during conversion,
 
 ### Configuration and group offsets
 
-For local topic settings, run `make run` and choose `local_kafka` → Topics → `demo_events` → Configuration. The `kafka.topic_config` and `kafka.broker_config` views show each setting's name, value, source and `is_default`, `is_read_only`, `is_sensitive` flags. OneTUI withholds every value marked sensitive. Null also represents a value the broker did not return; an empty string remains distinct. Synonyms and secret retrieval are not supported.
+For local topic settings, run `make run` and choose `local_kafka` → Topics → `demo_events` → Configuration. The `kafka.topic_config` and `kafka.broker_config` views show each setting's name, value, source and `is_default`, `is_read_only`, `is_sensitive` flags. Open `synonyms` to see fallback names, values and sources in broker precedence order; an empty list means none returned. Sensitive values are null, including synonyms of a sensitive setting. Null also represents a value the broker did not return; an empty string remains distinct. Secret retrieval is not supported.
 
 Configuration reads require `DescribeConfigs` on the selected topic, or on the cluster for broker configuration. These permissions are separate from record-reading permissions. The disposable `fixture-reader` account deliberately lacks them so tests can verify native authorization errors; the local plaintext connection can inspect the fixtures.
 
@@ -191,6 +193,7 @@ onetui --config "$HOME/onetui.toml" --connection events
 | `format` | Required `"avro"` or `"protobuf"`; case-sensitive. |
 | `framing` | Required `"raw"` or `"confluent"`. Raw requires exactly one of `schema_file`, `catalog` or `buf`; Confluent requires `registry`. No automatic detection. |
 | `schema_file` | Raw framing only, mutually exclusive with `catalog` and `buf`. Absolute regular-file path, at most 4,096 UTF-8 bytes without controls. File contents are limited to 256 KiB. No path expansion. |
+| `reader_schema_file` | Optional Avro-only reader projection for raw, catalog or registry bindings. Self-contained JSON schema, with the same file/path limits as `schema_file`. Omit to display writer values. |
 | `catalog` | Optional local-directory source for raw framing; see below. |
 | `buf` | Optional Buf descriptor source for raw Protobuf; explicit commit or label, pinned for the session. |
 | `message_name` | Required for raw Protobuf: exact full name, 1..1,024 UTF-8 bytes without controls. Forbidden for Avro and Confluent framing; Protobuf registry records select their message through envelope indexes. |
@@ -201,11 +204,15 @@ The worker loads a local schema on its first relevant read; `--check` loads each
 
 Each bound field adds `FIELD_decoded`, `FIELD_schema` and `FIELD_decode_error` columns. Enter on a record lists all fields; Enter on a field opens its full value. The original `key` and `value` remain unchanged. Select those originals and use `v`, `:display format hex` or `:display format binary` to inspect wire bytes. Hex on a decoded JSON field shows serialized JSON bytes, not the original message.
 
+Open `FIELD_native` for typed inspection: Avro union branches, bytes and logical types; Protobuf field types, enum numbers and unknown fields. Unknown Protobuf fields include their wire type and re-encoded bytes, not an exact slice of the original payload. `FIELD_native_error` is independent of the JSON error, so native inspection remains available when JSON conversion fails. Both previews use the same display controls and byte limits.
+
+For an Avro reader projection, add `reader_schema_file = "/absolute/event-reader.avsc"` to that field's binding. JSON uses the reader result; native inspection shows both `writer` and `reader`, or a `reader_error`. The schema identity includes the reader hash. Reader files and failures are cached until reopening; `--check` validates the file. A registry still resolves the exact writer ID, never `latest`. Reader defaults are bounded before resolution using conservative depth/node/name budgets; exceeding them leaves writer inspection and raw bytes available.
+
 Null keys/tombstones are not decoded; empty bytes are decoded and may be valid or invalid for the chosen schema. Schema, decode and JSON-conversion errors appear per value without dropping records or stopping following. Error text keeps the library wording, capped at 512 UTF-8 bytes with `...`; the shared renderer escapes terminal controls.
 
 Previews use the library allocation/depth limits and accept at most 64 KiB of payload. JSON previews are capped at 64 KiB and must fit the remaining 1 MiB page budget. Bound topics reserve 2 KiB of raw-page capacity for column metadata; a raw record that cannot fit still fails the page explicitly. If preview metadata cannot fit, all preview cells are null and the page notice explains the omission. Columns stay stable across empty or budget-limited live batches. Omitting a preview does not change raw values or broker continuations.
 
-JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. The libraries retain native types during decoding, but the browser has no native-type inspector yet. Reader-schema resolution remains unsupported. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
+JSON is not a lossless typed export: Protobuf JSON omits unknown fields and uses strings for 64-bit integers/base64 for bytes; Avro JSON can flatten union and logical-type information. Native inspection exposes those distinctions; original bytes remain authoritative. See [ADR-0008](adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md).
 
 ### Local directory catalogs
 

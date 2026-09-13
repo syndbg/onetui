@@ -7,6 +7,30 @@ const SCHEMA_BYTES: usize = 256 * 1024;
 const PREVIEW_BYTES: usize = 64 * 1024;
 const ERROR_BYTES: usize = 512;
 
+#[derive(Debug)]
+pub(crate) struct Preview {
+    pub json: Result<String>,
+    pub native: Result<String>,
+}
+
+impl Preview {
+    pub fn avro(decoder: &onetui_avro::Decoder, raw: &[u8]) -> Result<Self> {
+        let decoded = decoder.decode(raw)?;
+        Ok(Self {
+            json: decoded.json(),
+            native: decoded.native(),
+        })
+    }
+
+    pub fn protobuf(decoder: &onetui_protobuf::Decoder, raw: &[u8]) -> Result<Self> {
+        let decoded = decoder.decode(raw)?;
+        Ok(Self {
+            json: decoded.json(),
+            native: decoded.native(),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Field {
@@ -45,6 +69,7 @@ pub(crate) struct Binding {
     pub format: Format,
     pub framing: Framing,
     pub schema_file: Option<String>,
+    pub reader_schema_file: Option<String>,
     pub message_name: Option<String>,
     pub registry: Option<crate::registry::Config>,
     pub catalog: Option<crate::catalog::Config>,
@@ -89,6 +114,13 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
             crate::browse::valid_topic(&binding.topic),
             "Invalid decoder topic"
         );
+        if let Some(path) = &binding.reader_schema_file {
+            ensure!(
+                binding.format == Format::Avro,
+                "reader_schema_file requires Avro"
+            );
+            validate_path(path)?;
+        }
         match binding.framing {
             Framing::Raw => {
                 ensure!(
@@ -166,6 +198,23 @@ enum Decoder {
     Protobuf(onetui_protobuf::Decoder),
 }
 
+fn load_reader(
+    binding: &Binding,
+    remaining: &impl Fn() -> Result<()>,
+) -> Result<Option<onetui_avro::ReaderSchema>> {
+    binding
+        .reader_schema_file
+        .as_deref()
+        .map(|path| {
+            remaining()?;
+            let bytes = read_file(path, SCHEMA_BYTES)?;
+            let reader = onetui_avro::ReaderSchema::new(std::str::from_utf8(&bytes)?)?;
+            remaining()?;
+            Ok(reader)
+        })
+        .transpose()
+}
+
 impl Decoder {
     fn load(binding: &mut Binding, remaining: &impl Fn() -> Result<()>) -> Result<Self> {
         remaining()?;
@@ -191,14 +240,20 @@ impl Decoder {
         remaining()?;
         match binding.framing {
             Framing::Raw => match binding.format {
-                Format::Avro => Ok(Self::Avro(onetui_avro::Decoder::with_references(
-                    std::str::from_utf8(&bundle.schema)?,
-                    &bundle
-                        .references
-                        .iter()
-                        .map(|s| std::str::from_utf8(s))
-                        .collect::<std::result::Result<Vec<_>, _>>()?,
-                )?)),
+                Format::Avro => {
+                    let mut decoder = onetui_avro::Decoder::with_references(
+                        std::str::from_utf8(&bundle.schema)?,
+                        &bundle
+                            .references
+                            .iter()
+                            .map(|s| std::str::from_utf8(s))
+                            .collect::<std::result::Result<Vec<_>, _>>()?,
+                    )?;
+                    if let Some(reader) = load_reader(binding, remaining)? {
+                        decoder = decoder.with_reader(reader);
+                    }
+                    Ok(Self::Avro(decoder))
+                }
                 Format::Protobuf => Ok(Self::Protobuf(onetui_protobuf::Decoder::new(
                     &bundle.schema,
                     binding.message_name.as_deref().unwrap(),
@@ -210,17 +265,20 @@ impl Decoder {
         }
     }
 
-    fn schema_id(&self) -> &str {
+    fn schema_id(&self) -> String {
         match self {
-            Self::Avro(decoder) => decoder.schema_id(),
-            Self::Protobuf(decoder) => decoder.schema_id(),
+            Self::Avro(decoder) => match decoder.reader_schema_id() {
+                Some(reader) => format!("{}&reader={reader}", decoder.schema_id()),
+                None => decoder.schema_id().to_owned(),
+            },
+            Self::Protobuf(decoder) => decoder.schema_id().to_owned(),
         }
     }
 
-    fn json(&self, raw: &[u8]) -> Result<String> {
+    fn preview(&self, raw: &[u8]) -> Result<Preview> {
         match self {
-            Self::Avro(decoder) => decoder.decode(raw)?.json(),
-            Self::Protobuf(decoder) => decoder.decode(raw)?.json(),
+            Self::Avro(decoder) => Preview::avro(decoder, raw),
+            Self::Protobuf(decoder) => Preview::protobuf(decoder, raw),
         }
     }
 }
@@ -247,13 +305,19 @@ impl Entry {
         })
     }
 
-    fn registry(&mut self) -> Result<&mut crate::registry::Registry> {
+    fn registry(
+        &mut self,
+        remaining: &impl Fn() -> Result<()>,
+    ) -> Result<&mut crate::registry::Registry> {
         self.registry
             .get_or_insert_with(|| {
                 crate::registry::Registry::new(
                     self.binding.registry.clone().unwrap(),
                     self.binding.format,
                 )
+                .and_then(|registry| {
+                    Ok(registry.with_reader(load_reader(&self.binding, remaining)?))
+                })
                 .map_err(|e| format!("{e:#}"))
             })
             .as_mut()
@@ -264,9 +328,9 @@ impl Entry {
         &mut self,
         raw: &[u8],
         remaining: &impl Fn() -> Result<()>,
-    ) -> (Option<String>, Result<String>) {
+    ) -> (Option<String>, Result<Preview>) {
         if self.binding.registry.is_some() {
-            return match self.registry() {
+            return match self.registry(remaining) {
                 Ok(registry) => registry.preview(raw, remaining),
                 Err(error) => (None, Err(error)),
             };
@@ -276,7 +340,7 @@ impl Entry {
         let result = decoder
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error}"))
-            .and_then(|d| d.decoder.json(raw));
+            .and_then(|d| d.decoder.preview(raw));
         (identity.or_else(|| self.buf_identity()), result)
     }
     fn load(&mut self, remaining: &impl Fn() -> Result<()>) -> &Result<Loaded, String> {
@@ -321,7 +385,7 @@ impl Bindings {
         for entry in &mut self.0 {
             remaining()?;
             if entry.binding.registry.is_some() {
-                entry.registry()?.check(&remaining)?;
+                entry.registry(&remaining)?.check(&remaining)?;
             } else {
                 entry
                     .load(&remaining)
@@ -377,11 +441,13 @@ impl Bindings {
             } else {
                 identity.as_ref().map_or(0, String::len)
             };
-            reserved += page.rows.len() * (identity_bytes + ERROR_BYTES);
+            reserved += page.rows.len() * (identity_bytes + 2 * ERROR_BYTES);
             for (suffix, datatype) in [
                 ("decoded", "JSON projection (not wire bytes)"),
                 ("schema", "schema identity"),
                 ("decode_error", "text"),
+                ("native", "JSON typed inspection (not wire bytes)"),
+                ("native_error", "text"),
             ] {
                 columns.push(Column {
                     name: format!("{name}_{suffix}"),
@@ -421,9 +487,9 @@ impl Bindings {
         for row in &mut page.rows {
             for (index, entry, identity) in &mut selected {
                 remaining()?;
-                let mut error = None;
                 let mut schema_identity = identity.clone();
-                let decoded = if let Some(value) = &row.cells[*index] {
+                let (decoded, error, native, native_error) = if let Some(value) = &row.cells[*index]
+                {
                     let result = if available == 0 {
                         Err(anyhow::anyhow!(
                             "Decoded preview exceeds remaining page budget"
@@ -433,33 +499,23 @@ impl Bindings {
                         schema_identity = resolved;
                         result
                     };
-                    match result {
-                        Ok(json) if json.len() <= PREVIEW_BYTES.min(available) => {
-                            available -= json.len();
-                            Some(Value::Json(json))
-                        }
-                        Ok(_) => {
-                            error = Some(
-                                "Decoded preview exceeds 64 KiB or remaining page budget".into(),
-                            );
-                            None
-                        }
-                        Err(cause) => {
-                            let mut message = format!("{cause:#}");
-                            if message.len() > ERROR_BYTES {
-                                let end = message.floor_char_boundary(ERROR_BYTES - 3);
-                                message.truncate(end);
-                                message.push_str("...");
-                            }
-                            error = Some(Value::Text(message));
-                            None
-                        }
-                    }
+                    let (json, native) = match result {
+                        Ok(preview) => (preview.json, preview.native),
+                        Err(error) => (Err(anyhow::anyhow!("{error:#}")), Err(error)),
+                    };
+                    let (decoded, error) = preview_cell(json, &mut available);
+                    let (native, native_error) = preview_cell(native, &mut available);
+                    (decoded, error, native, native_error)
                 } else {
-                    None
+                    (None, None, None, None)
                 };
-                row.cells
-                    .extend([decoded, schema_identity.map(Value::Text), error]);
+                row.cells.extend([
+                    decoded,
+                    schema_identity.map(Value::Text),
+                    error,
+                    native,
+                    native_error,
+                ]);
             }
         }
         remaining()?;
@@ -469,6 +525,23 @@ impl Bindings {
         );
         Ok(())
     }
+}
+
+fn preview_cell(result: Result<String>, available: &mut usize) -> (Option<Value>, Option<Value>) {
+    let error = match result {
+        Ok(json) if json.len() <= PREVIEW_BYTES.min(*available) => {
+            *available -= json.len();
+            return (Some(Value::Json(json)), None);
+        }
+        Ok(_) => anyhow::anyhow!("Decoded preview exceeds 64 KiB or remaining page budget"),
+        Err(error) => error,
+    };
+    let mut message = format!("{error:#}");
+    if message.len() > ERROR_BYTES {
+        message.truncate(message.floor_char_boundary(ERROR_BYTES - 3));
+        message.push_str("...");
+    }
+    (None, Some(Value::Text(message)))
 }
 
 #[cfg(test)]

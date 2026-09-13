@@ -32,6 +32,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
             "is_default",
             "is_read_only",
             "is_sensitive",
+            "synonyms",
         ],
         paging: true,
         actions: &[],
@@ -46,6 +47,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
             "is_default",
             "is_read_only",
             "is_sensitive",
+            "synonyms",
         ],
         paging: true,
         actions: &[],
@@ -262,6 +264,7 @@ pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
                     "is_default" | "is_read_only" | "is_sensitive" => "boolean",
                     "key" | "value" | "metadata" | "assignment" => "bytes",
                     "headers" => "JSON (ordered header names and nullable byte arrays)",
+                    "synonyms" => "JSON (configuration precedence order)",
                     "offset" | "timestamp_ms" | "partition" | "leader" | "partitions" | "port"
                     | "members" | "committed" | "low" | "stable_end" | "lag" => "integer",
                     "id" if resource.id == "kafka.brokers" => "integer",

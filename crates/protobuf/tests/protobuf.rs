@@ -92,6 +92,22 @@ fn raw_typed_fields_unknown_enum_and_unknown_fields_survive() {
     assert_eq!(json["data"], "/wA=");
     assert_eq!(json["state"], 99);
     assert_eq!(json["scores"], serde_json::json!([1, 2, 3]));
+    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    assert_eq!(native["type"], "demo.Event");
+    assert_eq!(native["fields"][0]["datatype"], "int64");
+    assert_eq!(native["fields"][0]["value"]["value"], 7);
+    assert_eq!(native["fields"][2]["value"]["type"], "bytes");
+    assert_eq!(
+        native["fields"][2]["value"]["value"],
+        serde_json::json!([255, 0])
+    );
+    assert_eq!(native["fields"][3]["value"]["value"], 99);
+    assert_eq!(native["unknown_fields"][0]["number"], 99);
+    assert_eq!(native["unknown_fields"][0]["wire_type"], "Varint");
+    assert_eq!(
+        native["unknown_fields"][0]["encoded"],
+        serde_json::json!([152, 6, 123])
+    );
 }
 
 #[test]
@@ -194,6 +210,7 @@ fn any_unpacked_json_is_an_error_without_losing_typed_or_raw_data() {
     let raw = [18, 2, 255, 0];
     let decoded = decoder.decode(&raw).unwrap();
     assert!(decoded.json().unwrap_err().to_string().contains("Any JSON"));
+    assert!(decoded.native().unwrap().contains("bytes"));
     assert_eq!(decoded.raw(), raw);
     assert_eq!(
         decoded
@@ -216,5 +233,6 @@ fn json_output_expansion_is_bounded_before_allocation() {
     let raw: Vec<_> = (0..1000).flat_map(|_| [50, 3, 18, 1, b'a']).collect();
     let decoded = decoder.decode(&raw).unwrap();
     assert!(decoded.json().unwrap_err().to_string().contains("1 MiB"));
+    assert!(decoded.native().unwrap_err().to_string().contains("1 MiB"));
     assert_eq!(decoded.raw(), raw);
 }

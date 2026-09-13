@@ -495,6 +495,12 @@ async fn kafka_browses_seeded_partitions_and_refetches_old_bookmarks() {
         .unwrap();
     assert_eq!(cleanup.cells[1], Some("delete".into()));
     assert_eq!(config.columns[1].datatype, "text");
+    assert_eq!(config.columns[6].name, "synonyms");
+    let synonyms: serde_json::Value =
+        serde_json::from_slice(cleanup.cells[6].as_ref().unwrap().bytes()).unwrap();
+    assert!(!synonyms.as_array().unwrap().is_empty());
+    assert_eq!(synonyms[0]["value"], "delete");
+    assert!(synonyms[0]["source"].is_string());
     let broker_resource = brokers.rows[0].target.clone().unwrap();
     let first_config = fetch(&executor, broker_resource.clone(), None).await;
     assert_eq!(first_config.rows.len(), 100);
@@ -506,6 +512,15 @@ async fn kafka_browses_seeded_partitions_and_refetches_old_bookmarks() {
             if row.cells[5] == Some("true".into()) {
                 sensitive += 1;
                 assert_eq!(row.cells[1], None, "sensitive config must be withheld");
+                let synonyms: serde_json::Value =
+                    serde_json::from_slice(row.cells[6].as_ref().unwrap().bytes()).unwrap();
+                assert!(
+                    synonyms
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|s| s["value"].is_null())
+                );
             }
         }
         let Some(token) = config_page.continuation else {

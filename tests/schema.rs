@@ -206,6 +206,28 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
     let kafka = &schema["datasources"][0];
     assert_eq!(kafka["id"], "kafka");
     assert_eq!(kafka["entry_resource"], "kafka.resources");
+    assert!(
+        kafka["scope"]
+            .as_str()
+            .unwrap()
+            .contains("permanently out of scope")
+    );
+    assert!(
+        kafka["config_inspection"]
+            .as_str()
+            .unwrap()
+            .contains("synonyms")
+    );
+    assert_eq!(
+        kafka["configuration"]["decoders"]["fields"]["reader_schema_file"]["default"],
+        serde_json::Value::Null
+    );
+    assert!(
+        kafka["configuration"]["decoders"]["columns"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("value_native"))
+    );
     assert_eq!(kafka["query"]["resource"], "kafka.query");
     assert_eq!(kafka["query"]["path_depth"], 2);
     assert_eq!(kafka["query_max_bytes"], 16384);

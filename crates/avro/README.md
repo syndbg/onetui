@@ -38,6 +38,10 @@ fn main() -> anyhow::Result<()> {
 
 `Decoded::value()` preserves bytes, union indexes and logical types. JSON can flatten that information, so it is not a lossless export. Raw bytes remain available after a JSON-presentation error. `decode` borrows its input; an error leaves the caller's data untouched. The decoder never falls back to another format.
 
+`Decoded::native()` produces bounded typed JSON: union branch indexes, enum indexes/symbols, bytes and logical-type tags. Decimal values use unscaled big-endian bytes; precision/scale belong to the schema. Non-finite floats use explicit string values instead of null.
+
+Use `decoder.with_reader(ReaderSchema::new(reader_json)?)` for an explicit reader projection. The reader must define its named types in one document and has its own 256 KiB limit. `json()` uses the reader result; `value()` retains the writer value, and `native()` includes both. Resolution failures leave writer inspection/raw access available. `reader_schema_id()` identifies the reader on the decoder and retained result. Defaults are preflight-bounded before Apache Avro resolves them: depth 32, 4,096 visited nodes and 256 KiB of names/string data. The conservative check charges union candidates and defaults as well as their resolved values.
+
 ## Bounds and limitations
 
 | Limit | Enforcement |
@@ -48,12 +52,13 @@ fn main() -> anyhow::Result<()> {
 | Decode work | 4,096 visited nodes across the datum, including collection entries and map keys. |
 | Copied names | 256 KiB across record field names and enum symbols. Map-key bytes also fit the payload limit. |
 | JSON output | 1 MiB; the writer refuses growth before allocating past this size. |
+| Reader errors | 512 UTF-8 bytes, ending in `...` when truncated; writer inspection remains separate. |
 
 These are fixed library constants, not app settings. A schema-aware wire scan checks lengths and counts before constructing values. It bounds zero-width arrays, nested collection amplification, recursive records and truncated fields without changing Apache Avro's process-global allocation setting. Typed values, schemas, JSON conversion and allocator overhead have separate costs; these limits are not process RSS or wall-clock guarantees. Run decoding outside rendering.
 
 `big-decimal` is rejected because its arbitrary scale needs a separate bound; fixed-scale decimal is supported. NaN/infinity remains a typed float but JSON conversion fails instead of replacing it with null.
 
-Reader-schema resolution, single-object framing and object containers are not implemented. The Kafka adapter owns registry requests and Confluent payload-prefix parsing; this library only accepts caller-supplied schemas and raw datum bytes. Header-GUID framing remains unsupported. [ADR-0008](../../docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the app and registry boundary.
+Single-object framing and object containers are not implemented. The Kafka adapter owns registry requests and Confluent payload-prefix parsing; this library only accepts caller-supplied schemas and raw datum bytes. Header-GUID framing remains unsupported. [ADR-0008](../../docs/adr/0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the app and registry boundary.
 
 ## Validation
 

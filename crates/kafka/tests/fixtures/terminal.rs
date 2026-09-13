@@ -222,8 +222,18 @@ pub(super) fn assert_avro_projection(mut options: toml::Table, topic: &str) {
     pty.send(b"\r");
     pty.wait(&["kafka.records", "100shown/100loaded"]);
     pty.send(b"\r");
-    pty.wait(&["Rowdata", "8fields", "value_decoded", "avro:sha256:"]);
-    pty.send(b"jjj\r");
+    pty.wait(&[
+        "Rowdata",
+        "10fields",
+        "value_decoded",
+        "avro:sha256:",
+        "value_native",
+    ]);
+    pty.send(b"jjjjjjjj\r");
+    pty.wait(&["writer", "reader", "long"]);
+    pty.send(b"\x1b");
+    pty.wait(&["Rowdata", "10fields"]);
+    pty.send(b"kkkkk\r");
     pty.send(b":display format hex\r");
     pty.wait(&["00000000:0e"]);
     pty.send(b"q");

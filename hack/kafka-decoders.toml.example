@@ -12,6 +12,8 @@ field = "value"
 format = "avro"
 framing = "raw"
 schema_file = "/absolute/path/to/event.avsc"
+# Optional Avro reader projection; omit to display writer values.
+# reader_schema_file = "/absolute/path/to/event-reader.avsc"
 
 [[connections.local_kafka.decoders]]
 topic = "orders"

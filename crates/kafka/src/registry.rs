@@ -165,6 +165,7 @@ pub(crate) struct Registry {
     agent: ureq::Agent,
     format: Format,
     cache: VecDeque<(u32, Result<Compiled, String>)>,
+    reader: Option<onetui_avro::ReaderSchema>,
 }
 
 impl Registry {
@@ -175,7 +176,13 @@ impl Registry {
             agent,
             format,
             cache: VecDeque::new(),
+            reader: None,
         })
+    }
+
+    pub fn with_reader(mut self, reader: Option<onetui_avro::ReaderSchema>) -> Self {
+        self.reader = reader;
+        self
     }
 
     fn request(
@@ -379,13 +386,19 @@ impl Registry {
         }
         remaining()?;
         let decoder = match self.format {
-            Format::Avro => Compiled::Avro(onetui_avro::Decoder::with_references(
-                &root.schema,
-                &references
-                    .iter()
-                    .map(|(_, s)| s.as_str())
-                    .collect::<Vec<_>>(),
-            )?),
+            Format::Avro => {
+                let mut decoder = onetui_avro::Decoder::with_references(
+                    &root.schema,
+                    &references
+                        .iter()
+                        .map(|(_, s)| s.as_str())
+                        .collect::<Vec<_>>(),
+                )?;
+                if let Some(reader) = &self.reader {
+                    decoder = decoder.with_reader(reader.clone());
+                }
+                Compiled::Avro(decoder)
+            }
             Format::Protobuf => Compiled::Protobuf(onetui_protobuf::SourceSchema::compile(
                 &root.schema,
                 &references
@@ -406,7 +419,7 @@ impl Registry {
         &mut self,
         raw: &[u8],
         remaining: &impl Fn() -> Result<()>,
-    ) -> (Option<String>, Result<String>) {
+    ) -> (Option<String>, Result<crate::decoding::Preview>) {
         let envelope = || -> Result<(u32, &[u8])> {
             ensure!(raw.len() >= 5, "Truncated Confluent payload prefix");
             ensure!(raw[0] == 0, "Unsupported Confluent version byte");
@@ -426,6 +439,12 @@ impl Registry {
             Err(error) => return (None, Err(error)),
         };
         let mut identity = Some(format!("confluent:{}#id={id}", self.config.url));
+        if let Some(reader) = &self.reader {
+            identity
+                .as_mut()
+                .unwrap()
+                .push_str(&format!("&reader={}", reader.schema_id()));
+        }
         let indexes = if self.format == Format::Protobuf {
             match message_indexes(&mut payload) {
                 Ok(indexes) => indexes,
@@ -465,7 +484,7 @@ impl Registry {
             .as_ref()
             .map_err(|error| anyhow!("{error}"))
             .and_then(|decoder| match decoder {
-                Compiled::Avro(decoder) => decoder.decode(payload)?.json(),
+                Compiled::Avro(decoder) => crate::decoding::Preview::avro(decoder, payload),
                 Compiled::Protobuf(schema) => {
                     let decoder = schema.decoder(&indexes)?;
                     let message = decoder.message_name();
@@ -473,7 +492,7 @@ impl Registry {
                         .as_mut()
                         .unwrap()
                         .push_str(&format!("&message={message}"));
-                    decoder.decode(payload)?.json()
+                    crate::decoding::Preview::protobuf(&decoder, payload)
                 }
             });
         (identity, result)

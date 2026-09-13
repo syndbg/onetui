@@ -30,7 +30,16 @@ async fn avro_registry_browsing_following_replay_and_cancellation() {
         (200, body.to_string())
     });
     let topic = format!("onetui_registry_{}", std::process::id());
-    let options = toml::from_str(&format!("bootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'\n[[decoders]]\ntopic={topic:?}\nfield='value'\nformat='avro'\nframing='confluent'\n[decoders.registry]\nurl={:?}\nca_file={:?}\ntoken_env='FIXTURE_REGISTRY_TOKEN'", registry.url, registry.ca_file.as_deref().unwrap())).unwrap();
+    let mut options: toml::Table = toml::from_str(&format!("bootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'\n[[decoders]]\ntopic={topic:?}\nfield='value'\nformat='avro'\nframing='confluent'\n[decoders.registry]\nurl={:?}\nca_file={:?}\ntoken_env='FIXTURE_REGISTRY_TOKEN'", registry.url, registry.ca_file.as_deref().unwrap())).unwrap();
+    let reader = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(reader.path(), r#"["long","string"]"#).unwrap();
+    options.get_mut("decoders").unwrap().as_array_mut().unwrap()[0]
+        .as_table_mut()
+        .unwrap()
+        .insert(
+            "reader_schema_file".into(),
+            reader.path().to_str().unwrap().into(),
+        );
     let mut native = ClientConfig::new();
     native
         .set("bootstrap.servers", "127.0.0.1:19092")
@@ -88,6 +97,18 @@ async fn avro_registry_browsing_following_replay_and_cancellation() {
         );
         assert_eq!(first.rows[0].cells[5], Some(Value::Json("7".into())));
         assert_eq!(first.rows[1].cells[5], Some(Value::Json("\"a\"".into())));
+        let native: serde_json::Value =
+            serde_json::from_slice(first.rows[1].cells[8].as_ref().unwrap().bytes()).unwrap();
+        assert_eq!(native["writer"]["type"], "string");
+        assert_eq!(native["reader"]["branch"], 1);
+        assert!(
+            first.rows[1].cells[6]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("#id=2&reader=")
+        );
         assert!(
             first.rows[2].cells[7]
                 .as_ref()

@@ -43,23 +43,40 @@ fn exact_ids_references_cache_and_errors() {
     let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
     registry.check(&|| Ok(())).unwrap();
     assert_eq!(
-        registry.preview(&envelope(1, &[14]), &|| Ok(())).1.unwrap(),
+        registry
+            .preview(&envelope(1, &[14]), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
         "7"
     );
     assert_eq!(
         registry
             .preview(&envelope(2, &[2, b'a']), &|| Ok(()))
             .1
+            .unwrap()
+            .json
             .unwrap(),
         "\"a\""
     );
     assert_eq!(
-        registry.preview(&envelope(3, &[14]), &|| Ok(())).1.unwrap(),
+        registry
+            .preview(&envelope(3, &[14]), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
         r#"{"child":{"id":7}}"#
     );
     let before = server.requests.lock().unwrap().len();
     assert_eq!(
-        registry.preview(&envelope(1, &[16]), &|| Ok(())).1.unwrap(),
+        registry
+            .preview(&envelope(1, &[16]), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
         "8"
     );
     assert_eq!(server.requests.lock().unwrap().len(), before);
@@ -89,6 +106,29 @@ fn exact_ids_references_cache_and_errors() {
             .iter()
             .all(|r| !r.contains("latest"))
     );
+}
+
+#[test]
+fn registry_reader_keeps_exact_writer_identity_and_native_values() {
+    let server = Server::start(false, |_| {
+        (200, serde_json::json!({"schema":"\"int\""}).to_string())
+    });
+    let reader = onetui_avro::ReaderSchema::new("\"long\"").unwrap();
+    let mut registry = Registry::new(config(&server), Format::Avro)
+        .unwrap()
+        .with_reader(Some(reader.clone()));
+    let (identity, preview) = registry.preview(&envelope(1, &[14]), &|| Ok(()));
+    let preview = preview.unwrap();
+    assert_eq!(preview.json.unwrap(), "7");
+    assert!(
+        identity
+            .unwrap()
+            .ends_with(&format!("#id=1&reader={}", reader.schema_id()))
+    );
+    let native: serde_json::Value = serde_json::from_str(&preview.native.unwrap()).unwrap();
+    assert_eq!(native["writer"]["type"], "int");
+    assert_eq!(native["reader"]["type"], "long");
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
 
 #[test]
@@ -156,7 +196,12 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
     );
     assert!(server.requests.lock().unwrap().is_empty());
     assert_eq!(
-        registry.preview(&envelope(1, &[14]), &|| Ok(())).1.unwrap(),
+        registry
+            .preview(&envelope(1, &[14]), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
         "7"
     );
     let other = Server::start(false, |_| {
@@ -167,6 +212,8 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
         isolated
             .preview(&envelope(1, &[2, b'a']), &|| Ok(()))
             .1
+            .unwrap()
+            .json
             .unwrap(),
         "\"a\""
     );
@@ -174,7 +221,12 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
     let before = server.requests.lock().unwrap().len();
     let mut reopened = Registry::new(config(&server), Format::Avro).unwrap();
     assert_eq!(
-        reopened.preview(&envelope(1, &[14]), &|| Ok(())).1.unwrap(),
+        reopened
+            .preview(&envelope(1, &[14]), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
         "7"
     );
     assert_eq!(server.requests.lock().unwrap().len(), before + 1);
@@ -255,13 +307,15 @@ fn protobuf_indexes_imports_cache_and_raw_failure_recovery() {
             .unwrap()
             .ends_with("#id=1&message=demo.Outer.Inner")
     );
-    assert_eq!(result.unwrap(), r#"{"child":{"id":7}}"#);
+    assert_eq!(result.unwrap().json.unwrap(), r#"{"child":{"id":7}}"#);
     let requests = server.requests.lock().unwrap().len();
     for payload in [&[0, 8, 7][..], &[2, 0, 8, 7]] {
         assert_eq!(
             registry
                 .preview(&envelope(1, payload), &|| Ok(()))
                 .1
+                .unwrap()
+                .json
                 .unwrap(),
             r#"{"id":7}"#
         );
@@ -290,7 +344,12 @@ fn protobuf_indexes_imports_cache_and_raw_failure_recovery() {
         assert!(registry.preview(&envelope(id, &[0]), &|| Ok(())).1.is_err());
     }
     assert_eq!(
-        registry.preview(&valid, &|| Ok(())).1.unwrap(),
+        registry
+            .preview(&valid, &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
         r#"{"child":{"id":7}}"#
     );
     assert!(

@@ -8,6 +8,7 @@ fn binding(path: &Path) -> Binding {
         format: Format::Avro,
         framing: Framing::Raw,
         schema_file: Some(path.to_str().unwrap().into()),
+        reader_schema_file: None,
         message_name: None,
         registry: None,
         catalog: None,
@@ -117,6 +118,10 @@ fn avro_projection_retains_raw_null_errors_and_session_schema() {
         assert_eq!(row.cells[..2], original);
     }
     assert_eq!(data.rows[0].cells[2], Some(Value::Json("7".into())));
+    let native: serde_json::Value =
+        serde_json::from_slice(data.rows[0].cells[5].as_ref().unwrap().bytes()).unwrap();
+    assert_eq!(native, serde_json::json!({"type":"long","value":7}));
+    assert!(data.rows[0].cells[6].is_none());
     assert!(
         data.rows[0].cells[3]
             .as_ref()
@@ -286,4 +291,58 @@ fn avro_catalog_resolves_references_and_reloads_only_when_reopened() {
     std::fs::write(&child, child_schema).unwrap();
     assert!(missing.check(|| Ok(())).is_err());
     Bindings::new(vec![configured]).check(|| Ok(())).unwrap();
+}
+
+#[test]
+fn reader_files_are_explicit_bounded_and_cached_per_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let writer = dir.path().join("writer.avsc");
+    let reader = dir.path().join("reader.avsc");
+    std::fs::write(
+        &writer,
+        r#"{"type":"record","name":"R","fields":[{"name":"id","type":"int"}]}"#,
+    )
+    .unwrap();
+    std::fs::write(&reader, r#"{"type":"record","name":"R","fields":[{"name":"id","type":"long"},{"name":"added","type":"string","default":"new"}]}"#).unwrap();
+    let mut config = binding(&writer);
+    config.reader_schema_file = Some(reader.to_str().unwrap().into());
+    validate(std::slice::from_ref(&config)).unwrap();
+    let mut invalid = config.clone();
+    invalid.format = Format::Protobuf;
+    assert!(validate(&[invalid]).is_err());
+    let mut invalid = config.clone();
+    invalid.reader_schema_file = Some("relative.avsc".into());
+    assert!(validate(&[invalid]).is_err());
+    let mut bindings = Bindings::new(vec![config.clone()]);
+    bindings.check(|| Ok(())).unwrap();
+    let mut data = page(vec![Some(Value::Bytes(vec![14]))]);
+    bindings.project("events", &mut data, || Ok(())).unwrap();
+    assert_eq!(
+        data.rows[0].cells[2],
+        Some(Value::Json(r#"{"added":"new","id":7}"#.into()))
+    );
+    assert!(
+        data.rows[0].cells[3]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("&reader=avro:sha256:")
+    );
+    let native: serde_json::Value =
+        serde_json::from_slice(data.rows[0].cells[5].as_ref().unwrap().bytes()).unwrap();
+    assert_eq!(native["writer"]["fields"][0][1]["type"], "int");
+    assert_eq!(native["reader"]["fields"][0][1]["type"], "long");
+    std::fs::write(&reader, "invalid").unwrap();
+    bindings.check(|| Ok(())).unwrap();
+    let mut again = page(vec![Some(Value::Bytes(vec![14]))]);
+    bindings.project("events", &mut again, || Ok(())).unwrap();
+    assert_eq!(again.rows[0].cells, data.rows[0].cells);
+    assert!(
+        Bindings::new(vec![config.clone()])
+            .check(|| Ok(()))
+            .is_err()
+    );
+    std::fs::write(&reader, vec![b'x'; SCHEMA_BYTES + 1]).unwrap();
+    assert!(Bindings::new(vec![config]).check(|| Ok(())).is_err());
 }
