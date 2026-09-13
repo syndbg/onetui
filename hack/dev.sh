@@ -10,6 +10,8 @@ export ONETUI_POSTGRES_URL='postgresql://onetui_reader:fixture-reader-only@127.0
 export ONETUI_QDRANT_API_KEY='fixture-reader-only'
 export ONETUI_NATS_USERNAME='fixture-reader'
 export ONETUI_NATS_PASSWORD='fixture-reader-only'
+export ONETUI_DYNAMODB_ACCESS_KEY='onetuiFixtureOnly'
+export ONETUI_DYNAMODB_SECRET_KEY='fixture-secret-only'
 
 check_connection() {
     ./target/debug/onetui --check --config target/demo-onetui.toml --connection "$1" --timeout 2
@@ -34,6 +36,7 @@ up() {
     wait_for_connection local_kafka
     wait_for_connection local_redpanda
     wait_for_connection local_nats
+    wait_for_connection local_dynamodb
     seed
 }
 
@@ -44,6 +47,7 @@ seed() {
     cargo run -p onetui-kafka --example seed_demo --locked
     cargo run -p onetui-kafka --example seed_redpanda --locked
     cargo run -p onetui-nats --example seed_nats --locked
+    cargo run -p onetui-dynamodb --example seed_dynamodb --locked
 }
 
 cleanup() {
@@ -140,7 +144,7 @@ case "$1" in
         check_connection local_nats
         exec cargo run -p onetui-nats --example produce_nats --locked
         ;;
-    check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka; check_connection local_redpanda; check_connection local_nats ;;
+    check) check_connection local_pg; check_connection local_qdrant; check_connection local_kafka; check_connection local_redpanda; check_connection local_nats; check_connection local_dynamodb ;;
     down) "${compose[@]}" down --timeout 10 ;;
     logs) "${compose[@]}" logs --no-color --tail 100 ;;
     test)

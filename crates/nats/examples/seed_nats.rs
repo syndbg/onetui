@@ -11,10 +11,49 @@ mod protobuf;
 fn prepare() -> Result<()> {
     let directory =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/nats-schemas");
-    std::fs::create_dir_all(&directory)?;
-    std::fs::write(directory.join("nats-event.avsc"), avro::SCHEMA)?;
-    std::fs::write(directory.join("nats-event.pb"), protobuf::schema())?;
+    std::fs::create_dir_all(directory.join("avro"))?;
+    std::fs::create_dir_all(directory.join("protobuf"))?;
+    std::fs::write(directory.join("avro/event.avsc"), avro::SCHEMA)?;
+    std::fs::write(directory.join("protobuf/event.pb"), protobuf::schema())?;
     Ok(())
+}
+
+fn register(subject: &str, kind: &str, schema: &str) -> Result<u32> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(0)
+        .timeout_global(Some(std::time::Duration::from_secs(5)))
+        .build()
+        .into();
+    let mut response = agent
+        .post(format!(
+            "http://127.0.0.1:18081/subjects/{subject}/versions"
+        ))
+        .header("Content-Type", "application/vnd.schemaregistry.v1+json")
+        .send(serde_json::to_vec(
+            &json!({"schemaType":kind,"schema":schema}),
+        )?)?;
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(65536)
+        .read_to_vec()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let id = value["id"]
+        .as_u64()
+        .filter(|id| *id > 0 && *id <= i32::MAX as u64)
+        .ok_or_else(|| anyhow::anyhow!("Invalid fixture schema ID: {value}"))?;
+    Ok(id as u32)
+}
+
+fn framed(id: u32, protobuf: bool, raw: Vec<u8>) -> Vec<u8> {
+    let mut bytes = vec![0];
+    bytes.extend(id.to_be_bytes());
+    if protobuf {
+        bytes.push(0);
+    }
+    bytes.extend(raw);
+    bytes
 }
 
 #[tokio::main]
@@ -25,6 +64,12 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     anyhow::ensure!(args.is_empty(), "Usage: seed_nats [--prepare]");
+    let avro_id = register("onetui-nats-avro", "AVRO", avro::SCHEMA)?;
+    let protobuf_id = register(
+        "onetui-nats-protobuf",
+        "PROTOBUF",
+        "syntax='proto3'; package demo; message Event {int64 id=1; string city=2; bytes payload=3;}",
+    )?;
     let client = async_nats::ConnectOptions::new()
         .user_and_password("fixture-admin".into(), "fixture-admin-only".into())
         .max_reconnects(1)
@@ -40,13 +85,15 @@ async fn main() -> Result<()> {
         ("DEMO_LIVE", "demo.live", 0),
         ("DEMO_AVRO", "demo.avro", 250),
         ("DEMO_PROTOBUF", "demo.protobuf", 250),
+        ("DEMO_AVRO_REGISTRY", "demo.avro.registry", 250),
+        ("DEMO_PROTOBUF_REGISTRY", "demo.protobuf.registry", 250),
     ] {
         let stream = js
             .get_or_create_stream(Config {
                 name: name.into(),
                 subjects: vec![subject.into()],
                 storage: StorageType::Memory,
-                max_bytes: 32 * 1024 * 1024,
+                max_bytes: 8 * 1024 * 1024,
                 ..Default::default()
             })
             .await?;
@@ -54,7 +101,11 @@ async fn main() -> Result<()> {
             continue;
         }
         for i in 1..=count {
-            let payload = if name == "DEMO_AVRO" {
+            let payload = if name == "DEMO_AVRO_REGISTRY" {
+                framed(avro_id, false, avro::message(i as u64))
+            } else if name == "DEMO_PROTOBUF_REGISTRY" {
+                framed(protobuf_id, true, protobuf::message(i as u64))
+            } else if name == "DEMO_AVRO" {
                 avro::message(i as u64)
             } else if name == "DEMO_PROTOBUF" {
                 protobuf::message(i as u64)

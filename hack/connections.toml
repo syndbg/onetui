@@ -14,6 +14,14 @@ unicode = "literal"
 kind = "postgres"
 url_env = "ONETUI_POSTGRES_URL"
 
+[connections.local_dynamodb]
+kind = "dynamodb"
+region = "us-east-1"
+endpoint_url = "http://127.0.0.1:18000"
+streams_endpoint_url = "http://127.0.0.1:18000"
+access_key_id_env = "ONETUI_DYNAMODB_ACCESS_KEY"
+secret_access_key_env = "ONETUI_DYNAMODB_SECRET_KEY"
+
 [connections.local_qdrant]
 kind = "qdrant"
 url = "http://127.0.0.1:16334"
@@ -71,10 +79,22 @@ password_env = "ONETUI_NATS_PASSWORD"
 [[connections.local_nats.decoders]]
 subject = "demo.avro"
 format = "avro"
-schema_file = "/ONETUI_DEMO_TARGET_DIR/nats-schemas/nats-event.avsc"
+catalog = { directory = "/ONETUI_DEMO_TARGET_DIR/nats-schemas/avro", schema = "event" }
 
 [[connections.local_nats.decoders]]
 subject = "demo.protobuf"
 format = "protobuf"
-schema_file = "/ONETUI_DEMO_TARGET_DIR/nats-schemas/nats-event.pb"
+catalog = { directory = "/ONETUI_DEMO_TARGET_DIR/nats-schemas/protobuf", schema = "event" }
 message_name = "demo.Event"
+
+[[connections.local_nats.decoders]]
+subject = "demo.avro.registry"
+format = "avro"
+framing = "confluent"
+registry = { url = "http://127.0.0.1:18081" }
+
+[[connections.local_nats.decoders]]
+subject = "demo.protobuf.registry"
+format = "protobuf"
+framing = "confluent"
+registry = { url = "http://127.0.0.1:18081" }

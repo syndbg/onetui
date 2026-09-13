@@ -1,35 +1,11 @@
 use anyhow::{Result, ensure};
 use onetui_core::{Column, PAGE_BYTES, Page, Value};
+pub(crate) use onetui_schema_source::{Preview, read_file, validate_path};
 use serde::Deserialize;
-use std::{fs::OpenOptions, io::Read, path::Path};
 
 const SCHEMA_BYTES: usize = 256 * 1024;
 const PREVIEW_BYTES: usize = 64 * 1024;
 const ERROR_BYTES: usize = 512;
-
-#[derive(Debug)]
-pub(crate) struct Preview {
-    pub json: Result<String>,
-    pub native: Result<String>,
-}
-
-impl Preview {
-    pub fn avro(decoder: &onetui_avro::Decoder, raw: &[u8]) -> Result<Self> {
-        let decoded = decoder.decode(raw)?;
-        Ok(Self {
-            json: decoded.json(),
-            native: decoded.native(),
-        })
-    }
-
-    pub fn protobuf(decoder: &onetui_protobuf::Decoder, raw: &[u8]) -> Result<Self> {
-        let decoded = decoder.decode(raw)?;
-        Ok(Self {
-            json: decoded.json(),
-            native: decoded.native(),
-        })
-    }
-}
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -47,12 +23,7 @@ impl Field {
     }
 }
 
-#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Format {
-    Avro,
-    Protobuf,
-}
+pub(crate) use onetui_schema_source::Format;
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -74,34 +45,6 @@ pub(crate) struct Binding {
     pub registry: Option<crate::registry::Config>,
     pub catalog: Option<crate::catalog::Config>,
     pub buf: Option<crate::buf::Config>,
-}
-
-pub(crate) fn validate_path(path: &str) -> Result<()> {
-    ensure!(
-        path.len() <= 4096 && !path.chars().any(char::is_control) && Path::new(path).is_absolute(),
-        "Decoder path must be absolute, at most 4096 bytes, without controls"
-    );
-    Ok(())
-}
-
-pub(crate) fn read_file(path: &str, limit: usize) -> Result<Vec<u8>> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // A FIFO substituted at this path must not hold the native worker indefinitely.
-        options.custom_flags(nix::libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    ensure!(
-        file.metadata()?.is_file(),
-        "Decoder path must be a regular file"
-    );
-    let mut bytes = Vec::new();
-    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= limit, "Decoder file exceeds {limit} bytes");
-    Ok(bytes)
 }
 
 pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {

@@ -1,5 +1,10 @@
 name: onetui-fixtures
 services:
+  dynamodb:
+    image: amazon/dynamodb-local:3.3.1
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb", "-disableTelemetry"]
+    ports:
+      - "127.0.0.1:18000:8000"
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v26.2.2
     command:

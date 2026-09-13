@@ -11,8 +11,8 @@ The initial version, v0.1.0, is read-only. Writes and broker administration are 
 | [PostgreSQL](docs/postgres.md) | Schemas, tables/views, columns, row paging, SQL queries | Query parameters, writes |
 | [Qdrant](docs/qdrant.md) | Collections, point paging, filtered Scroll, payloads, dense/sparse/multivectors | Advanced filters, similarity search, writes |
 | [Kafka](docs/kafka.md) | Metadata/configuration with synonyms, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, TLS/mTLS, SASL PLAIN/SCRAM, OAuth client credentials and GSSAPI ticket caches, Avro/Protobuf JSON and typed inspection, optional Avro reader schemas; files, directory catalogs, Confluent registries and Buf Protobuf sources | Publishing, administration |
-| [NATS](docs/nats.md) | Core subscriptions, JetStream streams/messages, live following, subject/sequence/time replay, consumer state, KV history/watch, object metadata/chunks, raw Avro/Protobuf decoding, domains, TLS/mTLS, token/user-password and NKEY/JWT authentication | Registry/catalog/Buf schema discovery, publishing, administration |
-| DynamoDB | Planned | All operations |
+| [NATS](docs/nats.md) | Core subscriptions, JetStream streams/messages, live following, subject/sequence/time replay, consumer state, KV history/watch, object metadata/chunks, Avro/Protobuf decoding from files, directory catalogs, Confluent registries or Buf Protobuf sources, domains, TLS/mTLS, token/user-password and NKEY/JWT authentication | Publishing, administration |
+| [DynamoDB](docs/dynamodb.md) | Table/index metadata, replicas, typed items, bounded Scan/Query/GetItem, existing backup/import/export inspection | Streams, batch/transactional reads, PartiQL; writes and administration |
 | RabbitMQ | Planned | All operations |
 
 Kafka browsing and following stay within one selected topic. Combining topics in one view is out of scope, not a planned feature.
@@ -21,7 +21,7 @@ All implemented connectors support headless checks. The shared UI provides conne
 
 ## Tech stack
 
-Rust 2024, Ratatui/Crossterm and Tokio. Clients: `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka and `async-nats`. Decoding: `apache-avro`, `prost-reflect` and `protox`. Configuration: Clap, Serde and TOML.
+Rust 2024, Ratatui/Crossterm and Tokio. Clients: `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka, `async-nats` and AWS SDK for Rust. Decoding: `apache-avro`, `prost-reflect` and `protox`. Configuration: Clap, Serde and TOML.
 
 Providers are separate crates, registered through [static enum dispatch](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md). No runtime plugins.
 

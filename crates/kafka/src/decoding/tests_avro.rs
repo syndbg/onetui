@@ -1,5 +1,6 @@
 use super::*;
 use onetui_core::Row;
+use std::path::Path;
 
 fn binding(path: &Path) -> Binding {
     Binding {

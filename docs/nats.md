@@ -122,9 +122,50 @@ schema_file = "/absolute/path/event.pb"
 message_name = "demo.Event"
 ```
 
-Use self-contained Avro schemas or a binary Protobuf `FileDescriptorSet` including imports. These bindings decode raw messages; registry envelopes, catalogs and Buf discovery are not supported for NATS yet. `--check` loads every configured schema. Browsing loads on first use and keeps failures visible beside the raw value; reselect the connection after changing schema files.
+These examples use `framing = "raw"` (the default). Files contain self-contained Avro schemas or binary Protobuf `FileDescriptorSet` bundles with imports. `--check` loads configured files/catalogs/Buf descriptors; registry checks request supported schema types, not every record schema. Browsing loads on first use; failures stay beside the raw value. Reconnect to reload files, catalogs or Buf labels.
 
 At most 32 bindings, 256 KiB per schema, 64 KiB per decoded payload/preview. Oversized previews become per-message errors rather than removing records. Parsing runs outside the TUI, with bounded workers and cancellation/deadline checks.
+
+### Registries and Buf
+
+```toml
+[[connections.events.decoders]]
+subject = "orders.framed"
+format = "avro" # or protobuf; its envelope selects the message
+framing = "confluent"
+registry = { url = "https://registry.example.net", token_env = "SCHEMA_TOKEN" }
+
+[[connections.events.decoders]]
+subject = "orders.buf"
+format = "protobuf"
+message_name = "demo.Event"
+buf = { url = "https://buf.build", module = "acme/events", revision = "0123456789abcdef0123456789abcdef" }
+```
+
+Confluent bindings use the payload's exact schema ID and versioned references; no latest-version lookup or framing detection. Raw bindings choose exactly one of `schema_file`, `catalog` or `buf`. Buf accepts a pinned commit or an explicit `label` resolved once per connection. Its descriptor bundle must include imports.
+
+Source credentials are separate from NATS credentials. HTTPS verifies certificates; HTTP is restricted to literal loopback addresses. Redirects and environment proxies are disabled. Uncached resolution has a two-second I/O bound. Run `onetui schema --datasource nats` for authentication fields, cache and dependency limits.
+
+### Directory catalogs
+
+Use `catalog` instead of `schema_file` to select a filename stem from a flat directory:
+
+```toml
+[[connections.events.decoders]]
+subject = "orders.created"
+format = "avro"
+catalog = { directory = "/absolute/schemas/avro", schema = "event", references = ["customer"] }
+
+[[connections.events.decoders]]
+subject = "orders.updated"
+format = "protobuf"
+message_name = "demo.Event"
+catalog = { directory = "/absolute/schemas/protobuf", schema = "event" }
+```
+
+Avro reads `event.avsc` and its explicitly listed dependencies, such as `customer.avsc`; optional `reader_schema_file` still applies. Protobuf reads `event.pb`, which must include imports. `data_schema` includes the catalog ID and decoder fingerprint.
+
+Catalogs are Unix-only, reject symlinks and duplicate stems, and load at most 256 KiB per writer bundle. They stay cached until you reopen the connection, including failures. `onetui schema --datasource nats` lists the remaining bounds.
 
 ## Local demo
 

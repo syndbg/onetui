@@ -35,11 +35,30 @@ fn executor() -> NatsExecutor {
         "fixture-reader-only",
     )
 }
+
+fn demo_executor() -> NatsExecutor {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let config: toml::Value =
+        toml::from_str(&std::fs::read_to_string(root.join("target/demo-onetui.toml")).unwrap())
+            .unwrap();
+    let mut options = config["connections"]["local_nats"]
+        .as_table()
+        .unwrap()
+        .clone();
+    options.remove("kind");
+    NatsProvider
+        .configure(&options, &|name| match name {
+            "ONETUI_NATS_USERNAME" => Some("fixture-reader".into()),
+            "ONETUI_NATS_PASSWORD" => Some("fixture-reader-only".into()),
+            _ => None,
+        })
+        .unwrap()
+}
 fn configured(connection: &str, username: &str, password: &str) -> NatsExecutor {
     NatsProvider
         .configure(
             &toml::from_str(&format!(
-                "{connection}\nusername_env='USER'\npassword_env='PASS'"
+                "username_env='USER'\npassword_env='PASS'\n{connection}"
             ))
             .unwrap(),
             &|name| Some(if name == "USER" { username } else { password }.into()),

@@ -14,11 +14,12 @@ For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This de
 
 ## Fixture security and configuration
 
-`make` tasks generate `target/demo-onetui.toml` from [connections.toml](connections.toml), with absolute catalog paths under `target/demo-schemas`. `make run` loads it and supplies fixture credentials. For service settings, see [compose.yaml](compose.yaml).
+`make` tasks generate `target/demo-onetui.toml` from [connections.toml](connections.toml), with absolute catalog paths under `target/demo-schemas` for Redpanda and `target/nats-schemas` for NATS. `make run` loads it and supplies fixture credentials. For service settings, see [compose.yaml](compose.yaml).
 
 | Alias | Endpoint |
 | --- | --- |
 | `local_pg` | PostgreSQL: `127.0.0.1:15432` |
+| `local_dynamodb` | DynamoDB Local: `http://127.0.0.1:18000` |
 | `local_qdrant` | gRPC: `127.0.0.1:16334`; TLS fixture: `16335` |
 | `local_kafka` | Kafka: `127.0.0.1:19092`; TLS: `19093`; SASL/TLS: `19094`; mTLS: `19095`; OAuth: `19096`; GSSAPI: `19097`; KDC: `18888` (TCP/UDP) |
 | `local_redpanda` | Kafka: `127.0.0.1:29092`; Schema Registry: `http://127.0.0.1:18081` |
@@ -64,9 +65,10 @@ Following starts at the current end. `f` or Ctrl-C stops; navigation pauses it. 
 | Datasource | Try |
 | --- | --- |
 | PostgreSQL | `demo` schema: customers, events, type samples and a 65-column table; 8,750 rows |
+| DynamoDB | `demo_events`: 1,205 typed items, GSI and LSI; `demo_wide`: 32 items with 65 extra columns; `demo_empty` |
 | Qdrant | `demo_*` collections: 3,062 points with payloads, dense/sparse/multivectors and an empty collection |
 | Kafka | `demo_events`, `demo_binary`, `demo_tombstones`, `demo_empty` |
-| NATS | `DEMO_EVENTS`, `DEMO_BINARY`, `DEMO_WIDE`, `DEMO_EMPTY`, `DEMO_LIVE`, schema-bound `DEMO_AVRO`/`DEMO_PROTOBUF`, KV `DEMO_SETTINGS`, objects `DEMO_FILES`, durable `demo_reader` |
+| NATS | `DEMO_EVENTS`, `DEMO_BINARY`, `DEMO_WIDE`, `DEMO_EMPTY`, `DEMO_LIVE`, catalog-decoded `DEMO_AVRO`/`DEMO_PROTOBUF`, registry-decoded `DEMO_AVRO_REGISTRY`/`DEMO_PROTOBUF_REGISTRY` (250 messages each), KV `DEMO_SETTINGS`, objects `DEMO_FILES`, durable `demo_reader` |
 
 Use `make dev-seed` to seed existing fixtures without resetting them. Interrupted or changed datasets may need an explicit reset. Small `sample_rows` fixtures test NULL, empty text, Unicode and controls; use `demo` for realistic browsing volume.
 

@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::{Column, PAGE_BYTES, Page, Value};
 use serde::Deserialize;
-use std::io::Read;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -12,11 +11,15 @@ const PREVIEW_BYTES: usize = 64 * 1024;
 // Cancelled filesystem/parser work retains its permit until it exits.
 static WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
-#[derive(Clone, Copy, Deserialize, PartialEq)]
+pub(crate) use onetui_schema_source::Format;
+use onetui_schema_source::{Preview, registry::Registry};
+
+#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Format {
-    Avro,
-    Protobuf,
+pub(crate) enum Framing {
+    #[default]
+    Raw,
+    Confluent,
 }
 
 #[derive(Clone, Deserialize)]
@@ -24,7 +27,12 @@ pub(crate) enum Format {
 pub(crate) struct Binding {
     pub subject: String,
     pub format: Format,
-    pub schema_file: String,
+    #[serde(default)]
+    pub framing: Framing,
+    pub schema_file: Option<String>,
+    pub catalog: Option<onetui_schema_source::Config>,
+    pub registry: Option<onetui_schema_source::registry::Config>,
+    pub buf: Option<onetui_schema_source::buf::Config>,
     pub reader_schema_file: Option<String>,
     pub message_name: Option<String>,
 }
@@ -46,7 +54,46 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
                 .any(|b| b.subject == binding.subject),
             "Duplicate NATS decoder subject"
         );
-        for path in std::iter::once(&binding.schema_file).chain(binding.reader_schema_file.iter()) {
+        match binding.framing {
+            Framing::Raw => ensure!(
+                binding.registry.is_none()
+                    && [
+                        binding.schema_file.is_some(),
+                        binding.catalog.is_some(),
+                        binding.buf.is_some()
+                    ]
+                    .into_iter()
+                    .filter(|present| *present)
+                    .count()
+                        == 1,
+                "Raw NATS decoder requires exactly one of schema_file, catalog or buf; no registry"
+            ),
+            Framing::Confluent => {
+                ensure!(
+                    binding.schema_file.is_none()
+                        && binding.catalog.is_none()
+                        && binding.buf.is_none(),
+                    "Confluent NATS decoder does not accept schema_file, catalog or buf"
+                );
+                binding
+                    .registry
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Confluent NATS decoder requires registry"))?
+                    .validate()?;
+            }
+        }
+        if let Some(buf) = &binding.buf {
+            ensure!(binding.format == Format::Protobuf, "Buf requires Protobuf");
+            buf.validate()?;
+        }
+        if let Some(catalog) = &binding.catalog {
+            catalog.validate(binding.format)?;
+        }
+        for path in binding
+            .schema_file
+            .iter()
+            .chain(binding.reader_schema_file.iter())
+        {
             ensure!(
                 std::path::Path::new(path).is_absolute()
                     && path.len() <= 4096
@@ -64,12 +111,19 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
                     binding.reader_schema_file.is_none(),
                     "reader_schema_file requires Avro"
                 );
-                ensure!(
-                    binding.message_name.as_ref().is_some_and(|n| !n.is_empty()
-                        && n.len() <= 1024
-                        && !n.chars().any(char::is_control)),
-                    "Protobuf requires message_name of 1..1024 bytes without controls"
-                );
+                if binding.framing == Framing::Raw {
+                    ensure!(
+                        binding.message_name.as_ref().is_some_and(|n| !n.is_empty()
+                            && n.len() <= 1024
+                            && !n.chars().any(char::is_control)),
+                        "Protobuf requires message_name of 1..1024 bytes without controls"
+                    );
+                } else {
+                    ensure!(
+                        binding.message_name.is_none(),
+                        "Confluent Protobuf selects its message through envelope indexes; omit message_name"
+                    );
+                }
             }
         }
     }
@@ -77,22 +131,7 @@ pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
 }
 
 fn read_file(path: &str) -> Result<Vec<u8>> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(nix::libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    ensure!(
-        file.metadata()?.is_file(),
-        "NATS decoder path must be a regular file"
-    );
-    let mut bytes = Vec::new();
-    file.take(SCHEMA_BYTES as u64 + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= SCHEMA_BYTES, "NATS schema exceeds 256 KiB");
-    Ok(bytes)
+    onetui_schema_source::read_file(path, SCHEMA_BYTES)
 }
 
 enum Decoder {
@@ -101,12 +140,39 @@ enum Decoder {
 }
 
 impl Decoder {
-    fn load(binding: &Binding) -> Result<Self> {
-        let bytes = read_file(&binding.schema_file)?;
+    fn load(binding: &mut Binding, remaining: &impl Fn() -> Result<()>) -> Result<Self> {
+        remaining()?;
+        let bundle = if let Some(buf) = &mut binding.buf {
+            onetui_schema_source::Bundle {
+                schema: buf.load(remaining)?,
+                references: Vec::new(),
+            }
+        } else if let Some(catalog) = &binding.catalog {
+            catalog.load(binding.format, remaining)?
+        } else {
+            onetui_schema_source::Bundle {
+                schema: read_file(
+                    binding
+                        .schema_file
+                        .as_deref()
+                        .ok_or_else(|| anyhow!("NATS decoder requires schema_file or catalog"))?,
+                )?,
+                references: Vec::new(),
+            }
+        };
+        remaining()?;
         match binding.format {
             Format::Avro => {
-                let mut decoder = onetui_avro::Decoder::new(std::str::from_utf8(&bytes)?)?;
+                let mut decoder = onetui_avro::Decoder::with_references(
+                    std::str::from_utf8(&bundle.schema)?,
+                    &bundle
+                        .references
+                        .iter()
+                        .map(|s| std::str::from_utf8(s))
+                        .collect::<std::result::Result<Vec<_>, _>>()?,
+                )?;
                 if let Some(path) = &binding.reader_schema_file {
+                    remaining()?;
                     decoder = decoder.with_reader(onetui_avro::ReaderSchema::new(
                         std::str::from_utf8(&read_file(path)?)?,
                     )?);
@@ -114,7 +180,7 @@ impl Decoder {
                 Ok(Self::Avro(decoder))
             }
             Format::Protobuf => Ok(Self::Protobuf(onetui_protobuf::Decoder::new(
-                &bytes,
+                &bundle.schema,
                 binding.message_name.as_deref().unwrap(),
             )?)),
         }
@@ -128,16 +194,10 @@ impl Decoder {
             Self::Protobuf(d) => d.schema_id().into(),
         }
     }
-    fn preview(&self, raw: &[u8]) -> Result<(Result<String>, Result<String>)> {
+    fn preview(&self, raw: &[u8]) -> Result<Preview> {
         match self {
-            Self::Avro(d) => {
-                let value = d.decode(raw)?;
-                Ok((value.json(), value.native()))
-            }
-            Self::Protobuf(d) => {
-                let value = d.decode(raw)?;
-                Ok((value.json(), value.native()))
-            }
+            Self::Avro(d) => Preview::avro(d, raw),
+            Self::Protobuf(d) => Preview::protobuf(d, raw),
         }
     }
 }
@@ -145,16 +205,86 @@ impl Decoder {
 struct Entry {
     binding: Binding,
     decoder: Option<Result<Decoder, String>>,
+    registry: Option<Result<Registry, String>>,
 }
 
 impl Entry {
-    fn load(&mut self) -> Result<&Decoder, &str> {
+    fn load(&mut self, remaining: &impl Fn() -> Result<()>) -> Result<&Decoder, &str> {
         self.decoder
             .get_or_insert_with(|| {
-                Decoder::load(&self.binding).map_err(|e| short(&format!("{e:#}")))
+                Decoder::load(&mut self.binding, remaining).map_err(|e| short(&format!("{e:#}")))
             })
             .as_ref()
             .map_err(String::as_str)
+    }
+
+    fn registry(&mut self, remaining: &impl Fn() -> Result<()>) -> Result<&mut Registry> {
+        self.registry
+            .get_or_insert_with(|| {
+                (|| {
+                    remaining()?;
+                    let registry =
+                        Registry::new(self.binding.registry.clone().unwrap(), self.binding.format)?;
+                    let reader = self
+                        .binding
+                        .reader_schema_file
+                        .as_deref()
+                        .map(|path| {
+                            remaining()?;
+                            onetui_avro::ReaderSchema::new(std::str::from_utf8(&read_file(path)?)?)
+                        })
+                        .transpose()?;
+                    remaining()?;
+                    Ok(registry.with_reader(reader))
+                })()
+                .map_err(|e: anyhow::Error| short(&format!("{e:#}")))
+            })
+            .as_mut()
+            .map_err(|error| anyhow!("{error}"))
+    }
+
+    fn check(&mut self, remaining: &impl Fn() -> Result<()>) -> Result<()> {
+        if self.binding.registry.is_some() {
+            self.registry(remaining)?.check(remaining)
+        } else {
+            self.load(remaining)
+                .map(|_| ())
+                .map_err(|error| anyhow!("{error}"))
+        }
+    }
+
+    fn preview(
+        &mut self,
+        raw: &[u8],
+        remaining: &impl Fn() -> Result<()>,
+    ) -> (Option<String>, Result<Preview>) {
+        if self.binding.registry.is_some() {
+            return match self.registry(remaining) {
+                Ok(registry) => registry.preview(raw, remaining),
+                Err(error) => (None, Err(error)),
+            };
+        }
+        let loaded = self.load(remaining);
+        let fingerprint = loaded.as_ref().ok().map(|decoder| decoder.identity());
+        let preview = loaded
+            .map_err(|error| anyhow!("{error}"))
+            .and_then(|decoder| decoder.preview(raw));
+        let source = self
+            .binding
+            .buf
+            .as_ref()
+            .map(|buf| buf.identity())
+            .or_else(|| {
+                self.binding
+                    .catalog
+                    .as_ref()
+                    .map(|catalog| catalog.identity())
+            });
+        let identity = match (source, fingerprint) {
+            (Some(source), Some(fingerprint)) => Some(format!("{source}:{fingerprint}")),
+            (source, fingerprint) => source.or(fingerprint),
+        };
+        (identity, preview)
     }
 }
 
@@ -175,6 +305,7 @@ impl Cache {
                 .map(|binding| Entry {
                     binding,
                     decoder: None,
+                    registry: None,
                 })
                 .collect(),
         )))
@@ -192,58 +323,97 @@ impl Cache {
         let _guard = Cancel(cancelled.clone());
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let remaining = || -> Result<()> { ensure!(!cancelled.load(Ordering::Relaxed) && tokio::time::Instant::now() < deadline, "NATS decoding cancelled or timed out"); Ok(()) };
-            let mut entries = cache.0.lock().map_err(|_| anyhow!("NATS decoder cache unavailable"))?;
+            let remaining = || -> Result<()> {
+                ensure!(
+                    !cancelled.load(Ordering::Relaxed) && tokio::time::Instant::now() < deadline,
+                    "NATS decoding cancelled or timed out"
+                );
+                Ok(())
+            };
+            let mut entries = cache
+                .0
+                .lock()
+                .map_err(|_| anyhow!("NATS decoder cache unavailable"))?;
             remaining()?;
             if check {
-                for entry in entries.iter_mut() { remaining()?; entry.load().map_err(|e| anyhow!("{e}"))?; }
+                for entry in entries.iter_mut() {
+                    remaining()?;
+                    entry.check(&remaining)?;
+                }
+                remaining()?;
                 return Ok(page);
             }
-            let Some(subject) = page.columns.iter().position(|c| c.name == "subject") else { return Ok(page) };
-            let Some(data) = page.columns.iter().position(|c| c.name == "data") else { return Ok(page) };
+            let Some(subject) = page.columns.iter().position(|c| c.name == "subject") else {
+                return Ok(page);
+            };
+            let Some(data) = page.columns.iter().position(|c| c.name == "data") else {
+                return Ok(page);
+            };
             // Quiet or unrelated live batches must keep the same columns as decoded batches.
-            for (name, datatype) in [("data_decoded", "JSON projection (not wire bytes)"), ("data_schema", "schema identity"), ("data_decode_error", "text"), ("data_native", "typed JSON inspection (not wire bytes)"), ("data_native_error", "text")] {
-                page.columns.push(Column { name: name.into(), datatype: datatype.into() });
+            for (name, datatype) in [
+                ("data_decoded", "JSON projection (not wire bytes)"),
+                ("data_schema", "schema identity"),
+                ("data_decode_error", "text"),
+                ("data_native", "typed JSON inspection (not wire bytes)"),
+                ("data_native_error", "text"),
+            ] {
+                page.columns.push(Column {
+                    name: name.into(),
+                    datatype: datatype.into(),
+                });
             }
             // Raw data is authoritative. Exhausting preview space never removes a message.
             let available = PAGE_BYTES.saturating_sub(page.bytes() * 2 + 4096);
             let reserved = page.rows.len() * 4096;
             if available < reserved {
-                for row in &mut page.rows { row.cells.extend([None, None, None, None, None]); }
-                page.notice.push_str("; decoder previews omitted: display budget; raw fields retained");
+                for row in &mut page.rows {
+                    row.cells.extend([None, None, None, None, None]);
+                }
+                page.notice
+                    .push_str("; decoder previews omitted: display budget; raw fields retained");
                 return Ok(page);
             }
             let mut budget = (available - reserved) / 4;
             for row in &mut page.rows {
                 remaining()?;
                 let mut extra = vec![None; 5];
-                if let Some(entry) = entries.iter_mut().find(|e| row.cells[subject].as_ref().and_then(Value::text) == Some(&e.binding.subject)) {
-                    match entry.load() {
-                        Err(error) => extra[2] = Some(short(error).into()),
-                        Ok(decoder) => {
-                            extra[1] = Some(decoder.identity().into());
-                            match row.cells[data].as_ref().map(|raw| decoder.preview(raw.bytes())) {
-                                Some(Ok((json, native))) => {
-                                    for (value, output, error) in [(json, 0, 2), (native, 3, 4)] {
-                                        match value {
-                                            Ok(text) if text.len() <= PREVIEW_BYTES && text.len() <= budget => { budget -= text.len(); extra[output] = Some(Value::Json(text)); }
-                                            Ok(_) => extra[error] = Some("Decoded preview exceeds display budget; inspect raw bytes".into()),
-                                            Err(e) => extra[error] = Some(short(&format!("{e:#}")).into()),
-                                        }
+                if let Some(entry) = entries.iter_mut().find(|e| {
+                    row.cells[subject].as_ref().and_then(Value::text) == Some(&e.binding.subject)
+                }) && let Some(raw) = &row.cells[data]
+                {
+                    let (identity, preview) = entry.preview(raw.bytes(), &remaining);
+                    extra[1] = identity.map(Value::from);
+                    match preview {
+                        Ok(Preview { json, native }) => {
+                            for (value, output, error) in [(json, 0, 2), (native, 3, 4)] {
+                                match value {
+                                    Ok(text)
+                                        if text.len() <= PREVIEW_BYTES && text.len() <= budget =>
+                                    {
+                                        budget -= text.len();
+                                        extra[output] = Some(Value::Json(text));
                                     }
+                                    Ok(_) => extra[error] = Some(
+                                        "Decoded preview exceeds display budget; inspect raw bytes"
+                                            .into(),
+                                    ),
+                                    Err(e) => extra[error] = Some(short(&format!("{e:#}")).into()),
                                 }
-                                Some(Err(error)) => extra[2] = Some(short(&format!("{error:#}")).into()),
-                                None => {}
                             }
                         }
+                        Err(error) => extra[2] = Some(short(&format!("{error:#}")).into()),
                     }
                 }
                 row.cells.extend(extra);
             }
             remaining()?;
-            ensure!(page.bytes() <= PAGE_BYTES, "NATS decoded page exceeds 1 MiB");
+            ensure!(
+                page.bytes() <= PAGE_BYTES,
+                "NATS decoded page exceeds 1 MiB"
+            );
             Ok(page)
-        }).await?
+        })
+        .await?
     }
 }
 
@@ -257,9 +427,52 @@ fn short(value: &str) -> String {
 }
 
 #[cfg(test)]
+mod remote_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn catalog_config_is_offline_strict_and_excludes_other_sources() {
+        let source = "subject='demo.event'\nformat='avro'\ncatalog={directory='/not-read-during-validation',schema='event',references=['child']}";
+        let binding: Binding = toml::from_str(source).unwrap();
+        validate(std::slice::from_ref(&binding)).unwrap();
+        assert!(
+            validate(&[Binding {
+                schema_file: Some("/event.avsc".into()),
+                ..binding.clone()
+            }])
+            .is_err()
+        );
+        assert!(
+            validate(&[Binding {
+                catalog: None,
+                ..binding.clone()
+            }])
+            .is_err()
+        );
+        assert!(
+            validate(&[Binding {
+                format: Format::Protobuf,
+                message_name: Some("demo.Event".into()),
+                ..binding.clone()
+            }])
+            .is_err()
+        );
+        for invalid in [
+            source.replace("schema='event'", "schema='../event'"),
+            source.replace("schema='event'", "schema='event',unexpected=true"),
+            source.replace("/not-read-during-validation", "relative"),
+            source.replace("references=['child']", "references=['child','child']"),
+        ] {
+            assert!(
+                toml::from_str::<Binding>(&invalid)
+                    .map_or(true, |binding| validate(&[binding]).is_err())
+            );
+        }
+    }
 
     #[tokio::test]
     async fn limits_lazy_files_cancellation_and_raw_budget_are_preserved() {
@@ -268,7 +481,11 @@ mod tests {
         let binding = Binding {
             subject: "demo.bytes".into(),
             format: Format::Avro,
-            schema_file: schema.path().to_str().unwrap().into(),
+            framing: Framing::Raw,
+            schema_file: Some(schema.path().to_str().unwrap().into()),
+            catalog: None,
+            registry: None,
+            buf: None,
             reader_schema_file: None,
             message_name: None,
         };
@@ -283,7 +500,7 @@ mod tests {
         );
         assert!(
             validate(&[Binding {
-                schema_file: "relative.avsc".into(),
+                schema_file: Some("relative.avsc".into()),
                 ..binding.clone()
             }])
             .is_err()

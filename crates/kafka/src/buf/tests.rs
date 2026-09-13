@@ -1,8 +1,10 @@
 use super::*;
 use crate::decoding::{Binding, Bindings};
 use crate::test_server::Server;
+use anyhow::ensure;
 use onetui_core::{Column, Page, Row, Value};
 use prost::Message;
+use std::time::{Duration, Instant};
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef";
 
@@ -543,8 +545,8 @@ fn hosted_buf_label_and_pinned_commit_decode_the_same_message() {
         .unwrap();
     let bytes = config.load(&|| Ok(())).unwrap();
     let identity = config.identity();
-    let commit = config.resolved_revision.clone().unwrap();
-    assert!(commit_id(&commit));
+    let commit = identity.split_once("#commit=").unwrap().1.to_owned();
+    assert!(commit.len() == 32 && commit.bytes().all(|b| b.is_ascii_hexdigit()));
     let decoder = onetui_protobuf::Decoder::new(&bytes, "connectrpc.eliza.v1.SayRequest").unwrap();
     let json = decoder.decode(b"\x0a\x05hello").unwrap().json().unwrap();
     assert_eq!(json, r#"{"sentence":"hello"}"#);

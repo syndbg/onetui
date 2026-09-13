@@ -4,6 +4,7 @@ use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
     QueryRequest, RequestContext, ShutdownContext,
 };
+use onetui_dynamodb::{DynamoDbExecutor, DynamoDbProvider};
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
 use onetui_nats::{NatsExecutor, NatsProvider};
 use onetui_postgres::{PostgresExecutor, PostgresProvider};
@@ -15,6 +16,7 @@ pub enum BuiltinProvider {
     Qdrant(QdrantProvider),
     Kafka(KafkaProvider),
     Nats(NatsProvider),
+    DynamoDb(DynamoDbProvider),
 }
 
 pub const BUILTINS: &[BuiltinProvider] = &[
@@ -22,6 +24,7 @@ pub const BUILTINS: &[BuiltinProvider] = &[
     BuiltinProvider::Qdrant(QdrantProvider),
     BuiltinProvider::Kafka(KafkaProvider),
     BuiltinProvider::Nats(NatsProvider),
+    BuiltinProvider::DynamoDb(DynamoDbProvider),
 ];
 
 pub enum BuiltinExecutor {
@@ -29,6 +32,7 @@ pub enum BuiltinExecutor {
     Qdrant(QdrantExecutor),
     Kafka(KafkaExecutor),
     Nats(NatsExecutor),
+    DynamoDb(DynamoDbExecutor),
 }
 
 impl Provider for BuiltinProvider {
@@ -40,6 +44,7 @@ impl Provider for BuiltinProvider {
             Self::Qdrant(p) => p.descriptor(),
             Self::Kafka(p) => p.descriptor(),
             Self::Nats(p) => p.descriptor(),
+            Self::DynamoDb(p) => p.descriptor(),
         }
     }
 
@@ -49,6 +54,7 @@ impl Provider for BuiltinProvider {
             Self::Qdrant(p) => p.validate_config(options),
             Self::Kafka(p) => p.validate_config(options),
             Self::Nats(p) => p.validate_config(options),
+            Self::DynamoDb(p) => p.validate_config(options),
         }
     }
 
@@ -62,6 +68,7 @@ impl Provider for BuiltinProvider {
             Self::Qdrant(p) => p.configure(options, env).map(BuiltinExecutor::Qdrant),
             Self::Kafka(p) => p.configure(options, env).map(BuiltinExecutor::Kafka),
             Self::Nats(p) => p.configure(options, env).map(BuiltinExecutor::Nats),
+            Self::DynamoDb(p) => p.configure(options, env).map(BuiltinExecutor::DynamoDb),
         }
     }
 }
@@ -73,6 +80,7 @@ impl Executor for BuiltinExecutor {
             Self::Qdrant(e) => e.stop_follow(context).await,
             Self::Kafka(e) => e.stop_follow(context).await,
             Self::Nats(e) => e.stop_follow(context).await,
+            Self::DynamoDb(e) => e.stop_follow(context).await,
         }
     }
     async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
@@ -81,6 +89,7 @@ impl Executor for BuiltinExecutor {
             Self::Qdrant(e) => e.follow_page(request, context).await,
             Self::Kafka(e) => e.follow_page(request, context).await,
             Self::Nats(e) => e.follow_page(request, context).await,
+            Self::DynamoDb(e) => e.follow_page(request, context).await,
         }
     }
     async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
@@ -89,6 +98,7 @@ impl Executor for BuiltinExecutor {
             Self::Qdrant(e) => e.query_page(request, context).await,
             Self::Kafka(e) => e.query_page(request, context).await,
             Self::Nats(e) => e.query_page(request, context).await,
+            Self::DynamoDb(e) => e.query_page(request, context).await,
         }
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
@@ -97,6 +107,7 @@ impl Executor for BuiltinExecutor {
             Self::Qdrant(e) => e.status(),
             Self::Kafka(e) => e.status(),
             Self::Nats(e) => e.status(),
+            Self::DynamoDb(e) => e.status(),
         }
     }
 
@@ -106,6 +117,7 @@ impl Executor for BuiltinExecutor {
             Self::Qdrant(e) => e.check(context).await,
             Self::Kafka(e) => e.check(context).await,
             Self::Nats(e) => e.check(context).await,
+            Self::DynamoDb(e) => e.check(context).await,
         }
     }
 
@@ -115,6 +127,7 @@ impl Executor for BuiltinExecutor {
             Self::Qdrant(e) => e.fetch_page(request, context).await,
             Self::Kafka(e) => e.fetch_page(request, context).await,
             Self::Nats(e) => e.fetch_page(request, context).await,
+            Self::DynamoDb(e) => e.fetch_page(request, context).await,
         }
     }
 
@@ -124,6 +137,7 @@ impl Executor for BuiltinExecutor {
             Self::Qdrant(e) => e.shutdown(context).await,
             Self::Kafka(e) => e.shutdown(context).await,
             Self::Nats(e) => e.shutdown(context).await,
+            Self::DynamoDb(e) => e.shutdown(context).await,
         }
     }
 }
@@ -133,6 +147,37 @@ mod tests {
     use super::*;
     use onetui_core::provider::{find_provider, validate_catalog};
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn dynamodb_variant_registers_without_loading_ambient_credentials() {
+        let provider = find_provider(BUILTINS, "dynamodb").unwrap();
+        let options = toml::from_str("region='us-east-1'").unwrap();
+        provider.validate_config(&options).unwrap();
+        let mut executor = provider
+            .configure(&options, &|_| panic!("no configured secret"))
+            .unwrap();
+        assert!(matches!(executor, BuiltinExecutor::DynamoDb(_)));
+        assert_eq!(
+            provider.descriptor().entry_resource,
+            Some("dynamodb.resources")
+        );
+        let (cancel, context) = RequestContext::new(Duration::from_secs(1));
+        cancel.send(()).unwrap();
+        assert!(
+            executor
+                .check(context)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("cancelled")
+        );
+        executor
+            .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+            .await
+            .unwrap();
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Closed);
+    }
 
     #[tokio::test]
     async fn nats_variant_delegates_lazy_configuration_cancellation_and_shutdown() {
@@ -178,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn postgres_variant_delegates_configuration_status_cancel_and_shutdown() {
         validate_catalog(BUILTINS).unwrap();
-        assert_eq!(BUILTINS.len(), 4);
+        assert_eq!(BUILTINS.len(), 5);
         let provider = find_provider(BUILTINS, "postgres").unwrap();
         let options = toml::from_str("url_env='DSN'").unwrap();
         provider.validate_config(&options).unwrap();

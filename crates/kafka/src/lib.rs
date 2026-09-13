@@ -1,6 +1,6 @@
 mod browse;
 mod buf;
-mod catalog;
+use onetui_schema_source as catalog;
 mod config;
 mod decoding;
 mod groups;

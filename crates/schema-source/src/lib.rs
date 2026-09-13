@@ -1,7 +1,73 @@
+#![doc = include_str!("../README.md")]
+
 use anyhow::{Result, ensure};
 use serde::Deserialize;
+use std::{fs::OpenOptions, io::Read, path::Path};
 
-use crate::decoding::{Format, validate_path};
+pub mod buf;
+pub mod registry;
+
+#[cfg(test)]
+mod test_server;
+
+#[derive(Debug)]
+pub struct Preview {
+    pub json: Result<String>,
+    pub native: Result<String>,
+}
+
+impl Preview {
+    pub fn avro(decoder: &onetui_avro::Decoder, raw: &[u8]) -> Result<Self> {
+        let decoded = decoder.decode(raw)?;
+        Ok(Self {
+            json: decoded.json(),
+            native: decoded.native(),
+        })
+    }
+
+    pub fn protobuf(decoder: &onetui_protobuf::Decoder, raw: &[u8]) -> Result<Self> {
+        let decoded = decoder.decode(raw)?;
+        Ok(Self {
+            json: decoded.json(),
+            native: decoded.native(),
+        })
+    }
+}
+
+pub fn validate_path(path: &str) -> Result<()> {
+    ensure!(
+        path.len() <= 4096 && !path.chars().any(char::is_control) && Path::new(path).is_absolute(),
+        "Decoder path must be absolute, at most 4096 bytes, without controls"
+    );
+    Ok(())
+}
+
+pub fn read_file(path: &str, limit: usize) -> Result<Vec<u8>> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A FIFO substituted at this path must not hold the native worker indefinitely.
+        options.custom_flags(nix::libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "Decoder path must be a regular file"
+    );
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= limit, "Decoder file exceeds {limit} bytes");
+    Ok(bytes)
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Format {
+    Avro,
+    Protobuf,
+}
 
 const ENTRIES: usize = 128;
 const SCHEMAS: usize = 64;
@@ -9,7 +75,7 @@ const BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub directory: String,
     pub schema: String,
     #[serde(default)]
@@ -28,7 +94,12 @@ fn valid_id(id: &str) -> bool {
 impl Config {
     pub fn validate(&self, format: Format) -> Result<()> {
         ensure!(cfg!(unix), "Directory catalogs require Unix");
-        validate_path(&self.directory)?;
+        ensure!(
+            self.directory.len() <= 4096
+                && !self.directory.chars().any(char::is_control)
+                && std::path::Path::new(&self.directory).is_absolute(),
+            "Decoder path must be absolute, at most 4096 bytes, without controls"
+        );
         ensure!(valid_id(&self.schema), "Invalid catalog schema ID");
         ensure!(self.references.len() <= 32, "Catalog references exceed 32");
         ensure!(
@@ -121,7 +192,7 @@ impl Config {
     }
 }
 
-pub(crate) struct Bundle {
+pub struct Bundle {
     pub schema: Vec<u8>,
     pub references: Vec<Vec<u8>>,
 }
@@ -156,16 +227,16 @@ fn read_at(directory: &nix::dir::Dir, name: &str, budget: usize) -> Result<Vec<u
     Ok(bytes)
 }
 
-pub(crate) fn capabilities() -> serde_json::Value {
+pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "required": false, "default": "none", "type": "table; raw framing only; mutually exclusive with schema_file, registry and buf",
+        "required": false, "default": "none", "type": "table; raw framing only; mutually exclusive with other writer-schema sources",
         "fields": {
             "directory": {"required": true, "type": "absolute directory path up to 4096 UTF-8 bytes without controls", "purpose": "Flat .avsc/.pb inventory on Unix; no recursive scan or path expansion"},
             "schema": {"required": true, "type": "filename stem, 1..128 ASCII letters/digits/dot/underscore/hyphen; not dot or dot-dot", "purpose": "Exact identity; no trial decoding. Duplicate stems across extensions fail."},
             "references": {"required": false, "default": [], "type": "up to 32 distinct Avro catalog IDs; excludes the root ID", "purpose": "All named writer dependencies, including transitive ones. Protobuf requires imports inside its descriptor set instead."}
         },
         "limits": {"directory_entries": ENTRIES, "schemas": SCHEMAS, "bundle_bytes": BYTES},
-        "lifecycle": "Snapshot each binding on first use or --check. Reopen the connection to reload, including cached failures. Row refresh does not reload schemas or reinterpret retained values. Reads stay on the native worker, with cancellation checks between entries/files; OS filesystem calls are not preemptible.",
+        "lifecycle": "Snapshot each binding on first use or --check. Reopen the connection to reload, including cached failures. Row refresh does not reload schemas or reinterpret retained values. Reads stay outside rendering, with cancellation checks between entries/files; OS filesystem calls are not preemptible.",
         "safety": "Schema files open relative to a pinned directory FD, without following symlinks; only regular files are read. Configured root must not itself be a symlink. Unselected schemas are inventoried but not parsed. No watcher or source compilation."
     })
 }

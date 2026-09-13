@@ -38,8 +38,16 @@ impl Provider for NatsProvider {
         options: &toml::Table,
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<NatsExecutor> {
-        let config = crate::config::Config::parse(options)?;
-        let (options, secrets) = config.options(env)?;
+        let mut config = crate::config::Config::parse(options)?;
+        let (options, mut secrets) = config.options(env)?;
+        for binding in &mut config.decoders {
+            if let Some(registry) = &mut binding.registry {
+                secrets.extend(registry.resolve(env)?);
+            }
+            if let Some(buf) = &mut binding.buf {
+                secrets.extend(buf.resolve(env)?);
+            }
+        }
         Ok(NatsExecutor {
             decoders: crate::decoding::Cache::new(config.decoders.clone()),
             config,

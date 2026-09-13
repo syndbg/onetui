@@ -28,6 +28,22 @@ fn nats_catalog_is_offline_and_exposes_read_operations() {
         serde_json::json!([])
     );
     assert_eq!(nats["configuration"]["jetstream"]["default"], true);
+    let catalog = &nats["configuration"]["decoders"]["fields"]["catalog"];
+    assert_eq!(
+        catalog["fields"]["references"]["default"],
+        serde_json::json!([])
+    );
+    assert_eq!(catalog["limits"]["bundle_bytes"], 262144);
+    assert_eq!(catalog["limits"]["schemas"], 64);
+    let sources = &nats["configuration"]["decoders"]["fields"];
+    assert_eq!(sources["registry"]["limits"]["cached_ids_per_binding"], 8);
+    assert_eq!(sources["buf"]["limits"]["response_bytes"], 262144);
+    assert!(
+        sources["framing"]
+            .as_str()
+            .unwrap()
+            .contains("raw (default)")
+    );
     assert_eq!(nats["configuration"]["tls"]["default"], true);
     assert_eq!(nats["limits"]["page_rows"], 100);
 }
@@ -318,4 +334,22 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
             .unwrap()
             .contains("GetCommits")
     );
+}
+#[test]
+fn dynamodb_catalog_exposes_native_read_configuration_without_credentials() {
+    let output = dump(&["--datasource", "dynamodb"]);
+    assert!(output.status.success());
+    let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let dynamodb = &schema["datasources"][0];
+    assert_eq!(dynamodb["entry_resource"], "dynamodb.resources");
+    assert_eq!(dynamodb["query"]["resource"], "dynamodb.query");
+    assert_eq!(dynamodb["configuration"]["region"]["required"], true);
+    assert_eq!(dynamodb["limits"]["page_rows"], 100);
+    assert_eq!(
+        dynamodb["query_syntax"]["operations"],
+        serde_json::json!(["Scan", "Query", "GetItem"])
+    );
+    for resource in dynamodb["resources"].as_array().unwrap() {
+        assert!(dynamodb["paths"][resource["id"].as_str().unwrap()].is_array());
+    }
 }
