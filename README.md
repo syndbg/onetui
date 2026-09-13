@@ -10,7 +10,7 @@ The initial version, v0.1.0, is read-only. Writes and broker administration are 
 | --- | --- | --- |
 | [PostgreSQL](docs/postgres.md) | Schemas, tables/views, columns, row paging, SQL queries | Query parameters, writes |
 | [Qdrant](docs/qdrant.md) | Collections, point paging, filtered Scroll, payloads, dense/sparse/multivectors | Advanced filters, similarity search, writes |
-| [Kafka](docs/kafka.md) | Metadata/configuration, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, TLS/mTLS and SASL PLAIN/SCRAM, Avro/Protobuf previews from files, directory catalogs and Confluent registries; Buf Protobuf commits and session-pinned labels | OAuth/GSSAPI, global timestamp ordering, publishing, administration |
+| [Kafka](docs/kafka.md) | Metadata/configuration, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, TLS/mTLS, SASL PLAIN/SCRAM and OAuth client credentials, Avro/Protobuf previews from files, directory catalogs and Confluent registries; Buf Protobuf commits and session-pinned labels | GSSAPI, global timestamp ordering, publishing, administration |
 | [NATS JetStream](docs/nats.md) | Streams, configuration/state, stored messages, live following, headers, TLS and token/user-password authentication | Core subscriptions, KV/object store, queries, NKEY/JWT, schema decoding, publishing, administration |
 | DynamoDB | Planned | All operations |
 | RabbitMQ | Planned | All operations |

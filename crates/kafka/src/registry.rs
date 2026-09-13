@@ -189,35 +189,36 @@ impl Registry {
     }
 }
 
+pub(crate) fn http_agent(ca_file: Option<&str>) -> Result<ureq::Agent> {
+    let roots = if let Some(path) = ca_file {
+        let pem = super::decoding::read_file(path, 1024 * 1024)?;
+        let mut certs = Vec::new();
+        for item in ureq::tls::parse_pem(&pem) {
+            if let ureq::tls::PemItem::Certificate(cert) = item? {
+                certs.push(cert);
+            }
+        }
+        ensure!(!certs.is_empty(), "HTTP ca_file contains no certificates");
+        ureq::tls::RootCerts::new_with_certs(&certs)
+    } else {
+        ureq::tls::RootCerts::PlatformVerifier
+    };
+    let agent = ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder().root_certs(roots).build())
+        .proxy(None)
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .max_response_header_size(16 * 1024)
+        .max_idle_connections(1)
+        .timeout_global(Some(Duration::from_secs(2)))
+        .build()
+        .into();
+    Ok(agent)
+}
+
 impl Config {
     pub(crate) fn agent(&self) -> Result<ureq::Agent> {
-        let roots = if let Some(path) = &self.ca_file {
-            let pem = super::decoding::read_file(path, 1024 * 1024)?;
-            let mut certs = Vec::new();
-            for item in ureq::tls::parse_pem(&pem) {
-                if let ureq::tls::PemItem::Certificate(cert) = item? {
-                    certs.push(cert);
-                }
-            }
-            ensure!(
-                !certs.is_empty(),
-                "Registry ca_file contains no certificates"
-            );
-            ureq::tls::RootCerts::new_with_certs(&certs)
-        } else {
-            ureq::tls::RootCerts::PlatformVerifier
-        };
-        let agent = ureq::Agent::config_builder()
-            .tls_config(ureq::tls::TlsConfig::builder().root_certs(roots).build())
-            .proxy(None)
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .max_response_header_size(16 * 1024)
-            .max_idle_connections(1)
-            .timeout_global(Some(Duration::from_secs(2)))
-            .build()
-            .into();
-        Ok(agent)
+        http_agent(self.ca_file.as_deref())
     }
 
     pub(crate) fn request(

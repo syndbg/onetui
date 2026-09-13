@@ -1,7 +1,7 @@
 use super::*;
 use std::io::Write;
 
-fn fixture_file(name: &str) -> tempfile::NamedTempFile {
+pub(super) fn fixture_file(name: &str) -> tempfile::NamedTempFile {
     let output = std::process::Command::new("docker")
         .args([
             "compose",

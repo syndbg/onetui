@@ -24,6 +24,8 @@ mod demo_avro;
 mod demo_protobuf;
 #[path = "fixtures/mtls.rs"]
 mod mtls;
+#[path = "fixtures/oauth.rs"]
+mod oauth;
 #[path = "fixtures/redpanda.rs"]
 mod redpanda;
 #[path = "fixtures/registry_avro.rs"]

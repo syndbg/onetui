@@ -17,6 +17,7 @@ pub(crate) struct Config {
     pub sasl_mechanism: Option<String>,
     pub username_env: Option<String>,
     pub password_env: Option<String>,
+    pub oauth: Option<crate::oauth::Config>,
     #[serde(default)]
     pub decoders: Vec<crate::decoding::Binding>,
 }
@@ -107,21 +108,38 @@ impl Config {
             ensure!(
                 matches!(
                     config.sasl_mechanism.as_deref(),
-                    Some("PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512")
+                    Some("PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512" | "OAUTHBEARER")
                 ),
-                "Kafka SASL_SSL requires PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512"
+                "Kafka SASL_SSL requires PLAIN, SCRAM-SHA-256, SCRAM-SHA-512 or OAUTHBEARER"
             );
-            ensure!(
-                config.username_env.as_deref().is_some_and(safe_name)
-                    && config.password_env.as_deref().is_some_and(safe_name),
-                "Kafka SASL_SSL requires valid username_env and password_env references"
-            );
+            if config.sasl_mechanism.as_deref() == Some("OAUTHBEARER") {
+                ensure!(
+                    config.username_env.is_none() && config.password_env.is_none(),
+                    "Kafka OAUTHBEARER uses oauth credentials, not username_env/password_env"
+                );
+                config
+                    .oauth
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Kafka OAUTHBEARER requires oauth settings"))?
+                    .validate()?;
+            } else {
+                ensure!(config.oauth.is_none(), "Kafka oauth requires OAUTHBEARER");
+                ensure!(
+                    config.username_env.as_deref().is_some_and(safe_name)
+                        && config.password_env.as_deref().is_some_and(safe_name),
+                    "Kafka SASL_SSL requires valid username_env and password_env references"
+                );
+            }
         } else {
             ensure!(
                 config.sasl_mechanism.is_none()
                     && config.username_env.is_none()
                     && config.password_env.is_none(),
                 "Kafka SASL settings require SASL_SSL"
+            );
+            ensure!(
+                config.oauth.is_none(),
+                "Kafka oauth requires SASL_SSL and OAUTHBEARER"
             );
         }
         crate::decoding::validate(&config.decoders)?;
@@ -181,14 +199,17 @@ impl Config {
             secrets.push(password);
         }
         if let Some(mechanism) = &self.sasl_mechanism {
-            let username = secret(self.username_env.as_deref().unwrap(), env)?;
+            config.set("sasl.mechanism", mechanism);
+            config.set("enable.sasl.oauthbearer.unsecure.jwt", "false");
+        }
+        if let Some(name) = &self.username_env {
+            let username = secret(name, env)?;
             let password = secret(self.password_env.as_deref().unwrap(), env)?;
             ensure!(
                 !username.contains('\0') && !password.contains('\0'),
                 "Kafka SASL credentials must not contain NUL"
             );
             config
-                .set("sasl.mechanism", mechanism)
                 .set("sasl.username", &username)
                 .set("sasl.password", &password);
             secrets.extend([username, password]);

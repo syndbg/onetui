@@ -29,4 +29,9 @@ openssl pkey -in /tmp/onetui-kafka-tls/reader.key -aes-256-cbc \
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=untrusted \
     -keyout /tmp/onetui-kafka-tls/untrusted.key \
     -out /tmp/onetui-kafka-tls/untrusted.crt 2>/dev/null
+# OpenSSL's generated RSA key uses exponent 65537 (base64url AQAB).
+modulus=$(openssl rsa -in /tmp/onetui-kafka-tls/server.key -noout -modulus \
+    | cut -d= -f2 | xxd -r -p | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+printf '{"keys":[{"kty":"RSA","kid":"onetui-fixture","use":"sig","alg":"RS256","n":"%s","e":"AQAB"}]}\n' "$modulus" \
+    > /tmp/onetui-kafka-tls/jwks.json
 exec /etc/kafka/docker/run

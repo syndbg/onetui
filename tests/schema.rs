@@ -236,6 +236,17 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
         "with client_cert_file"
     );
     assert!(kafka["configuration"]["client_key_password_env"]["default"].is_null());
+    assert!(
+        kafka["configuration"]["sasl_mechanism"]["values"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("OAUTHBEARER"))
+    );
+    let oauth = &kafka["configuration"]["oauth"];
+    assert_eq!(oauth["fields"]["client_secret_env"]["required"], true);
+    assert_eq!(oauth["fields"]["ca_file"]["default"], "platform trust");
+    assert_eq!(oauth["limits"]["response_bytes"], 65536);
+    assert_eq!(oauth["limits"]["request_timeout_ms"], 2000);
     assert_eq!(kafka["limits"]["topic_partitions"], 32);
     assert_eq!(kafka["limits"]["topic_cursor_bytes"], 4096);
     let buf = &kafka["configuration"]["decoders"]["fields"]["buf"];

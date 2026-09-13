@@ -57,6 +57,12 @@ impl Provider for KafkaProvider {
         let identity = NEXT_EXECUTOR.fetch_add(1, Ordering::Relaxed);
         let mut options = crate::config::Config::parse(options)?;
         let (config, mut secrets) = options.native(identity, env)?;
+        let oauth = options
+            .oauth
+            .as_ref()
+            .map(|config| config.resolve(env))
+            .transpose()?
+            .map(|session| Arc::new(StdMutex::new(session)));
         for binding in &mut options.decoders {
             if let Some(registry) = &mut binding.registry {
                 secrets.extend(registry.resolve(env)?);
@@ -69,6 +75,7 @@ impl Provider for KafkaProvider {
             config,
             decoders: options.decoders,
             secrets,
+            oauth,
             identity,
             owner: Mutex::new(None),
             status: watch::channel(ConnectionStatus::Configured).0,
@@ -81,6 +88,7 @@ pub struct KafkaExecutor {
     config: ClientConfig,
     decoders: Vec<crate::decoding::Binding>,
     secrets: Vec<String>,
+    oauth: Option<Arc<StdMutex<crate::oauth::Session>>>,
     identity: u64,
     owner: Mutex<Option<Owner>>,
     status: watch::Sender<ConnectionStatus>,
@@ -124,14 +132,36 @@ struct NativeContext {
     status: watch::Sender<ConnectionStatus>,
     errors: StdMutex<Arc<StdMutex<Vec<String>>>>,
     secrets: Vec<String>,
+    oauth: Option<Arc<StdMutex<crate::oauth::Session>>>,
+    deadline: StdMutex<Instant>,
 }
 
 impl ClientContext for NativeContext {
+    const ENABLE_REFRESH_OAUTH_TOKEN: bool = true;
+
+    fn generate_oauth_token(
+        &self,
+        _: Option<&str>,
+    ) -> Result<rdkafka::client::OAuthToken, Box<dyn std::error::Error>> {
+        let session = self.oauth.as_ref().ok_or("OAuth is not configured")?;
+        let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
+        let deadline = *self.deadline.lock().unwrap_or_else(|e| e.into_inner());
+        session
+            .token(deadline)
+            .map_err(|error| session.diagnostic(error).to_string().into())
+    }
     // Native logs bypass the terminal renderer and can include authentication data.
     fn log(&self, _: RDKafkaLogLevel, _: &str, _: &str) {}
     fn error(&self, error: KafkaError, reason: &str) {
         let secrets: Vec<_> = self.secrets.iter().map(String::as_str).collect();
-        let mut text = onetui_core::diagnostic(anyhow!("{error}: {reason}"), &secrets).to_string();
+        let mut error = onetui_core::diagnostic(anyhow!("{error}: {reason}"), &secrets);
+        if let Some(session) = &self.oauth {
+            error = session
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .diagnostic(error);
+        }
+        let mut text = error.to_string();
         if text.len() > NATIVE_ERROR_BYTES {
             text.truncate(text.floor_char_boundary(NATIVE_ERROR_BYTES - 3));
             text.push_str("...");
@@ -169,6 +199,7 @@ impl KafkaExecutor {
             let config = self.config.clone();
             let status = self.status.clone();
             let secrets = self.secrets.clone();
+            let oauth = self.oauth.clone();
             let identity = self.identity;
             let bindings = self.decoders.clone();
             std::thread::Builder::new()
@@ -183,6 +214,14 @@ impl KafkaExecutor {
                             if matches!(job.operation, Operation::Check) {
                                 decoders.check(|| job.remaining().map(|_| ()))?;
                             }
+                            // Idle sessions do not poll tokens. Reconnect after expiry instead of
+                            // reauthenticating an expired socket; logical bookmarks remain valid.
+                            if oauth.as_ref().is_some_and(|session| {
+                                session.lock().unwrap_or_else(|e| e.into_inner()).expired()
+                            }) {
+                                client.take();
+                                job.remaining()?;
+                            }
                             if client.is_none() {
                                 status.send_replace(ConnectionStatus::Connecting);
                                 client = Some(config.create_with_context::<_, BaseConsumer<_>>(
@@ -190,6 +229,8 @@ impl KafkaExecutor {
                                         status: status.clone(),
                                         errors: StdMutex::new(job.errors.clone()),
                                         secrets: secrets.clone(),
+                                        oauth: oauth.clone(),
+                                        deadline: StdMutex::new(job.deadline),
                                     },
                                 )?);
                             }
@@ -200,6 +241,13 @@ impl KafkaExecutor {
                                 .errors
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner()) = job.errors.clone();
+                            *client
+                                .as_ref()
+                                .unwrap()
+                                .context()
+                                .deadline
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner()) = job.deadline;
                             let topic = match &job.operation {
                                 Operation::Page(request) | Operation::Follow(request) => {
                                     request.resource.path.first()
@@ -236,10 +284,17 @@ impl KafkaExecutor {
                         })();
                         let result = result.map_err(|error| {
                             let error = request_error(error, &job.errors);
-                            onetui_core::diagnostic(
+                            let error = onetui_core::diagnostic(
                                 error,
                                 &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-                            )
+                            );
+                            match &oauth {
+                                Some(session) => session
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .diagnostic(error),
+                                None => error,
+                            }
                         });
                         if result.is_ok() {
                             status.send_replace(ConnectionStatus::Connected);
@@ -332,6 +387,7 @@ impl Executor for KafkaExecutor {
     }
     async fn shutdown(&mut self, context: ShutdownContext) -> Result<()> {
         self.closed = true;
+        self.oauth.take();
         self.status.send_replace(ConnectionStatus::Closing);
         if let Some(Owner { send, done }) = self.owner.get_mut().take() {
             drop(send);
@@ -391,6 +447,16 @@ fn run(
     identity: u64,
     raw_limit: usize,
 ) -> Result<Response> {
+    // Every read unassigns before returning. Quiet follow batches and successful metadata
+    // reads still need polling, or queued OAuth refresh callbacks starve until expiry.
+    if client.context().oauth.is_some()
+        && let Some(Err(error)) = client.poll(job.remaining()?.min(Duration::from_millis(10)))
+        && !transient(&error)
+        && !matches!(error, KafkaError::PartitionEOF(_))
+    {
+        return Err(error.into());
+    }
+    job.remaining()?;
     let prepared;
     let request = match &job.operation {
         Operation::Check => {
@@ -719,6 +785,8 @@ mod tests {
             status: watch::channel(ConnectionStatus::Connected).0,
             errors: StdMutex::new(first.clone()),
             secrets: vec!["fixture-secret".into()],
+            oauth: None,
+            deadline: StdMutex::new(Instant::now()),
         };
         let error = KafkaError::Global(RDKafkaErrorCode::BrokerTransportFailure);
         native.error(error.clone(), "TLS alert fixture-secret\x1b[31m");

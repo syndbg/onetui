@@ -49,6 +49,30 @@ Restrict private-key file permissions. Files are read on the first native reques
 
 Unknown settings are rejected. Broker metadata can advertise endpoints other than the bootstrap addresses; those addresses must be reachable from the machine running OneTUI. The plaintext bootstrap restriction is not an outbound network allowlist. Prefer TLS for all non-disposable environments. Broker ACLs remain the authorization boundary.
 
+### OAuth
+
+Use a client-credentials token endpoint returning signed JWT access tokens:
+
+```toml
+[connections.kafka_oauth]
+kind = "kafka"
+bootstrap_servers = ["broker.example:9093"]
+security_protocol = "SASL_SSL"
+sasl_mechanism = "OAUTHBEARER"
+
+[connections.kafka_oauth.oauth]
+token_url = "https://identity.example/oauth/token"
+client_id_env = "ONETUI_OAUTH_CLIENT_ID"
+client_secret_env = "ONETUI_OAUTH_CLIENT_SECRET"
+# Optional:
+scope = "kafka.read"
+# ca_file = "/absolute/path/to/identity-ca.pem"
+```
+
+Broker and token-endpoint CA bundles are separate. Credentials resolve only for the selected alias; reopen it after changing them. Token requests use HTTP Basic authentication, verified TLS, a two-second deadline and a 64 KiB response limit. Redirects and proxies are disabled; plain HTTP is allowed only on literal loopback IPs for tests.
+
+librdkafka refreshes tokens during active reads and following; idle sessions make no token requests. After idle expiry, the next read reconnects without discarding page bookmarks. JWT `sub` and `exp` are required. The broker validates signatures, issuer, audience and permissions. Opaque tokens, interactive login, discovery and SASL extensions are not supported.
+
 ## Navigation and values
 
 Enter on a connection opens a local resource menu with Topics, Brokers and Groups. The menu does not connect to Kafka; selecting an entry starts its native read. Topics lists topics; Enter on a topic offers Partitions, Configuration and `kafka.records` (all partitions). Enter on a partition reads records starting at its earliest available offset. Enter on a record opens all its fields. `n/p` moves between pages, `r` refreshes and `/` filters only cached text on the displayed page.
@@ -271,4 +295,4 @@ Following adds no `onetui.toml` settings. The existing request timeout applies t
 
 For sample arrivals, use [Kafka traffic](../hack/README.md#kafka-traffic).
 
-SQL, publishing from the app, consumer-group administration, broker OAuth and GSSAPI are not exposed.
+SQL, publishing from the app, consumer-group administration and GSSAPI are not exposed.
