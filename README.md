@@ -1,49 +1,71 @@
-# OneTUI (`onetui`)
+<p align="center">
+  <img src="docs/assets/onetui-logo.png" alt="OneTUI: a gold ring bearing datasource symbols and the words One TUI for them all" width="640">
+</p>
 
-Browse databases and streams with k9s-style terminal navigation.
+<h1 align="center">OneTUI</h1>
 
-The initial version, v0.1.0, is read-only. Writes and broker administration are planned.
+<p align="center">One TUI for them all.</p>
 
-## Features and datasource support
+<p align="center">
+  <a href="https://github.com/syndbg/onetui/actions/workflows/main.yaml"><img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF" alt="CI: GitHub Actions"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/Rust-1.98.1-orange" alt="Rust 1.98.1"></a>
+</p>
 
-| Datasource | Supported | Not yet supported |
-| --- | --- | --- |
-| [PostgreSQL](docs/postgres.md) | Schemas, tables/views, columns, row paging, SQL queries | Query parameters, writes |
-| [Qdrant](docs/qdrant.md) | Collections, point paging, filtered Scroll, payloads, dense/sparse/multivectors | Advanced filters, similarity search, writes |
-| [Kafka](docs/kafka.md) | Metadata/configuration with synonyms, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, TLS/mTLS, SASL PLAIN/SCRAM, OAuth client credentials and GSSAPI ticket caches, Avro/Protobuf JSON and typed inspection, optional Avro reader schemas; files, directory catalogs, Confluent registries and Buf Protobuf sources | Publishing, administration |
-| [NATS](docs/nats.md) | Core subscriptions, JetStream streams/messages, live following, subject/sequence/time replay, consumer state, KV history/watch, object metadata/chunks, Avro/Protobuf decoding from files, directory catalogs, Confluent registries or Buf Protobuf sources, domains, TLS/mTLS, token/user-password and NKEY/JWT authentication | Publishing, administration |
-| [DynamoDB](docs/dynamodb.md) | Table/index metadata, replicas, typed items, bounded Scan/Query/GetItem, batch/transactional reads, read-only PartiQL, vector search, backup/import/export inspection, Streams/shards/records, sequence replay and following | Writes and administration |
-| RabbitMQ | Planned | All operations |
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features-and-datasource-support">Datasources</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="docs/ui.md">User guide</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-Kafka browsing and following stay within one selected topic. Combining topics in one view is out of scope, not a planned feature.
+OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect rows, points and messages, run native queries, and follow live streams without switching tools.
 
-All implemented connectors support headless checks. The shared UI provides connection switching, filtering, sorting, row/value inspection, cancellation and ten themes. Keybindings are currently fixed.
+The project is working toward **v0.1.0**. This initial version is **read-only**. Writes and broker administration are planned for later versions.
 
-## Tech stack
+## Why OneTUI?
 
-Rust 2024, Ratatui/Crossterm and Tokio. Clients: `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka, `async-nats` and AWS SDK for Rust. Decoding: `apache-avro`, `prost-reflect` and `protox`. Configuration: Clap, Serde and TOML.
+- Use the same connection picker, navigation and value inspector across datasources.
+- Browse one page at a time, return through page bookmarks, and cancel active requests.
+- Inspect JSON, text, hex and binary values. Decode Avro and Protobuf without losing access to the original bytes.
+- Filter loaded data as you type, sort columns, and choose from ten color themes.
+- Check connections and inspect available settings and actions without opening the TUI.
 
-Providers are separate crates, registered through [static enum dispatch](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md). No runtime plugins.
+## Install
 
-## Build and run
+Build from source with the pinned Rust toolchain and [native build tools](CONTRIBUTING.md#local-setup):
 
-See [prerequisites](CONTRIBUTING.md#local-setup), then try the disposable local databases:
+```sh
+git clone https://github.com/syndbg/onetui.git
+cd onetui
+cargo install --path . --locked
+```
+
+Cargo installs `onetui` in its binary directory, normally `$HOME/.cargo/bin`. Add that directory to your `PATH`. To build without installing, use `make build-release` and run `./target/release/onetui`.
+
+## Quick start
+
+Try the sample databases from the repository with Docker Compose running:
 
 ```sh
 make dev-up
 make run
 ```
 
-Use `make dev-traffic` for Kafka/NATS traffic and `make dev-down` to delete fixture data. More tasks: [Makefile](Makefile), `make help`. [Local setup](hack/README.md) lists endpoints and sample datasets.
+Choose a connection and press Enter. The demos include wide tables, typed and binary values, vector collections, and Avro/Protobuf messages with a local Schema Registry.
 
-For your own databases:
+Run `make dev-traffic` in another terminal for Kafka, Redpanda and NATS traffic. Press `f` on a resource that supports following. Use `make dev-down` when finished. It deletes the disposable fixture data.
+
+For your own databases, create a [configuration file](#configuration), then run:
 
 ```sh
-make build-release
-./target/release/onetui --config "$HOME/onetui.toml"
+onetui --config "$HOME/onetui.toml"
 ```
 
-Once `onetui` is on your `PATH`, add a shortcut to your shell configuration:
+Without `--connection <alias>`, OneTUI starts at the connection picker and makes no datasource request. [Local setup](hack/README.md) covers sample datasets and endpoints. Use `make help` for available tasks.
+
+For a shorter command, add this to your shell configuration:
 
 ```sh
 alias ot='onetui'
@@ -51,13 +73,44 @@ alias ot='onetui'
 alias ot='onetui --config "$HOME/onetui.toml"'
 ```
 
-## Browsing and offline catalog
+## Features and datasource support
 
-Without `--connection <alias>`, OneTUI starts at the connection picker without connecting.
+| Datasource | Supported reads | Not yet supported |
+| --- | --- | --- |
+| [PostgreSQL](docs/postgres.md) | Schemas, tables/views, columns, row paging, SQL queries | Query parameters, writes |
+| [Qdrant](docs/qdrant.md) | Collections, point paging, filtered Scroll, payloads, dense/sparse/multivectors | Advanced filters, similarity search, writes |
+| [Kafka](docs/kafka.md) | Broker/topic metadata, configuration and synonyms, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, Avro/Protobuf inspection and Avro reader schemas | Publishing, administration |
+| [NATS](docs/nats.md) | Core subscriptions, JetStream streams/messages, live following, subject/sequence/time replay, consumer state, KV history/watch, object metadata/chunks, Avro/Protobuf decoding and domains | Publishing, administration |
+| [DynamoDB](docs/dynamodb.md) | Table/index metadata, replicas, typed items, bounded Scan/Query/GetItem, batch/transactional reads, read-only PartiQL, vector search, backup/import/export inspection, Streams/shards/records, sequence replay and following | Writes and administration |
+| RabbitMQ | Planned | All operations |
 
-Use Enter to open, Esc to return, `n/p` for pages, `/` for live page-local filtering and `?` for available actions. `T` chooses a theme; `v` changes value display. `e` opens a query editor: Enter/F5 executes, Shift+Enter inserts a line.
+Kafka and NATS support schema files, directory catalogs, Confluent registries and Buf Protobuf sources. Their guides cover TLS/mTLS and authentication: Kafka supports SASL PLAIN/SCRAM, OAuth client credentials and GSSAPI ticket caches. NATS supports tokens, user/password and NKEY/JWT.
 
-See [UI layout and controls](docs/ui.md) and [query examples](docs/queries.md). Browsing uses independent reads, not a cross-page snapshot.
+Kafka browsing and following stay within one selected topic. Combining topics in one view is out of scope. DynamoDB cloud-only metadata and vector search have protocol tests, not live AWS validation.
+
+All implemented connectors support headless checks. Browsing uses independent reads, not a cross-page snapshot. Use read-only datasource credentials where available. Reads may consume capacity even though they do not change stored data.
+
+## Controls
+
+The context header shows actions available in the current view. Press `?` for help or `:` to enter a command. Keybindings are currently fixed.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, arrows | Move between rows |
+| Enter / Esc | Open a resource or value / go back |
+| `h` / `l` | Select a field |
+| `n` / `p` | Next / previous data page or value chunk |
+| PageUp / PageDown | Scroll within loaded data |
+| Ctrl-U / Ctrl-D | Scroll half a screen outside text entry |
+| `/` | Filter the loaded page as you type |
+| `s` | Cycle column sort |
+| `e` | Open the native query editor |
+| `f` | Start or stop following, where supported |
+| `T` / `v` | Choose a theme / change value display |
+| `c` / `r` | Choose a connection / refresh |
+| Ctrl-C / `q` | Cancel active work, or quit when idle / quit |
+
+In the query editor, Enter or F5 executes and Shift+Enter inserts a line. See [query examples and terminal requirements](docs/queries.md) and the [UI guide](docs/ui.md) for details.
 
 ## Configuration
 
@@ -80,7 +133,7 @@ onetui schema
 onetui schema --datasource kafka
 ```
 
-This prints defaults, examples, resources and actions offline, not a live database schema. Top-level configuration supports `theme`, `display` and named `connections`; no endpoints or aliases are built in.
+This prints defaults, examples, resources and actions offline, not a live database schema. Top-level configuration supports `theme`, `display` and named `connections`. No endpoints or aliases are built in.
 
 Example `~/onetui.toml`:
 
@@ -103,20 +156,35 @@ Set the referenced environment variables before connecting. They are explicit se
 onetui --config "$HOME/onetui.toml" --check --connection local_pg
 ```
 
-See connector guides above for TLS/authentication. Use plaintext only for local development. `--timeout` sets the active-request deadline (default 5 seconds, range 1-300); it is not a TOML setting.
+See connector guides above for TLS/authentication. Use plaintext only for local development. `--timeout` sets the active-request deadline (default 5 seconds, range 1-300). It is not a TOML setting.
 
 ### Display settings
 
-Defaults: Catppuccin theme; Auto format with pretty printing, highlighting and word wrap enabled. Auto shows readable UTF-8 bytes as text, falling back to hex. Explicit text, JSON, hex and binary views are available through `v`; theme and display changes are session-only. See [display controls](docs/ui.md#value-display-controls) or `onetui schema` for persistent settings.
+The defaults are Catppuccin and Auto format, with pretty printing, highlighting and word wrap enabled. Auto shows readable UTF-8 bytes as text and falls back to hex. Explicit text, JSON, hex and binary views are available through `v`. Theme and display changes are session-only. See [display controls](docs/ui.md#value-display-controls) or `onetui schema` for persistent settings.
 
 ### Datasource errors
 
-Native diagnostics are preserved, configured secrets redacted and terminal controls escaped. Errors may still contain data returned by the server; review them before sharing.
+OneTUI preserves native diagnostics, redacts configured secrets and escapes terminal controls. Errors may still contain data returned by the server. Review them before sharing.
+
+## Tech stack
+
+OneTUI uses Rust 2024, Ratatui/Crossterm and Tokio. Its native clients are `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka, `async-nats` and the AWS SDK for Rust. Decoding uses `apache-avro`, `prost-reflect` and `protox`. Clap, Serde and TOML handle the CLI and configuration.
+
+Providers live in separate crates and use [static enum dispatch](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md). Datasources are built into the binary. There are no runtime plugins.
+
+## Documentation
+
+- [UI layout and controls](docs/ui.md)
+- [Native queries](docs/queries.md)
+- [Local demos and troubleshooting](hack/README.md)
+- [Architecture decisions](docs/adr/)
 
 ## Contributing
 
-Use [CONTRIBUTING.md](CONTRIBUTING.md) for checks, pull requests and releases.
+Bug reports and focused pull requests are welcome. For a bug, include the OneTUI version, datasource, reproduction steps and sanitized diagnostics in a [GitHub issue](https://github.com/syndbg/onetui/issues).
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, required checks, pull requests and the release process. Run `make help` for development tasks.
 
 ## License
 
-[Apache-2.0](LICENSE). Redistributed binaries must retain [third-party notices](THIRD_PARTY_NOTICES.md).
+OneTUI is licensed under [Apache-2.0](LICENSE). Redistributed binaries must retain the [third-party notices](THIRD_PARTY_NOTICES.md).
