@@ -15,6 +15,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#features-and-datasource-support">Datasources</a> ·
+  <a href="#themes">Themes</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="docs/ui.md">User guide</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -112,6 +113,16 @@ The context header shows actions available in the current view. Press `?` for he
 
 In the query editor, Enter or F5 executes and Shift+Enter inserts a line. See [query examples and terminal requirements](docs/queries.md) and the [UI guide](docs/ui.md) for details.
 
+## Themes
+
+OneTUI includes **Catppuccin** (default), **Gruvbox**, **Solarized**, **Nord**, **Dracula**, **Tokyo Night**, **One Dark**, **Rosé Pine**, **Monokai** and **Flexoki**.
+
+[![OneTUI with the default Catppuccin theme and synthetic customer data](docs/assets/themes/catppuccin.svg)](docs/themes.md)
+
+Press `T` or enter `:themes` to preview themes. Enter keeps the choice for this session. Esc restores the previous theme. Set `theme = "monokai"` in your config to keep a preference between runs.
+
+See the [gallery of all ten themes](docs/themes.md) for previews and exact configuration names.
+
 ## Configuration
 
 ### File location
@@ -175,6 +186,7 @@ Providers live in separate crates and use [static enum dispatch](docs/adr/0002-u
 ## Documentation
 
 - [UI layout and controls](docs/ui.md)
+- [Theme gallery](docs/themes.md)
 - [Native queries](docs/queries.md)
 - [Local demos and troubleshooting](hack/README.md)
 - [Architecture decisions](docs/adr/)

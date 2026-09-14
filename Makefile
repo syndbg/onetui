@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint dev-up dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint theme-gallery dev-up dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package
 
 help:
 	@printf '%s\n' \
@@ -14,6 +14,7 @@ help:
 	  'test                   Run tests without Docker' \
 	  'verify                 Build, lint and run non-Docker tests' \
 	  'workflow-lint          Validate GitHub workflows (requires Go; downloads pinned actionlint)' \
+	  'theme-gallery          Regenerate all theme previews from the UI (no database needed)' \
 	  'dev-up                 Build and start ready-to-use disposable local databases' \
 	  'dev-reset              Delete fixture data, recreate services and reseed demos' \
 	  'dev-seed               Add demo data to running fixtures without resetting existing data' \
@@ -52,6 +53,9 @@ verify: build lint test
 
 workflow-lint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= .github/workflows/*.yaml
+
+theme-gallery:
+	cargo test -p onetui-tui --lib theme_gallery::export --locked -- --ignored --exact
 
 dev-up: build
 	bash hack/dev.sh up

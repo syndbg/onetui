@@ -2,6 +2,8 @@
 
 OneTUI has one context header, an input bar that appears only while typing, a content panel and a footer. There is no separate branding or connection strip above context.
 
+See the [theme gallery](themes.md) to compare all built-in palettes.
+
 | Panel | Contents | Behavior |
 | --- | --- | --- |
 | Context | `read-only` in the title; connection alias, datasource, resource, path, loaded/shown counts and transport state | The alias appears here once. Counts describe cached data, not database totals. Connected means transport state, not automatic data refresh. |
