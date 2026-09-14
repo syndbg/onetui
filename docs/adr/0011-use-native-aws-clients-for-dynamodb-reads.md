@@ -17,6 +17,8 @@ Stream bookmarks retain the last displayed sequence and native iterator. Explici
 
 For successful Streams responses that the SDK model cannot decode, keep the original bounded JSON with a decoding warning. DynamoDB Local returns untagged `{}` for some empty-map images; inferring `M` would alter the returned data. HTTP failures, malformed JSON and missing record identities still fail the request.
 
+PartiQL APIs also accept writes, so check every statement before connecting: require one `SELECT` and bind its `FROM` source to the selected table. The local lexer checks operation and scope; DynamoDB validates expressions. Reject ambiguous quoting and nested comments, and use typed parameters for values. Keep native continuation tokens and fail on unresumable or oversized results rather than truncating them. [PartiQL API](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ExecuteStatement.html)
+
 ## Rejected alternatives
 
 - Shelling out to the AWS CLI adds a subprocess lifecycle and output-format dependency.

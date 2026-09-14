@@ -18,6 +18,15 @@ use std::{
 #[path = "protocol/streams.rs"]
 mod streams;
 
+#[path = "protocol/multi_items.rs"]
+mod multi_items;
+
+#[path = "protocol/vectors.rs"]
+mod vectors;
+
+#[path = "protocol/partiql.rs"]
+mod partiql;
+
 struct Server {
     endpoint: String,
     requests: mpsc::Receiver<(String, Json)>,
@@ -409,6 +418,79 @@ async fn cloud_metadata_routes_only_native_read_operations() {
             assert_eq!(body[key], "demo");
         }
     }
+}
+
+#[tokio::test]
+async fn insight_inventory_opens_table_and_index_details_and_stream_policies_are_readable() {
+    let arn = "arn:aws:dynamodb:us-east-1:123456789012:table/demo/stream/2026-09-14T00:00:00.000";
+    let policy =
+        json!({"Policy":"{\"Version\":\"2012-10-17\",\"Statement\":[]}","RevisionId":"001"});
+    let index = json!({"TableName":"demo","IndexName":"by_status","ContributorInsightsStatus":"FAILED","FailureException":{"ExceptionName":"AccessDeniedException","ExceptionDescription":"native failure detail"}});
+    let server = Server::start(vec![
+        (200,json!({"ContributorInsightsSummaries":[{"TableName":"demo"},{"TableName":"demo","IndexName":"by_status"}]}).to_string()),
+        (200,index.to_string()),
+        (200,policy.to_string()),
+    ]);
+    let e = server.executor();
+    let inventory = fetch(&e, request("dynamodb.account_insights", &[], None))
+        .await
+        .unwrap();
+    assert_eq!(
+        inventory.rows[0].target,
+        Some(Resource::new("dynamodb.insights", vec!["demo".into()]))
+    );
+    let target = inventory.rows[1].target.clone().unwrap();
+    assert_eq!(
+        target,
+        Resource::new(
+            "dynamodb.index_insights",
+            vec!["demo".into(), "by_status".into()]
+        )
+    );
+    let detail = fetch(
+        &e,
+        PageRequest {
+            resource: target,
+            continuation: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(cell(&detail, 0, "response"), Some(index));
+    let menu = fetch(&e, request("dynamodb.stream", &[arn], None))
+        .await
+        .unwrap();
+    let target = menu
+        .rows
+        .iter()
+        .find_map(|row| {
+            row.target
+                .as_ref()
+                .filter(|t| t.id == "dynamodb.stream_policy")
+        })
+        .unwrap()
+        .clone();
+    let detail = fetch(
+        &e,
+        PageRequest {
+            resource: target,
+            continuation: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(cell(&detail, 0, "response"), Some(policy));
+    let calls = server.finish();
+    assert_eq!(calls.len(), 3);
+    assert!(
+        calls[1]
+            .0
+            .contains("DynamoDB_20120810.DescribeContributorInsights")
+    );
+    assert_eq!(calls[1].1["TableName"], "demo");
+    assert_eq!(calls[1].1["IndexName"], "by_status");
+    assert!(calls[2].0.contains("DynamoDB_20120810.GetResourcePolicy"));
+    assert_eq!(calls[2].1["ResourceArn"], arn);
 }
 
 #[tokio::test]

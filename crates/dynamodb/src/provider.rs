@@ -32,6 +32,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
             "dynamodb.stream",
             "dynamodb.stream_info",
             "dynamodb.shards",
+            "dynamodb.shard_details",
             "dynamodb.records",
         ],
     }),
@@ -137,6 +138,9 @@ impl DynamoDbExecutor {
         } else {
             None
         };
+        if let Some(query) = &query {
+            query.validate_scope(&request.resource.path[0])?;
+        }
         let stream_read = crate::streams::is_resource(request.resource.id)
             || matches!(query, Some(crate::query::Read::GetRecords { .. }));
         ensure!(
@@ -198,13 +202,40 @@ impl DynamoDbExecutor {
                     )
                     .await?
                 } else if let Some(query) = query {
-                    crate::browse::items(
-                        crate::api::query(client, name, query, position.as_ref()).await?,
-                    )?
+                    let batch = matches!(query, crate::query::Read::BatchGetItem { .. });
+                    let transaction = matches!(query, crate::query::Read::TransactGetItems { .. } | crate::query::Read::ExecuteTransaction { .. });
+                    let statement_batch = matches!(query, crate::query::Read::BatchExecuteStatement { .. });
+                    let statement_limit = match &query {
+                        crate::query::Read::ExecuteStatement { limit, .. } => Some(*limit as usize),
+                        _ => None,
+                    };
+                    let vector_limit = match &query {
+                        crate::query::Read::SearchVectors { top_k, .. } => Some(*top_k as usize),
+                        _ => None,
+                    };
+                    let body = crate::api::query(client, name, query, position.as_ref()).await?;
+                    if let Some(limit) = statement_limit {
+                        crate::partiql::page(body, limit)?
+                    } else if statement_batch {
+                        let (mut page, _) = crate::browse::metadata("dynamodb.query", body)?;
+                        page.notice = "Native PartiQL batch response; inspect each Responses entry for item or error; not atomic, no automatic retries".into();
+                        (page, None)
+                    } else if let Some(limit) = vector_limit {
+                        if let Some(results) = body.get("SearchResults") {
+                            ensure!(results.as_array().is_some_and(|results| results.len() <= limit), "DynamoDB SearchResults must be an array within top_k");
+                        }
+                        let (mut page, _) = crate::browse::metadata("dynamodb.query", body)?;
+                        page.notice = "Native vector response; SearchResults retain service ranking, scores, typed items and capacity; no continuation".into();
+                        (page, None)
+                    } else if batch || transaction {
+                        crate::browse::multi_items(body, name, batch)?
+                    } else {
+                        crate::browse::items(body)?
+                    }
                 } else {
                     crate::browse::metadata(
                         request.resource.id,
-                        crate::api::metadata(client, request.resource.id, name, position.as_ref())
+                        crate::api::metadata(client, request.resource.id, &request.resource.path, position.as_ref())
                             .await?,
                     )?
                 };

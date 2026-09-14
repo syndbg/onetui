@@ -137,7 +137,11 @@ async fn inventory_shards_and_descriptions_use_only_native_streams_reads() {
     let menu = fetch(&e, request("dynamodb.stream", &[ARN], None))
         .await
         .unwrap();
-    assert_eq!(menu.rows.len(), 2);
+    assert_eq!(menu.rows.len(), 4);
+    assert_eq!(
+        menu.rows[1].target,
+        Some(Resource::new("dynamodb.shard_details", vec![ARN.into()]))
+    );
     fetch(&e, request("dynamodb.streams", &[], page.continuation))
         .await
         .unwrap();
@@ -146,8 +150,21 @@ async fn inventory_shards_and_descriptions_use_only_native_streams_reads() {
         .unwrap();
     assert_eq!(shards.rows[0].target, Some(records_request(None).resource));
     assert_eq!(
-        cell(&shards, 0, "description").unwrap()["ParentShardId"],
-        "parent"
+        shards
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        ["shard_id", "parent", "start_sequence", "end_sequence"]
+    );
+    assert_eq!(
+        shards.rows[0].cells,
+        vec![
+            Some(SHARD.into()),
+            Some("parent".into()),
+            Some("10".into()),
+            None
+        ]
     );
     let info = fetch(&e, request("dynamodb.stream_info", &[ARN], None))
         .await
@@ -166,6 +183,77 @@ async fn inventory_shards_and_descriptions_use_only_native_streams_reads() {
     );
     assert_eq!(calls[2].1["StreamArn"], ARN);
     assert_eq!(calls[2].1["Limit"], 100);
+}
+
+#[tokio::test]
+async fn shard_details_preserve_full_metadata_and_page_bookmarks() {
+    let shard = json!({"ShardId":SHARD,"SequenceNumberRange":{
+        "StartingSequenceNumber":"000123456789012345678901234567890",
+        "EndingSequenceNumber":"000123456789012345678901234567899"},
+        "FutureMetadata":{"retained":true}});
+    let server = Server::start(replies(vec![
+        json!({"StreamDescription":{"Shards":[shard],"LastEvaluatedShardId":SHARD}}),
+        json!({"StreamDescription":{"Shards":[{"ShardId":"child","ParentShardId":SHARD,"SequenceNumberRange":{"StartingSequenceNumber":"000200"}}]}}),
+    ]));
+    let e = server.executor();
+    let first = fetch(&e, request("dynamodb.shard_details", &[ARN], None))
+        .await
+        .unwrap();
+    assert!(first.next);
+    assert!(
+        first.rows[0].target.is_none(),
+        "Enter must inspect fields, not fetch records"
+    );
+    assert_eq!(
+        first.rows[0].cells[..4],
+        [
+            Some(SHARD.into()),
+            None,
+            Some("000123456789012345678901234567890".into()),
+            Some("000123456789012345678901234567899".into())
+        ]
+    );
+    assert_eq!(cell(&first, 0, "description").unwrap(), shard);
+    let query = DynamoDbProvider
+        .descriptor()
+        .query
+        .as_ref()
+        .unwrap()
+        .initial_text(
+            &Resource::new("dynamodb.shard_details", vec![ARN.into()]),
+            first.rows.first(),
+        );
+    let query: Json = serde_json::from_str(&query).unwrap();
+    assert_eq!(query["shard_id"], SHARD);
+    assert_eq!(
+        query["sequence_number"],
+        "000123456789012345678901234567890"
+    );
+    assert!(
+        fetch(
+            &e,
+            request("dynamodb.shards", &[ARN], first.continuation.clone())
+        )
+        .await
+        .is_err()
+    );
+    let second = fetch(
+        &e,
+        request("dynamodb.shard_details", &[ARN], first.continuation),
+    )
+    .await
+    .unwrap();
+    assert!(!second.next);
+    assert_eq!(second.rows[0].cells[1], Some(SHARD.into()));
+    assert_eq!(second.rows[0].cells[3], None);
+    let calls = server.finish();
+    assert_eq!(calls.len(), 2);
+    assert!(calls.iter().all(|(headers, body)| {
+        headers.contains("DynamoDBStreams_20120810.DescribeStream")
+            && body["Limit"] == 100
+            && body["StreamArn"] == ARN
+    }));
+    assert_eq!(calls[1].1["ExclusiveStartShardId"], SHARD);
 }
 
 #[tokio::test]

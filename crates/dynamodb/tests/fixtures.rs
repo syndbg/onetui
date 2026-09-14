@@ -61,6 +61,18 @@ async fn fixture_streams_preserve_seed_images_and_sequence_bookmarks() {
     let shards = fetch(&e, "dynamodb.shards", &[&stream.path[0]]).await;
     assert!(!shards.rows.is_empty());
     let resource = shards.rows[0].target.clone().unwrap();
+    assert_eq!(
+        shards.rows[0].cells[0],
+        Some(resource.path[1].clone().into())
+    );
+    let details = fetch(&e, "dynamodb.shard_details", &[&stream.path[0]]).await;
+    assert!(details.rows[0].target.is_none());
+    let description = cell(&details, 0, "description");
+    assert_eq!(description["ShardId"], resource.path[1]);
+    assert_eq!(
+        details.rows[0].cells[2].as_ref().and_then(Value::text),
+        description["SequenceNumberRange"]["StartingSequenceNumber"].as_str()
+    );
     let mut continuation = None;
     let mut count = 0;
     let mut replay = None;
@@ -112,6 +124,72 @@ async fn fixture_streams_preserve_seed_images_and_sequence_bookmarks() {
     read["after"] = json!(true);
     let exclusive = query(&e, &resource.path[0], &read.to_string(), None).await;
     assert_eq!(cell(&exclusive, 0, "record"), cell(&inclusive, 1, "record"));
+}
+
+#[tokio::test]
+#[ignore = "requires seeded DynamoDB Local; read-only"]
+async fn fixture_batch_and_transaction_preserve_missing_items_and_projection() {
+    let e = executor();
+    let found = json!({"pk":{"S":"customer-0"},"sk":{"N":"0"}});
+    let missing = json!({"pk":{"S":"not-in-fixtures"},"sk":{"N":"-1"}});
+    let batch = json!({"operation":"BatchGetItem","keys":[missing,found],"consistent_read":true,"projection_expression":"pk, sk"});
+    let page = query(&e, "demo_events", &batch.to_string(), None).await;
+    assert!(!page.next);
+    let response = cell(&page, 0, "response");
+    assert_eq!(response["Responses"]["demo_events"], json!([found]));
+    assert!(response["ConsumedCapacity"].is_array());
+    let transaction = json!({"operation":"TransactGetItems","items":[{"key":missing},{"key":found,"projection_expression":"pk, sk"}]});
+    let page = query(&e, "demo_events", &transaction.to_string(), None).await;
+    let response = cell(&page, 0, "response");
+    assert_eq!(response["Responses"], json!([{}, {"Item":found}]));
+    assert!(response["ConsumedCapacity"].is_array());
+    assert!(!page.next);
+}
+
+#[tokio::test]
+#[ignore = "requires seeded DynamoDB Local; read-only"]
+async fn fixture_partiql_select_batch_and_transaction_read_existing_items() {
+    let e = executor();
+    let statement = "SELECT pk, sk FROM \"demo_events\" WHERE pk=? AND sk=?";
+    let parameters = json!([{"S":"customer-0"},{"N":"0"}]);
+    let text = json!({"operation":"ExecuteStatement","statement":statement,"parameters":parameters,"consistent_read":true,"limit":1});
+    let page = query(&e, "demo_events", &text.to_string(), None).await;
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(cell(&page, 0, "pk"), json!({"S":"customer-0"}));
+    assert_eq!(cell(&page, 0, "sk"), json!({"N":"0"}));
+    if let Some(bookmark) = page.continuation {
+        let end = query(&e, "demo_events", &text.to_string(), Some(bookmark)).await;
+        assert!(end.rows.is_empty() && !end.next);
+    }
+    let statements = json!([
+        {"statement":statement,"parameters":parameters},
+        {"statement":statement,"parameters":[{"S":"not-in-fixtures"},{"N":"-1"}]}
+    ]);
+    let batch = json!({"operation":"BatchExecuteStatement","statements":statements});
+    let page = query(&e, "demo_events", &batch.to_string(), None).await;
+    let response = cell(&page, 0, "response");
+    assert_eq!(response["Responses"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        response["Responses"][0]["Item"]["pk"],
+        json!({"S":"customer-0"})
+    );
+    assert!(
+        response["Responses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r.get("Error").is_none())
+    );
+    let transaction = json!({"operation":"ExecuteTransaction","statements":statements});
+    let page = query(&e, "demo_events", &transaction.to_string(), None).await;
+    let response = cell(&page, 0, "response");
+    assert_eq!(response["Responses"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        response["Responses"][0]["Item"]["pk"],
+        json!({"S":"customer-0"})
+    );
+    assert_eq!(response["Responses"][1], json!({}));
+    assert!(!page.next);
 }
 
 #[tokio::test]

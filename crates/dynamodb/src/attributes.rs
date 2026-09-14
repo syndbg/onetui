@@ -14,7 +14,7 @@ pub(crate) fn item(value: &Value) -> Result<HashMap<String, AttributeValue>> {
         .collect()
 }
 
-fn attribute(value: &Value, depth: usize) -> Result<AttributeValue> {
+pub(crate) fn attribute(value: &Value, depth: usize) -> Result<AttributeValue> {
     ensure!(depth <= 32, "DynamoDB attribute nesting exceeds 32");
     let object = value
         .as_object()

@@ -30,6 +30,7 @@ pub(crate) fn is_resource(id: &str) -> bool {
             | "dynamodb.table_streams"
             | "dynamodb.stream_info"
             | "dynamodb.shards"
+            | "dynamodb.shard_details"
             | "dynamodb.records"
     )
 }
@@ -99,6 +100,15 @@ pub(crate) async fn read(
         notice: "Independent Streams metadata reads; refresh to discover new shards".into(),
         ..Page::default()
     };
+    let shards = matches!(resource.id, "dynamodb.shards" | "dynamodb.shard_details");
+    if shards {
+        page.columns = ["shard_id", "parent", "start_sequence", "end_sequence"]
+            .map(|name| column(name, "text"))
+            .into();
+        if resource.id == "dynamodb.shard_details" {
+            page.columns.push(column("description", "JSON"));
+        }
+    }
     let (body, array, key, target, parent) =
         if matches!(resource.id, "dynamodb.streams" | "dynamodb.table_streams") {
             let body = send!(
@@ -148,11 +158,28 @@ pub(crate) async fn read(
         for value in values {
             let name = bounded_string(&value[key], key, 2048)?;
             let mut path = parent.clone();
-            path.push(name);
-            page.rows.push(Row {
-                cells: vec![Some(Value::Json(value.to_string()))],
-                target: Some(Resource::new(target, path)),
-            });
+            path.push(name.clone());
+            let mut cells = if shards {
+                vec![
+                    Some(name.into()),
+                    value["ParentShardId"].as_str().map(Value::from),
+                    value["SequenceNumberRange"]["StartingSequenceNumber"]
+                        .as_str()
+                        .map(Value::from),
+                    value["SequenceNumberRange"]["EndingSequenceNumber"]
+                        .as_str()
+                        .map(Value::from),
+                ]
+            } else {
+                vec![Some(Value::Json(value.to_string()))]
+            };
+            let target = if resource.id == "dynamodb.shard_details" {
+                cells.push(Some(Value::Json(value.to_string())));
+                None
+            } else {
+                Some(Resource::new(target, path))
+            };
+            page.rows.push(Row { cells, target });
         }
     }
     let next = body

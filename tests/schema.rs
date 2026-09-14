@@ -361,7 +361,18 @@ fn dynamodb_catalog_exposes_native_read_configuration_without_credentials() {
     );
     assert_eq!(
         dynamodb["query_syntax"]["operations"],
-        serde_json::json!(["Scan", "Query", "GetItem", "GetRecords"])
+        serde_json::json!([
+            "Scan",
+            "Query",
+            "GetItem",
+            "BatchGetItem",
+            "TransactGetItems",
+            "SearchVectors",
+            "ExecuteStatement",
+            "BatchExecuteStatement",
+            "ExecuteTransaction",
+            "GetRecords"
+        ])
     );
     for resource in dynamodb["resources"].as_array().unwrap() {
         assert!(dynamodb["paths"][resource["id"].as_str().unwrap()].is_array());

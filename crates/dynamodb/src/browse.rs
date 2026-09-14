@@ -25,6 +25,10 @@ resources![
         "Shard descriptions and parent relationships"
     ),
     (
+        "dynamodb.shard_details",
+        "Shard fields and complete JSON; Enter inspects a row"
+    ),
+    (
         "dynamodb.records",
         "Bounded shard records; original typed images retained"
     ),
@@ -35,21 +39,26 @@ resources![
     ),
     (
         "dynamodb.query",
-        "Read-only native Query, Scan, GetItem or Streams GetRecords JSON"
+        "Read-only native item, batch, transaction or Streams query JSON"
     ),
     ("dynamodb.table_info", "Complete DescribeTable response"),
     (
         "dynamodb.indexes",
-        "Local and global secondary index descriptions"
+        "Local, global secondary and vector index descriptions"
     ),
     ("dynamodb.replicas", "Global-table replica descriptions"),
     ("dynamodb.ttl", "Time-to-live settings"),
     ("dynamodb.backups_status", "Continuous-backup settings"),
     ("dynamodb.insights", "Table contributor-insight settings"),
+    (
+        "dynamodb.index_insights",
+        "Global secondary index contributor-insight settings"
+    ),
     ("dynamodb.kinesis", "Kinesis streaming destinations"),
     ("dynamodb.replica_scaling", "Replica auto-scaling settings"),
     ("dynamodb.tags", "Table tags"),
     ("dynamodb.policy", "Table resource policy"),
+    ("dynamodb.stream_policy", "Stream resource policy"),
     ("dynamodb.backups", "Existing backup inventory"),
     ("dynamodb.backup", "Backup description"),
     (
@@ -85,7 +94,7 @@ pub(crate) fn depth(id: &str) -> usize {
         | "dynamodb.account_insights"
         | "dynamodb.limits"
         | "dynamodb.endpoints" => 0,
-        "dynamodb.records" => 2,
+        "dynamodb.records" | "dynamodb.index_insights" => 2,
         _ => 1,
     }
 }
@@ -158,7 +167,7 @@ pub(crate) fn continuation(
     }
     ensure!(
         page.rows.len() <= 100 && page.bytes() <= PAGE_BYTES,
-        "DynamoDB page exceeds 100 rows or 1 MiB; reduce the query limit or projection"
+        "DynamoDB page exceeds 100 rows or 1 MiB; reduce requested keys, query limit or projection"
     );
     Ok(())
 }
@@ -189,7 +198,9 @@ pub(crate) fn menu(id: &str, path: &[String]) -> Page {
     } else if id == "dynamodb.stream" {
         &[
             ("dynamodb.shards", "Shards"),
+            ("dynamodb.shard_details", "Shard details"),
             ("dynamodb.stream_info", "Stream details"),
+            ("dynamodb.stream_policy", "Resource policy"),
         ]
     } else {
         &[
@@ -269,7 +280,7 @@ pub(crate) fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)>
         "dynamodb.tags" => ("Tags", "NextToken", None, None),
         _ => {
             if id == "dynamodb.indexes" {
-                body = json!({"GlobalSecondaryIndexes":body["Table"].get("GlobalSecondaryIndexes").cloned().unwrap_or(json!([])),"LocalSecondaryIndexes":body["Table"].get("LocalSecondaryIndexes").cloned().unwrap_or(json!([]))});
+                body = json!({"GlobalSecondaryIndexes":body["Table"].get("GlobalSecondaryIndexes").cloned().unwrap_or(json!([])),"LocalSecondaryIndexes":body["Table"].get("LocalSecondaryIndexes").cloned().unwrap_or(json!([])),"VectorIndexes":body["Table"].get("VectorIndexes").cloned().unwrap_or(json!([]))});
             }
             if id == "dynamodb.replicas" {
                 body = body["Table"].get("Replicas").cloned().unwrap_or(json!([]));
@@ -299,15 +310,26 @@ pub(crate) fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)>
         .transpose()?
         .unwrap_or(&[]);
     for value in values {
-        let destination = target
-            .map(|id| {
-                let name = key
-                    .map_or(value, |key| &value[key])
-                    .as_str()
-                    .ok_or_else(|| anyhow!("DynamoDB response is missing resource identity"))?;
-                Ok::<_, anyhow::Error>(Resource::new(id, vec![name.into()]))
+        let destination = if id == "dynamodb.account_insights" {
+            let table = value["TableName"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Contributor insights is missing TableName"))?;
+            Some(if let Some(index) = value["IndexName"].as_str() {
+                Resource::new("dynamodb.index_insights", vec![table.into(), index.into()])
+            } else {
+                Resource::new("dynamodb.insights", vec![table.into()])
             })
-            .transpose()?;
+        } else {
+            target
+                .map(|id| {
+                    let name = key
+                        .map_or(value, |key| &value[key])
+                        .as_str()
+                        .ok_or_else(|| anyhow!("DynamoDB response is missing resource identity"))?;
+                    Ok::<_, anyhow::Error>(Resource::new(id, vec![name.into()]))
+                })
+                .transpose()?
+        };
         page.rows.push(Row {
             cells: vec![Some(
                 value
@@ -320,6 +342,35 @@ pub(crate) fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)>
     }
     page.notice = "Independent metadata reads; listings may change while paging".into();
     Ok((page, body.get(next).cloned()))
+}
+
+pub(crate) fn multi_items(body: Json, table: &str, batch: bool) -> Result<(Page, Option<Json>)> {
+    let next = if batch {
+        let keys = body
+            .get("UnprocessedKeys")
+            .and_then(|v| v.get(table))
+            .and_then(|v| v.get("Keys"));
+        if let Some(keys) = keys {
+            let keys: Vec<Json> = serde_json::from_value(keys.clone())?;
+            if keys.is_empty() {
+                None
+            } else {
+                crate::query::validate_keys(&keys)?;
+                Some(json!(keys))
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let (mut page, _) = metadata("dynamodb.query", body)?;
+    page.notice = if batch {
+        "Native batch response; unordered items; n retries only unprocessed keys, no automatic retries"
+    } else {
+        "Native transaction response; atomic read; Responses retain request order and missing-item positions"
+    }.into();
+    Ok((page, next))
 }
 
 pub(crate) fn items(body: Json) -> Result<(Page, Option<Json>)> {
