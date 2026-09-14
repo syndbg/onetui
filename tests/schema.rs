@@ -90,6 +90,12 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
         schema["configuration"]["display"]["fields"]["word_wrap"]["type"],
         "boolean"
     );
+    assert!(
+        schema["configuration"]["display"]["fields"]["pretty_print"]["purpose"]
+            .as_str()
+            .unwrap()
+            .contains("Record tables always use compact JSON")
+    );
     assert_eq!(
         schema["datasources"][0]["resources"][0]["id"],
         "postgres.schemas"

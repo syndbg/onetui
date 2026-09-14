@@ -61,7 +61,7 @@ Adding a format means adding its enum variant, formatter, descriptor and package
 
 For example, bytes `00 ff 41` display as `00000000 11111111 01000001` in binary mode. Their text view is unavailable because `ff` is not valid UTF-8. Text `41` has bytes `34 31`; it must not silently become the single byte `41`. Null has no byte representation.
 
-Pretty printing affects JSON structure only: two-space indentation when on, retained input whitespace when off, subject to terminal-control escaping. Preserve key order, duplicate keys, number lexemes and string escapes from the retained JSON text. A `serde_json::Value` parse-and-reserialize round trip is not sufficient for that contract. Pretty printing does not recursively parse strings containing JSON, decode base64 or reinterpret arbitrary text. A format without a pretty-print operation shows that the setting does not apply.
+Record tables use compact JSON so their bounded previews show values rather than indentation. Row/detail views honor pretty printing: two-space indentation when on, retained input whitespace when off, subject to terminal-control escaping. Both forms preserve key order, duplicate keys, number lexemes and string escapes from the retained JSON text. A `serde_json::Value` parse-and-reserialize round trip is not sufficient for that contract. Pretty printing does not recursively parse strings containing JSON, decode base64 or reinterpret arbitrary text. A format without a pretty-print operation shows that the setting does not apply.
 
 Highlighting adds styles, never content. JSON syntax colors, byte grouping and any data match highlights obey the highlighting switch; selection, focus, errors and context key hints remain visible when it is off. Reuse semantic theme roles and Ratatui spans, not ANSI sequences inside the data. Serde JSON and Ratatui are already dependencies; use them before adding a generic pretty-printer or syntax-highlighting package. Any chosen formatter still has to preserve the retained representation.
 
@@ -85,7 +85,7 @@ unicode = "literal"
 | Setting | Type and accepted values | Default and scope |
 | --- | --- | --- |
 | `format` | String: `auto`, `text`, `json`, `hex`, `binary` | `auto`; startup value-view preference |
-| `pretty_print` | Boolean | `true`; formatting of structured values throughout the app |
+| `pretty_print` | Boolean | `true`; JSON indentation in row/detail views; record tables always use compact JSON |
 | `highlight` | Boolean | `true`; data highlighting throughout the app, independent of the UI theme |
 | `word_wrap` | Boolean | `true`; shared app-wide wrapping policy described above |
 | `unicode` | String: `literal`, `escaped` | `literal`; Unicode rendering in data text views |

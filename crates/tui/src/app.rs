@@ -83,7 +83,7 @@ impl View {
 
     fn rebuild(&mut self, keep: Option<usize>, options: DisplayOptions) {
         self.projections = projections(&self.page).expect("validated page projections");
-        self.prepare_previews(options);
+        self.prepare_previews(options, true);
         self.reindex(keep);
     }
 
@@ -110,7 +110,7 @@ impl View {
             .unwrap_or(0);
     }
 
-    fn prepare_previews(&mut self, options: DisplayOptions) {
+    fn prepare_previews(&mut self, options: DisplayOptions, table: bool) {
         let mut budget = PAGE_BYTES;
         self.previews_limited = false;
         self.previews = self
@@ -122,7 +122,7 @@ impl View {
                     .iter()
                     .enumerate()
                     .map(|(i, value)| {
-                        if budget < 512 {
+                        if budget < '…'.len_utf8() {
                             self.previews_limited = true;
                             return String::new();
                         }
@@ -131,7 +131,12 @@ impl View {
                             .columns
                             .get(i)
                             .is_some_and(|c| matches!(c.datatype.as_str(), "json" | "jsonb"));
-                        let prepared = crate::value::prepare(
+                        let prepare = if table {
+                            crate::value::prepare_table
+                        } else {
+                            crate::value::prepare
+                        };
+                        let prepared = prepare(
                             value.as_ref(),
                             DisplayOptions {
                                 format: ValueFormat::Auto,
@@ -151,7 +156,8 @@ impl View {
                             } else {
                                 prepared.text
                             };
-                        let preview = crate::value::preview_prefix(&raw);
+                        let (preview, limited) = crate::value::preview_prefix(&raw, budget);
+                        self.previews_limited |= limited;
                         budget = budget.saturating_sub(preview.len());
                         preview
                     })
@@ -322,6 +328,9 @@ impl App {
 
     fn load(&mut self, offset: i64, reset: bool) {
         self.invalidate();
+        if self.row_detail {
+            self.view.prepare_previews(self.config.display, true);
+        }
         self.row_detail = false;
         self.row_value = None;
         self.row_scroll = 0;
@@ -886,6 +895,9 @@ impl App {
                 self.query_editor = Some(crate::query::Editor::new(text));
                 self.help = false;
                 self.detail = false;
+                if self.row_detail {
+                    self.view.prepare_previews(self.config.display, true);
+                }
                 self.row_detail = false;
                 self.row_value = None;
                 self.row_scroll = 0;
@@ -1020,6 +1032,7 @@ impl App {
                         self.prepare_detail();
                     } else {
                         self.row_detail = true;
+                        self.view.prepare_previews(self.config.display, false);
                         self.horizontal_scroll = 0;
                         self.prepare_row_value();
                     }
@@ -1044,13 +1057,14 @@ impl App {
                     }
                 } else if self.row_detail {
                     self.row_detail = false;
+                    self.view.prepare_previews(self.config.display, true);
                     self.horizontal_scroll = 0;
                     self.row_value = None;
                     self.row_scroll = 0;
                 } else if let Some(parent) = self.parents.pop() {
                     self.invalidate();
                     self.view = parent;
-                    self.view.prepare_previews(self.config.display);
+                    self.view.prepare_previews(self.config.display, true);
                     if self.view.alias.is_none() {
                         self.session += 1;
                         self.connection_status = None;
@@ -1336,7 +1350,8 @@ impl App {
             self.prepare_detail();
         }
         if content_changed {
-            self.view.prepare_previews(self.config.display);
+            self.view
+                .prepare_previews(self.config.display, !self.row_detail);
             if self.row_detail {
                 self.prepare_row_value();
             }

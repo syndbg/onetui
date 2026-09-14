@@ -8,22 +8,28 @@ pub const BYTE_CHUNK: usize = 256;
 pub const TEXT_CHUNK: usize = 4096;
 pub const JSON_DEPTH: usize = 64;
 
-pub fn preview_prefix(source: &str) -> String {
-    let mut chars = 0;
+pub fn preview_prefix(source: &str, budget: usize) -> (String, bool) {
+    let mut lines = 1;
     let mut end = 0;
+    let mut limited = false;
     for (offset, g) in source.grapheme_indices(true) {
-        let count = g.chars().count();
-        if chars + count > 128 {
+        if g == "\n" {
+            if lines == 3 {
+                break;
+            }
+            lines += 1;
+        }
+        if offset + g.len() > budget.saturating_sub('…'.len_utf8()) {
+            limited = true;
             break;
         }
-        chars += count;
         end = offset + g.len();
     }
     let mut preview = source[..end].to_owned();
-    if end < source.len() {
+    if end < source.len() && budget >= '…'.len_utf8() {
         preview.push('…');
     }
-    preview
+    (preview, limited)
 }
 
 pub struct Prepared {
@@ -72,7 +78,8 @@ pub fn projection(value: &Value) -> Result<String, &'static str> {
     }
 }
 
-fn json(source: &str, options: DisplayOptions) -> Result<String, &'static str> {
+fn json(source: &str, options: DisplayOptions, compact: bool) -> Result<String, &'static str> {
+    let pretty = options.pretty_print && !compact;
     let mut out = String::new();
     let mut depth = 0usize;
     let mut quoted = false;
@@ -99,7 +106,7 @@ fn json(source: &str, options: DisplayOptions) -> Result<String, &'static str> {
                 out.push(c);
             }
         } else if c.is_ascii_whitespace() {
-            if !options.pretty_print {
+            if !pretty && !compact {
                 if matches!(c, ' ' | '\n') {
                     out.push(c);
                 } else {
@@ -117,7 +124,7 @@ fn json(source: &str, options: DisplayOptions) -> Result<String, &'static str> {
                     .checked_sub(1)
                     .ok_or("Invalid JSON; use text/hex/binary")?;
             }
-            if options.pretty_print
+            if pretty
                 && ((close && !matches!(previous, '{' | '['))
                     || (!close && matches!(previous, '{' | '[')))
             {
@@ -133,11 +140,11 @@ fn json(source: &str, options: DisplayOptions) -> Result<String, &'static str> {
                     }
                 }
                 '"' => quoted = true,
-                ',' if options.pretty_print => {
+                ',' if pretty => {
                     out.push('\n');
                     out.extend(std::iter::repeat_n(' ', depth * 2));
                 }
-                ':' if options.pretty_print => out.push(' '),
+                ':' if pretty => out.push(' '),
                 _ => {}
             }
             previous = c;
@@ -154,6 +161,23 @@ fn json(source: &str, options: DisplayOptions) -> Result<String, &'static str> {
 }
 
 pub fn prepare(value: Option<&Value>, options: DisplayOptions, declared_json: bool) -> Prepared {
+    prepare_value(value, options, declared_json, false)
+}
+
+pub fn prepare_table(
+    value: Option<&Value>,
+    options: DisplayOptions,
+    declared_json: bool,
+) -> Prepared {
+    prepare_value(value, options, declared_json, true)
+}
+
+fn prepare_value(
+    value: Option<&Value>,
+    options: DisplayOptions,
+    declared_json: bool,
+    compact: bool,
+) -> Prepared {
     let Some(value) = value else {
         return Prepared {
             format: ValueFormat::Text,
@@ -189,7 +213,7 @@ pub fn prepare(value: Option<&Value>, options: DisplayOptions, declared_json: bo
             .and_then(|s| text(s, options.unicode, true)),
         ValueFormat::Json => source
             .map_err(|_| "Invalid UTF-8; use hex/binary")
-            .and_then(|s| json(s, options)),
+            .and_then(|s| json(s, options, compact)),
         ValueFormat::Auto => unreachable!("auto format was resolved above"),
     };
     match result {
@@ -284,11 +308,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn compact_table_json_preserves_lexemes_and_ignores_pretty_print() {
+        let compact = r#"{"z":1.000000000000000001,"z":-0,"n":1e999,"s":"a \" b\\c\n","unicode":"界🌊","empty":[]}"#;
+        let source = format!("{{\r\n\t{}", &compact[1..]);
+        for value in [
+            Value::Json(source.clone()),
+            Value::Text(source.clone()),
+            Value::Bytes(source.clone().into_bytes()),
+        ] {
+            for pretty_print in [false, true] {
+                let options = DisplayOptions {
+                    pretty_print,
+                    ..DisplayOptions::default()
+                };
+                let table = prepare_table(Some(&value), options, false);
+                assert_eq!(table.format, ValueFormat::Json);
+                assert_eq!(table.text, compact);
+                assert_eq!(value.bytes(), source.as_bytes());
+                assert!(prepare(Some(&value), options, false).text.contains('\n'));
+            }
+        }
+        let bad = Value::Text("{not JSON\t".into());
+        assert_eq!(
+            prepare_table(Some(&bad), DisplayOptions::default(), false).format,
+            ValueFormat::Text
+        );
+        let deep = Value::Json(format!("{}0{}", "[".repeat(65), "]".repeat(65)));
+        let rejected = prepare_table(Some(&deep), DisplayOptions::default(), false);
+        assert_eq!(rejected.format, ValueFormat::Hex);
+        assert!(rejected.notice.contains("64"));
+    }
+
+    #[test]
+    fn preview_cache_limits_lines_and_bytes_not_characters() {
+        let long = format!("{}END", "界e\u{301}".repeat(200));
+        assert_eq!(preview_prefix(&long, PAGE_BYTES), (long.clone(), false));
+        assert_eq!(
+            preview_prefix("one\ntwo\nthree\nfour", PAGE_BYTES),
+            ("one\ntwo\nthree…".into(), false)
+        );
+        for budget in 0..40 {
+            let (preview, limited) = preview_prefix(&long, budget);
+            assert!(limited);
+            assert!(preview.len() <= budget);
+            assert!(long.starts_with(preview.trim_end_matches('…')));
+            assert!(!preview.ends_with("e…"), "must not split a grapheme");
+        }
+    }
+
+    #[test]
     fn json_formatting_is_lossless_bounded_and_independent() {
         let raw =
             r#"{"z":1.000000000000000001,"z":-0,"n":1e999,"s":"a\"b\\c\n","empty":[],"obj":{}}"#;
         let options = DisplayOptions::default();
-        let pretty = json(raw, options).unwrap();
+        let pretty = json(raw, options, false).unwrap();
         assert!(pretty.contains("\n  \"z\": 1.000000000000000001,\n  \"z\": -0,"));
         assert!(pretty.contains("1e999"));
         assert!(pretty.contains(r#""s": "a\"b\\c\n""#));
@@ -299,23 +372,39 @@ mod tests {
                 DisplayOptions {
                     pretty_print: false,
                     ..options
-                }
+                },
+                false,
             )
             .unwrap(),
             raw
         );
         for bad in ["{oops}", "[1,]", "{} trailing", "{\"a\":\"\n\"}"] {
-            assert!(json(bad, options).is_err());
+            assert!(json(bad, options, false).is_err());
         }
-        assert!(json(&format!("{}0{}", "[".repeat(65), "]".repeat(65)), options).is_err());
-        assert!(json(&format!("[{}]", "0,".repeat(PAGE_BYTES / 2)), options).is_err());
+        assert!(
+            json(
+                &format!("{}0{}", "[".repeat(65), "]".repeat(65)),
+                options,
+                false
+            )
+            .is_err()
+        );
+        assert!(
+            json(
+                &format!("[{}]", "0,".repeat(PAGE_BYTES / 2)),
+                options,
+                false
+            )
+            .is_err()
+        );
         assert_eq!(
             json(
                 "\"🌊\"",
                 DisplayOptions {
                     unicode: UnicodeDisplay::Escaped,
                     ..options
-                }
+                },
+                false,
             )
             .unwrap(),
             "\"\\ud83c\\udf0a\""
@@ -326,6 +415,7 @@ mod tests {
                 pretty_print: false,
                 ..options
             },
+            false,
         )
         .unwrap();
         assert!(safe.contains("\\r\n\\t"));

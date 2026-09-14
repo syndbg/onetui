@@ -573,17 +573,34 @@ fn horizontal(text: &str, app: &App) -> String {
 fn wrap_preview(text: &str, width: usize, app: &App) -> String {
     use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
+    if width == 0 {
+        return String::new();
+    }
     if !app.config.display.word_wrap {
         return horizontal(text, app);
     }
+    let truncated = |mut out: String| {
+        let start = out.rfind('\n').map_or(0, |offset| offset + 1);
+        let mut used = 0;
+        let mut end = start;
+        for (offset, grapheme) in out[start..].grapheme_indices(true) {
+            if used + grapheme.width() >= width {
+                break;
+            }
+            used += grapheme.width();
+            end = start + offset + grapheme.len();
+        }
+        out.truncate(end);
+        out.push('…');
+        out
+    };
     let mut out = String::new();
     let mut used = 0;
     let mut lines = 1;
     for word in text.split_word_bounds() {
         if word == "\n" {
             if lines == 3 {
-                out.push('…');
-                break;
+                return truncated(out);
             }
             out.push('\n');
             lines += 1;
@@ -592,18 +609,19 @@ fn wrap_preview(text: &str, width: usize, app: &App) -> String {
         }
         if used > 0 && used + word.width() > width {
             if lines == 3 {
-                out.push('…');
-                break;
+                return truncated(out);
             }
             out.push('\n');
             lines += 1;
             used = 0;
         }
         for grapheme in word.graphemes(true) {
+            if grapheme.width() > width {
+                return truncated(out);
+            }
             if used > 0 && used + grapheme.width() > width {
                 if lines == 3 {
-                    out.push('…');
-                    return out;
+                    return truncated(out);
                 }
                 out.push('\n');
                 lines += 1;
@@ -718,6 +736,44 @@ fn query_panels(body: Rect, app: &App) -> [Rect; 2] {
     Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(body)
 }
 
+fn table_widths(app: &App, body: Rect) -> Vec<u16> {
+    use unicode_width::UnicodeWidthStr;
+    let start = app.view.column / 4 * 4;
+    let end = (start + 4).min(app.column_count());
+    let count = end - start;
+    let available = body
+        .width
+        .saturating_sub(4 + count.saturating_sub(1) as u16);
+    if count == 1 {
+        return vec![available];
+    }
+    // Measure the loaded page, not the selected row or filtered subset.
+    let needs: Vec<_> = (start..end)
+        .map(|column| {
+            app.view
+                .previews
+                .iter()
+                .flat_map(|row| row[column].lines())
+                .map(UnicodeWidthStr::width)
+                .max()
+                .unwrap_or(0)
+                // Keep selection and sort markers from moving columns.
+                .max(app.column_name(column).width() + 4)
+                .min(usize::from(available)) as u16
+        })
+        .collect();
+    let mut order: Vec<_> = (0..count).collect();
+    order.sort_by_key(|&column| needs[column]);
+    let mut widths = vec![0; count];
+    let mut remaining = available;
+    for (rank, column) in order.into_iter().enumerate() {
+        let share = remaining / (count - rank) as u16;
+        widths[column] = needs[column].min(share);
+        remaining -= widths[column];
+    }
+    widths
+}
+
 pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
     let body = query_panels(panels(app.viewport, app)[2], app)[1];
     let mut budget = usize::from(body.height.saturating_sub(if app.detail { 2 } else { 3 }));
@@ -739,6 +795,7 @@ pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
         app.view.visible.len()
     };
     let mut steps = 0;
+    let widths = table_widths(app, body);
     while index < count && budget > 0 {
         let height = if app.row_detail {
             if index == app.view.column {
@@ -759,13 +816,10 @@ pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
         } else {
             let start = app.view.column / 4 * 4;
             let end = (start + 4).min(app.column_count());
-            let width = body
-                .width
-                .saturating_sub(4 + (end - start).saturating_sub(1) as u16)
-                / (end - start).max(1) as u16;
             app.view.previews[app.view.visible[index]][start..end]
                 .iter()
-                .map(|text| {
+                .zip(&widths)
+                .map(|(text, &width)| {
                     wrap_preview(text, usize::from(width).max(1), app)
                         .lines()
                         .count()
@@ -1028,12 +1082,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let descriptor = app.descriptor();
         let start = app.view.column / 4 * 4;
         let end = (start + 4).min(app.column_count());
+        let widths = table_widths(app, body);
         let rows = app.view.visible.iter().map(|&index| {
             let row = &app.view.projections[index];
-            let width = body
-                .width
-                .saturating_sub(4 + (end - start).saturating_sub(1) as u16)
-                / (end - start).max(1) as u16;
             let mut height = 1;
             let cells: Vec<_> = row
                 .iter()
@@ -1043,7 +1094,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 .map(|(column, cell)| {
                     let preview = wrap_preview(
                         &app.view.previews[index][column],
-                        width.max(1) as usize,
+                        widths[column - start].max(1) as usize,
                         app,
                     );
                     height = height.max(preview.lines().count().min(3) as u16);
@@ -1066,8 +1117,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     color(p.surface)
                 }))
         });
-        let widths = vec![Constraint::Ratio(1, (end - start).max(1) as u32); end - start];
-        let table = Table::new(rows, widths)
+        let table = Table::new(rows, widths.iter().copied().map(Constraint::Length))
             .header(
                 Row::new((start..end).map(|i| {
                     format!(
@@ -1203,6 +1253,225 @@ pub fn draw(frame: &mut Frame, app: &App) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn truncated_previews_keep_the_marker_inside_the_column() {
+        use super::*;
+        use unicode_width::UnicodeWidthStr;
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let app = App::new(config, None);
+        for source in [
+            "x".repeat(100),
+            "界".repeat(100),
+            "e\u{301}".repeat(100),
+            "1234\n1234\n1234\nlast".into(),
+        ] {
+            for width in [1, 2, 4, 12] {
+                let preview = wrap_preview(&source, width, &app);
+                assert!(preview.lines().count() <= 3);
+                assert!(
+                    preview.lines().all(|line| line.width() <= width),
+                    "width={width}: {preview:?}"
+                );
+                assert!(preview.ends_with('…'), "{preview:?}");
+            }
+        }
+        assert_eq!(
+            wrap_preview("1234\n1234\n1234", 4, &app),
+            "1234\n1234\n1234"
+        );
+        assert_eq!(wrap_preview("value", 0, &app), "");
+    }
+
+    #[test]
+    fn compact_json_and_short_columns_leave_room_for_overflowing_data() {
+        use super::*;
+        use onetui_core::{Column, Page, Resource, Row as DataRow, Value};
+        use ratatui::backend::TestBackend;
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, Some("sample"));
+        app.view.resource = Resource::new("fake.rows", vec![]);
+        let request = app.request.take().unwrap();
+        let raw = format!(
+            "{{\n  \"customer\": {{\"id\": 21, \"name\": \"{}\"}},\n  \"tail\": true\n}}",
+            "x".repeat(180)
+        );
+        app.complete(
+            &request,
+            Ok(Page {
+                columns: [
+                    "headers",
+                    "value_decoded",
+                    "value_schema",
+                    "value_decode_error",
+                ]
+                .map(|name| Column {
+                    name: name.into(),
+                    datatype: "text".into(),
+                })
+                .into(),
+                rows: (0..2)
+                    .map(|_| DataRow {
+                        cells: vec![
+                            Some(Value::Json("[]".into())),
+                            Some(Value::Json(raw.clone())),
+                            Some("confluent:http://127.0.0.1:18081#id=2".into()),
+                            None,
+                        ],
+                        target: None,
+                    })
+                    .collect(),
+                ..Page::default()
+            }),
+        );
+        assert!(!app.view.previews[0][1].contains('\n'));
+        assert!(app.view.previews[0][1].contains("\"tail\":true"));
+        app.viewport = Rect::new(0, 0, 180, 30);
+        let body = panels(app.viewport, &app)[2];
+        let widths = table_widths(&app, body);
+        assert!(widths[1] > widths[2] * 2, "{widths:?}");
+        assert_eq!(widths[0], 11);
+        assert_eq!(widths[3], 22);
+        let cached = app.view.previews.as_ptr();
+        app.act(Action::Down);
+        app.act(Action::Right);
+        app.act(Action::Sort);
+        assert_eq!(table_widths(&app, body), widths);
+        assert_eq!(app.view.previews.as_ptr(), cached);
+        let mut terminal = Terminal::new(TestBackend::new(180, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let shown: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(shown.contains("\"tail\":true"), "{shown}");
+        app.act(Action::Open);
+        assert!(app.row_detail);
+        assert!(app.view.previews[0][1].contains('\n'));
+        assert!(
+            app.row_value
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("\n  \"customer\"")
+        );
+        app.act(Action::Open);
+        assert!(app.detail && app.detail_text.contains("\n  \"customer\""));
+        app.act(Action::Back);
+        app.act(Action::Back);
+        assert!(!app.view.previews[0][1].contains('\n'));
+        assert_eq!(table_widths(&app, body), widths);
+        assert_eq!(app.view.page.rows[0].cells[1], Some(Value::Json(raw)));
+        assert!(app.request.is_none());
+        for row in &mut app.view.previews {
+            row[1] = "界".repeat(500);
+            row[3] = "e\u{301}".repeat(500);
+        }
+        for width in [0, 1, 8, 40, 180, 240] {
+            let widths = table_widths(&app, Rect::new(0, 0, width, 30));
+            assert_eq!(widths.iter().sum::<u16>(), width.saturating_sub(7));
+            assert!(widths[1].abs_diff(widths[3]) <= 1, "{widths:?}");
+        }
+    }
+
+    #[test]
+    fn table_previews_use_the_available_width_after_resize() {
+        use super::*;
+        use onetui_core::{Column, Page, Resource, Row as DataRow};
+        use ratatui::backend::TestBackend;
+        for columns in [1, 2, 4] {
+            let config = onetui_core::config::Config::parse(
+                "[connections.sample]\nkind='fake'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap();
+            let mut app = App::new(config, Some("sample"));
+            app.view.resource = Resource::new("fake.rows", vec![]);
+            let request = app.request.take().unwrap();
+            let payload = format!("{}END", "x".repeat(400));
+            app.complete(
+                &request,
+                Ok(Page {
+                    columns: (0..columns)
+                        .map(|i| Column {
+                            name: format!("c{i}"),
+                            datatype: "text".into(),
+                        })
+                        .collect(),
+                    rows: vec![DataRow {
+                        cells: (0..columns)
+                            .map(|i| {
+                                Some(
+                                    if i == columns - 1 {
+                                        payload.clone()
+                                    } else {
+                                        "1".into()
+                                    }
+                                    .into(),
+                                )
+                            })
+                            .collect(),
+                        target: Some(Resource::new("fake.rows", vec!["selected".into()])),
+                    }],
+                    ..Page::default()
+                }),
+            );
+            let cached = app.view.previews.as_ptr();
+            for width in [80, 240, 80, 240] {
+                let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+                terminal.draw(|frame| draw(frame, &app)).unwrap();
+                let lines: Vec<String> = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .chunks(usize::from(width))
+                    .map(|line| line.iter().map(|c| c.symbol()).collect())
+                    .collect();
+                assert_eq!(
+                    lines.iter().any(|line| line.contains("END")),
+                    width == 240,
+                    "columns={columns}, width={width}: {lines:?}"
+                );
+                let data: Vec<_> = lines.iter().filter(|line| line.contains("xxxx")).collect();
+                assert!(data.len() <= 3);
+                assert!(data[0].ends_with("xxxx│"), "{}", data[0]);
+                if width == 80 {
+                    assert!(data.last().unwrap().ends_with("…│"));
+                }
+                assert_eq!(app.view.previews.as_ptr(), cached);
+            }
+            assert_eq!(
+                app.view.page.rows[0].cells[columns - 1]
+                    .as_ref()
+                    .unwrap()
+                    .text(),
+                Some(payload.as_str())
+            );
+            let mut page = std::mem::take(&mut app.view.page);
+            page.rows = vec![page.rows[0].clone(); 100];
+            app.complete(&request, Ok(page));
+            for (width, step) in [(80, 4), (240, 6)] {
+                app.viewport = Rect::new(0, 0, width, 24);
+                assert_eq!(page_step(&app, true, false), step);
+                let widths = table_widths(&app, panels(app.viewport, &app)[2]);
+                app.view.column = columns - 1;
+                app.view.visible.truncate(1);
+                assert_eq!(table_widths(&app, panels(app.viewport, &app)[2]), widths);
+                app.view.visible = (0..100).collect();
+            }
+        }
+    }
+
+    #[test]
     fn focused_row_value_expands_and_scrolls_without_changing_records() {
         use super::*;
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -1260,7 +1529,7 @@ mod tests {
                 .map(|c| c.symbol())
                 .collect::<String>()
         };
-        assert!(!render(&mut app, &mut terminal).contains("entry_004"));
+        assert!(!render(&mut app, &mut terminal).contains("entry_099"));
         app.act(Action::Open);
         let shown = render(&mut app, &mut terminal);
         assert!(

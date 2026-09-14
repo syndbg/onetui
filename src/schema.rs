@@ -27,7 +27,7 @@ pub fn dump<P: Provider>(catalog: &[P], datasource: Option<&str>) -> Result<Stri
             "display": {"type": "table", "required": false, "defaults": DisplayOptions::default(), "formats": FORMATS,
                 "fields": {
                     "format": {"type": "string", "enum": FORMATS.iter().map(|f| f.id).collect::<Vec<_>>(), "purpose": "Startup detail format; table previews use auto"},
-                    "pretty_print": {"type": "boolean", "purpose": "Two-space JSON indentation; off preserves retained whitespace"},
+                    "pretty_print": {"type": "boolean", "purpose": "Two-space JSON indentation in row/detail views; off preserves retained whitespace. Record tables always use compact JSON"},
                     "highlight": {"type": "boolean", "purpose": "Data colors; selection, errors and UI key hints remain visible when off"},
                     "word_wrap": {"type": "boolean", "purpose": "App-wide read-only text wrapping; H/L scroll content when off. Single-line editors and structural labels remain clipped"},
                     "unicode": {"type": "string", "enum": ["literal", "escaped"], "purpose": "Keep printable Unicode or show ASCII escapes; terminal controls always escaped"}
