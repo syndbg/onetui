@@ -13,6 +13,15 @@ use tokio::sync::{Mutex, MutexGuard, watch};
 pub struct DynamoDbProvider;
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[
+        onetui_core::provider::ConnectionField::text("region"),
+        onetui_core::provider::ConnectionField::text("profile"),
+        onetui_core::provider::ConnectionField::text("endpoint_url"),
+        onetui_core::provider::ConnectionField::text("streams_endpoint_url"),
+        onetui_core::provider::ConnectionField::text("access_key_id_env"),
+        onetui_core::provider::ConnectionField::text("secret_access_key_env"),
+        onetui_core::provider::ConnectionField::text("session_token_env"),
+    ],
     kind: "dynamodb",
     entry_resource: Some("dynamodb.resources"),
     browsing: "tables / items / metadata / replicas / streams / shards / records",

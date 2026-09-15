@@ -11,6 +11,22 @@ use tokio::sync::{Mutex, watch};
 pub struct NatsProvider;
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[
+        onetui_core::provider::ConnectionField::list("servers"),
+        onetui_core::provider::ConnectionField::boolean("tls"),
+        onetui_core::provider::ConnectionField::boolean("jetstream"),
+        onetui_core::provider::ConnectionField::list("subjects"),
+        onetui_core::provider::ConnectionField::text("token_env"),
+        onetui_core::provider::ConnectionField::text("username_env"),
+        onetui_core::provider::ConnectionField::text("password_env"),
+        onetui_core::provider::ConnectionField::text("nkey_env"),
+        onetui_core::provider::ConnectionField::text("credentials_env"),
+        onetui_core::provider::ConnectionField::text("ca_file"),
+        onetui_core::provider::ConnectionField::text("cert_file"),
+        onetui_core::provider::ConnectionField::text("key_file"),
+        onetui_core::provider::ConnectionField::boolean("tls_first"),
+        onetui_core::provider::ConnectionField::text("domain"),
+    ],
     kind: "nats",
     entry_resource: Some("nats.resources"),
     follow_resources: &["nats.messages", "nats.core_messages", "nats.kv_history"],

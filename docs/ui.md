@@ -4,6 +4,8 @@ OneTUI has one context header, an input bar that appears only while typing, a co
 
 See the [theme gallery](themes.md) to compare all built-in palettes.
 
+On first launch, a missing default config opens an empty picker. Press `a` or enter `:add` to choose a datasource and fill its connection form. Tab/Shift-Tab moves between fields, F2 saves to the path shown in the footer, and Esc discards. Saving returns to the picker; Enter connects. See [configuration](../README.md#configuration) for secret references and advanced settings.
+
 | Panel | Contents | Behavior |
 | --- | --- | --- |
 | Context | `read-only` in the title; connection alias, datasource, resource, path, loaded/shown counts and transport state | The alias appears here once. Counts describe cached data, not database totals. Connected means transport state, not automatic data refresh. |

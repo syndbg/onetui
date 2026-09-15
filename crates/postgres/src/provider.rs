@@ -18,6 +18,10 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 pub struct PostgresProvider;
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[
+        onetui_core::provider::ConnectionField::text("url_env"),
+        onetui_core::provider::ConnectionField::text("ca_file"),
+    ],
     follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "postgres.query",

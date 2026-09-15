@@ -155,6 +155,26 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
     if keys.width == 0 {
         return;
     }
+    if let Some(form) = &app.connection_form {
+        let hints = if form.choosing {
+            vec![
+                ("j/k", "choose datasource"),
+                ("Enter", "continue"),
+                ("Esc", "cancel"),
+            ]
+        } else {
+            vec![
+                ("Tab/Enter", "next field"),
+                ("Shift-Tab", "previous field"),
+                ("F2/Ctrl-s", "save connection"),
+                ("Esc", "discard"),
+                ("Ctrl-u", "clear field"),
+                ("", "Secrets: environment variable names only"),
+            ]
+        };
+        key_hints(frame, keys, p, &hints, &[]);
+        return;
+    }
     if app.query_editor.is_some() {
         key_hints(
             frame,
@@ -306,11 +326,16 @@ where
     P::Executor: 'static,
 {
     use crate::worker::{Worker, WorkerEvent};
+    app.providers = catalog
+        .iter()
+        .map(|provider| provider.descriptor())
+        .collect();
     let (_guard, mut terminal) = terminal()?;
     let mut events = EventStream::new();
     let mut worker: Option<Worker> = None;
     let outcome = async {
         while !app.quit {
+            app.save_connection(catalog);
             if let Some(active) = &mut worker {
                 if !app.following {
                     active.pause_follow();
@@ -346,9 +371,7 @@ where
                 event = events.next() => match event {
                     Some(Ok(Event::Key(key))) => app.key(key),
                     Some(Ok(Event::Paste(text))) => {
-                        if !app.loading && let Some(editor) = app.query_editor.as_mut() && let Err(error) = editor.insert(&text) {
-                            app.error = Some(error.into());
-                        }
+                        app.paste(&text);
                     },
                     Some(Ok(_)) => {},
                     Some(Err(_)) | None => return Err(anyhow!("terminal input closed or failed")),
@@ -859,6 +882,116 @@ pub(crate) fn row_value_extent(app: &App) -> (usize, usize) {
     (height, lines)
 }
 
+fn connection_form(frame: &mut Frame, area: Rect, app: &App) {
+    let form = app.connection_form.as_ref().unwrap();
+    let p = app.config.theme.palette();
+    let selected = Style::new()
+        .fg(color(p.selection_fg))
+        .bg(color(p.selection_bg))
+        .bold();
+    if form.choosing {
+        let rows = form
+            .providers
+            .iter()
+            .map(|provider| Row::new([provider.kind, provider.browsing]));
+        frame.render_stateful_widget(
+            Table::new(rows, [Constraint::Length(14), Constraint::Min(1)])
+                .block(panel(p, " Add connection | choose datasource "))
+                .row_highlight_style(selected)
+                .highlight_symbol("> "),
+            area,
+            &mut TableState::default().with_selected(Some(form.selected)),
+        );
+        return;
+    }
+    let block = panel(
+        p,
+        format!(
+            " Add {} connection | F2 save | Esc discard ",
+            form.provider().kind
+        ),
+    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [fields, help] = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(if inner.height >= 6 { 4 } else { 0 }),
+    ])
+    .areas(inner);
+    let label_width = form
+        .provider()
+        .connection_fields
+        .iter()
+        .map(|f| f.name.len())
+        .max()
+        .unwrap_or(5)
+        .max(5) as u16
+        + 3;
+    let label_width = label_width.min(fields.width / 2);
+    let rows = form.inputs.iter().enumerate().map(|(i, input)| {
+        let name = if i == 0 {
+            "alias"
+        } else {
+            form.provider().connection_fields[i - 1].name
+        };
+        let width = fields.width.saturating_sub(label_width + 2).max(1) as usize;
+        let value = if i == form.field {
+            // Keep the caret visible while editing a value longer than the field.
+            let (lines, row, _) = input.lines(width, true);
+            lines.into_iter().nth(row).unwrap_or_default()
+        } else {
+            Line::raw(display(&input.text))
+        };
+        let required = i == 0 || form.documentation[name]["required"] == true;
+        Row::new(vec![
+            Cell::from(format!("{name}{}", if required { " *" } else { "" })),
+            Cell::from(value),
+        ])
+    });
+    frame.render_stateful_widget(
+        Table::new(rows, [Constraint::Length(label_width), Constraint::Min(1)])
+            .row_highlight_style(selected)
+            .highlight_symbol("> "),
+        fields,
+        &mut TableState::default().with_selected(Some(form.field)),
+    );
+    let hint = if form.field == 0 {
+        "Alias: ASCII letters, digits, underscores or hyphens. Optional fields may stay blank."
+            .into()
+    } else {
+        let field = form.provider().connection_fields[form.field - 1];
+        let spec = &form.documentation[field.name];
+        let input = match field.input {
+            onetui_core::provider::ConnectionInput::Text => "Text",
+            onetui_core::provider::ConnectionInput::StringList => {
+                "Comma-separated values, without quotes or brackets"
+            }
+            onetui_core::provider::ConnectionInput::Boolean => "true or false",
+        };
+        let purpose = spec["purpose"].as_str().unwrap_or("");
+        let values = spec
+            .get("values")
+            .or_else(|| spec.get("example"))
+            .map_or(String::new(), |v| format!(" | Values/example: {v}"));
+        let default = spec
+            .get("default")
+            .map_or(String::new(), |v| format!(" | Blank: {v}"));
+        let required = spec
+            .get("required")
+            .map_or(String::new(), |v| format!(" | Required: {v}"));
+        format!(
+            "{input}. {purpose}{values}{default}{required}\nNested settings (OAuth, decoders): edit TOML; see onetui schema."
+        )
+    };
+    frame.render_widget(
+        wrapping(
+            Paragraph::new(hint).style(Style::new().fg(color(p.muted))),
+            app,
+        ),
+        help,
+    );
+}
+
 pub fn draw(frame: &mut Frame, app: &App) {
     let p = app.config.theme.palette();
     let area = frame.area();
@@ -911,7 +1044,26 @@ pub fn draw(frame: &mut Frame, app: &App) {
             frame.render_widget(wrapping(Paragraph::new(lines), app), inner);
         }
     }
-    if app.display_menu.is_some() && !app.help {
+    if app.connection_form.is_some() {
+        connection_form(frame, body, app);
+    } else if app.view.alias.is_none()
+        && app.view.page.rows.is_empty()
+        && !app.help
+        && app.theme_menu.is_none()
+        && app.display_menu.is_none()
+    {
+        let path = app.config.path().map_or_else(
+            || "not configured".into(),
+            |path| display(&path.display().to_string()),
+        );
+        let text = format!(
+            "No connections yet. Press a to add one.\n\nConfig: {path}\nNothing is created until you save."
+        );
+        frame.render_widget(
+            wrapping(Paragraph::new(text), app).block(panel(p, " Connections ")),
+            body,
+        );
+    } else if app.display_menu.is_some() && !app.help {
         let options = app.config.display;
         let mut entries: Vec<_> = onetui_core::value::FORMATS
             .iter()
@@ -1175,7 +1327,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
         });
         frame.render_stateful_widget(table, body, &mut state);
     }
-    let state = if app.following {
+    let state = if app.connection_form.is_some() {
+        "Adding connection"
+    } else if app.view.alias.is_none() && app.view.page.rows.is_empty() {
+        "a add connection | q quit"
+    } else if app.following {
         "LIVE | f / Ctrl-c stop | navigation pauses"
     } else if app.view.live && !app.loading {
         "Following stopped | f starts at current end | r returns to historical browsing"
@@ -1189,8 +1345,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         "Ready"
     };
     let error = app.error.as_deref().unwrap_or(state);
+    let config_path = app
+        .config
+        .path()
+        .map(|path| format!("Config: {}", display(&path.display().to_string())));
     let scope = if app.view.resource.id == "connections" {
-        "configured aliases"
+        config_path.as_deref().unwrap_or("configured aliases")
     } else {
         if app.view.page.notice.is_empty() {
             "metadata; offset pages, no cross-request snapshot"
@@ -2443,6 +2603,59 @@ mod tests {
         }
     }
 
+    #[test]
+    fn connection_form_renders_controls_path_and_editing_on_narrow_frames() {
+        use onetui_core::provider::Provider;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let catalog = crate::test_provider::CATALOG;
+        let mut app = App::new(
+            onetui_core::config::Config::load_for_startup(&path, catalog, true).unwrap(),
+            None,
+        );
+        app.providers = catalog
+            .iter()
+            .map(|provider| provider.descriptor())
+            .collect();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("No connections yet"));
+        assert!(text.contains("config.toml"));
+        app.act(Action::Add);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        app.paste("a_long_alias");
+        for (width, height) in [(1, 1), (20, 6), (60, 19), (120, 30)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            if width == 120 {
+                let text = terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>();
+                assert!(text.contains("F2 save"));
+                assert!(text.contains("alias *"));
+                assert!(text.contains("a_long_alias"));
+                assert!(text.contains("token_env"));
+                assert!(text.contains("config.toml"));
+            }
+        }
+        assert!(!path.exists());
+    }
+
     fn assert_empty_help_and_narrow_frames(theme: onetui_theme::Theme) {
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(config, "[connections]").unwrap();
@@ -2649,7 +2862,7 @@ mod tests {
                 let ready = if mode == "connection_error" {
                     text.contains("fake connection")
                 } else {
-                    text.contains("Empty") && text.contains("result")
+                    text.contains("No connections yet")
                 };
                 if mode != "panic" && ready && !sent_quit {
                     assert!(

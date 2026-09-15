@@ -18,6 +18,10 @@ pub struct QdrantProvider;
 static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[
+        onetui_core::provider::ConnectionField::text("url"),
+        onetui_core::provider::ConnectionField::text("api_key_env"),
+    ],
     follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "qdrant.query",

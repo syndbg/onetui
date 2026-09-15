@@ -27,6 +27,19 @@ static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 static NATIVE_OWNER: Semaphore = Semaphore::const_new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[
+        onetui_core::provider::ConnectionField::list("bootstrap_servers"),
+        onetui_core::provider::ConnectionField::text("security_protocol"),
+        onetui_core::provider::ConnectionField::text("ca_file"),
+        onetui_core::provider::ConnectionField::text("sasl_mechanism"),
+        onetui_core::provider::ConnectionField::text("username_env"),
+        onetui_core::provider::ConnectionField::text("password_env"),
+        onetui_core::provider::ConnectionField::text("client_cert_file"),
+        onetui_core::provider::ConnectionField::text("client_key_file"),
+        onetui_core::provider::ConnectionField::text("client_key_password_env"),
+        onetui_core::provider::ConnectionField::text("kerberos_principal"),
+        onetui_core::provider::ConnectionField::text("kerberos_service_name"),
+    ],
     follow_resources: &["kafka.records"],
     query: Some(QueryDescriptor {
         resource: "kafka.query",

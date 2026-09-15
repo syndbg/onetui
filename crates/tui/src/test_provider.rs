@@ -44,6 +44,7 @@ const COLUMNS: ResourceDescriptor = ResourceDescriptor {
     actions: &[],
 };
 static BROWSE: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[onetui_core::provider::ConnectionField::text("token_env")],
     follow_resources: &["fake.rows"],
     query: Some(QueryDescriptor {
         resource: "fake.rows",
@@ -60,6 +61,7 @@ static BROWSE: ProviderDescriptor = ProviderDescriptor {
     documentation: || serde_json::json!({}),
 };
 static CHECK: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[],
     follow_resources: &[],
     query: None,
     kind: "checkonly",

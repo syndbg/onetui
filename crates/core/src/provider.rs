@@ -10,6 +10,7 @@ use crate::catalog::ResourceDescriptor;
 use crate::{Page, Resource};
 
 pub struct ProviderDescriptor {
+    pub connection_fields: &'static [ConnectionField],
     pub follow_resources: &'static [&'static str],
     pub query: Option<QueryDescriptor>,
     pub kind: &'static str,
@@ -26,6 +27,8 @@ impl ProviderDescriptor {
 
     pub fn capabilities(&self) -> serde_json::Value {
         let mut value = (self.documentation)();
+        value["connection_form"] =
+            serde_json::to_value(self.connection_fields).expect("connection fields");
         value["query"] = serde_json::to_value(self.query).expect("query descriptor");
         value["follow_resources"] = serde_json::json!(self.follow_resources);
         if self.query.is_some() {
@@ -35,6 +38,41 @@ impl ProviderDescriptor {
         value["entry_resource"] = serde_json::json!(self.entry_resource);
         value["resources"] = serde_json::to_value(self.resources).expect("static descriptors");
         value
+    }
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionInput {
+    Text,
+    StringList,
+    Boolean,
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+pub struct ConnectionField {
+    pub name: &'static str,
+    pub input: ConnectionInput,
+}
+
+impl ConnectionField {
+    pub const fn text(name: &'static str) -> Self {
+        Self {
+            name,
+            input: ConnectionInput::Text,
+        }
+    }
+    pub const fn list(name: &'static str) -> Self {
+        Self {
+            name,
+            input: ConnectionInput::StringList,
+        }
+    }
+    pub const fn boolean(name: &'static str) -> Self {
+        Self {
+            name,
+            input: ConnectionInput::Boolean,
+        }
     }
 }
 
@@ -321,6 +359,7 @@ mod tests {
             actions: &[],
         };
         static DUPLICATE: ProviderDescriptor = ProviderDescriptor {
+            connection_fields: &[],
             follow_resources: &[],
             query: None,
             kind: "fake",
@@ -330,6 +369,7 @@ mod tests {
             documentation: || serde_json::json!({}),
         };
         static MISSING: ProviderDescriptor = ProviderDescriptor {
+            connection_fields: &[],
             follow_resources: &[],
             query: None,
             kind: "fake",

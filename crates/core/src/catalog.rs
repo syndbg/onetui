@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    Add,
     Follow,
     Query,
     Up,
@@ -39,6 +40,11 @@ pub struct ActionDescriptor {
 }
 
 pub const ACTIONS: &[ActionDescriptor] = &[
+    ActionDescriptor {
+        id: Action::Add,
+        keys: &["a"],
+        description: "Add a connection: choose a datasource, fill fields, F2 saves to the displayed config path; Esc discards",
+    },
     ActionDescriptor {
         id: Action::Follow,
         keys: &["f"],

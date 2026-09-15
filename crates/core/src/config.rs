@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::provider::{Provider, ProviderDescriptor, find_provider, validate_catalog};
@@ -10,6 +11,7 @@ pub struct Config {
     pub theme: Theme,
     pub display: crate::value::DisplayOptions,
     connections: BTreeMap<String, Connection>,
+    source: Option<(PathBuf, Option<String>)>,
 }
 
 struct Connection {
@@ -24,6 +26,7 @@ struct RawConfig {
     theme: Theme,
     #[serde(default)]
     display: crate::value::DisplayOptions,
+    #[serde(default)]
     connections: BTreeMap<String, toml::Table>,
 }
 
@@ -40,9 +43,99 @@ impl Config {
     }
 
     pub fn load<P: Provider>(path: &Path, catalog: &[P]) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|_| anyhow!("cannot read config file; check --config and file permissions"))?;
-        Self::parse(&text, catalog)
+        Self::load_for_startup(path, catalog, false)
+    }
+
+    pub fn load_for_startup<P: Provider>(
+        path: &Path,
+        catalog: &[P],
+        allow_missing: bool,
+    ) -> Result<Self> {
+        let path = std::path::absolute(path)?;
+        let text = read_config(&path)?;
+        ensure!(
+            allow_missing || text.is_some(),
+            "config file not found: {}; use an existing --config <path> or start without --config or --check to add connections",
+            crate::display(&path.display().to_string())
+        );
+        let mut config = Self::parse(text.as_deref().unwrap_or(""), catalog)?;
+        config.source = Some((path, text));
+        Ok(config)
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.source.as_ref().map(|(path, _)| path.as_path())
+    }
+
+    pub fn add_connection<P: Provider>(
+        &mut self,
+        alias: &str,
+        kind: &str,
+        options: toml::Table,
+        catalog: &[P],
+    ) -> Result<()> {
+        ensure!(
+            safe_name(alias),
+            "Alias must contain only ASCII letters, digits, underscores or hyphens"
+        );
+        ensure!(
+            !self.connections.contains_key(alias),
+            "Connection alias already exists"
+        );
+        let provider = find_provider(catalog, kind)?;
+        provider.validate_config(&options)?;
+        let (path, original) = self
+            .source
+            .as_ref()
+            .ok_or_else(|| anyhow!("No configuration save path"))?;
+        let mut entry = options;
+        entry.insert("kind".into(), kind.into());
+        let text = format!(
+            "{}\n[connections.{alias}]\n{}",
+            original.as_deref().unwrap_or(""),
+            toml::to_string(&entry)?
+        );
+        ensure!(text.len() <= 1024 * 1024, "Config exceeds 1 MiB");
+        // Validate the complete document before touching disk, including existing entries.
+        let parsed = Self::parse(&text, catalog).map_err(|_| anyhow!("Cannot append to this TOML layout; expand inline connections into [connections.alias] sections before adding"))?;
+        ensure!(
+            read_config(path)? == *original,
+            "Config changed on disk; reopen OneTUI before saving"
+        );
+        if original.is_some() {
+            ensure!(
+                !std::fs::symlink_metadata(path)?.file_type().is_symlink(),
+                "Config is a symlink; use --config with its target to save"
+            );
+            ensure!(
+                !std::fs::metadata(path)?.permissions().readonly(),
+                "Config file is read-only"
+            );
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow!("Config path has no parent"))?;
+        std::fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        if original.is_some() {
+            temporary
+                .as_file()
+                .set_permissions(std::fs::metadata(path)?.permissions())?;
+        }
+        temporary.write_all(text.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        ensure!(
+            read_config(path)? == *original,
+            "Config changed on disk; reopen OneTUI before saving"
+        );
+        if original.is_some() {
+            temporary.persist(path).map_err(|e| e.error)?;
+        } else {
+            temporary.persist_noclobber(path).map_err(|e| e.error)?;
+        }
+        self.connections = parsed.connections;
+        self.source.as_mut().unwrap().1 = Some(text);
+        Ok(())
     }
 
     pub fn parse<P: Provider>(text: &str, catalog: &[P]) -> Result<Self> {
@@ -77,6 +170,7 @@ impl Config {
             theme: raw.theme,
             display: raw.display,
             connections,
+            source: None,
         })
     }
 
@@ -91,6 +185,29 @@ impl Config {
         })?;
         find_provider(catalog, connection.descriptor.kind)?.configure(&connection.options, env)
     }
+}
+
+fn read_config(path: &Path) -> Result<Option<String>> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let result = (|| -> Result<String> {
+        ensure!(std::fs::metadata(path)?.is_file(), "not a regular file");
+        let mut text = String::new();
+        std::fs::File::open(path)?
+            .take(1024 * 1024 + 1)
+            .read_to_string(&mut text)?;
+        ensure!(text.len() <= 1024 * 1024, "config exceeds 1 MiB");
+        Ok(text)
+    })();
+    result.map(Some).map_err(|error| {
+        anyhow!(
+            "cannot read config {}: {error}",
+            crate::display(&path.display().to_string())
+        )
+    })
 }
 
 pub fn secret(name: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<String> {
@@ -141,6 +258,150 @@ fn default_path(
 mod tests {
     use super::*;
     use crate::test_provider::CATALOG;
+
+    #[test]
+    fn missing_default_is_empty_but_explicit_and_invalid_files_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing/config.toml");
+        let config = Config::load_for_startup(&path, CATALOG, true).unwrap();
+        assert!(config.aliases().is_empty());
+        assert!(!path.parent().unwrap().exists());
+        let error = Config::load(&path, CATALOG).err().unwrap().to_string();
+        assert!(error.contains("config file not found"));
+        assert!(error.contains("config.toml"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "invalid = [").unwrap();
+        assert!(Config::load_for_startup(&path, CATALOG, true).is_err());
+        assert!(Config::load_for_startup(dir.path(), CATALOG, true).is_err());
+    }
+
+    #[test]
+    fn saving_validates_preserves_text_and_detects_external_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# Keep this comment\ntheme='monokai'\n[display]\nword_wrap=false\n[connections.old]\nkind='fake'\n";
+        std::fs::write(&path, original).unwrap();
+        let mut config = Config::load(&path, CATALOG).unwrap();
+        config.theme = Theme::Nord;
+        config
+            .add_connection(
+                "new",
+                "fake",
+                toml::from_str("secret_env='UNSET_SECRET'").unwrap(),
+                CATALOG,
+            )
+            .unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .starts_with(original)
+        );
+        assert_eq!(config.theme, Theme::Nord, "session theme stays in memory");
+        let loaded = Config::load(&path, CATALOG).unwrap();
+        assert_eq!(loaded.theme, Theme::Monokai);
+        assert!(!loaded.display.word_wrap);
+        assert_eq!(loaded.aliases(), [("new", "fake"), ("old", "fake")]);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        for (alias, kind, options) in [
+            ("new", "fake", ""),
+            ("bad.alias", "fake", ""),
+            ("bad", "unknown", ""),
+            ("bad", "fake", "unknown=1"),
+        ] {
+            assert!(
+                config
+                    .add_connection(alias, kind, toml::from_str(options).unwrap(), CATALOG)
+                    .is_err()
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+        }
+        std::fs::write(&path, format!("{saved}\n# external edit\n")).unwrap();
+        assert!(
+            config
+                .add_connection("other", "fake", toml::Table::new(), CATALOG)
+                .unwrap_err()
+                .to_string()
+                .contains("changed on disk")
+        );
+        assert!(config.descriptor("other").is_none());
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .ends_with("# external edit\n")
+        );
+    }
+
+    #[test]
+    fn saving_first_connection_creates_private_file_only_after_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new/config.toml");
+        let mut config = Config::load_for_startup(&path, CATALOG, true).unwrap();
+        assert!(
+            config
+                .add_connection("", "fake", toml::Table::new(), CATALOG)
+                .is_err()
+        );
+        assert!(!path.parent().unwrap().exists());
+        config
+            .add_connection("first", "fake", toml::Table::new(), CATALOG)
+            .unwrap();
+        assert_eq!(
+            Config::load(&path, CATALOG).unwrap().aliases(),
+            [("first", "fake")]
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn inline_connection_tables_fail_without_rewriting_existing_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let text = "connections = {} # keep\n";
+        std::fs::write(&path, text).unwrap();
+        let mut config = Config::load(&path, CATALOG).unwrap();
+        let error = config
+            .add_connection("new", "fake", toml::Table::new(), CATALOG)
+            .unwrap_err();
+        assert!(error.to_string().contains("inline connections"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_rejects_readonly_and_symlink_files_without_changing_them() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let text = "[connections]\n";
+        std::fs::write(&path, text).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let mut config = Config::load(&path, CATALOG).unwrap();
+        assert!(
+            config
+                .add_connection("new", "fake", toml::Table::new(), CATALOG)
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        let link = dir.path().join("link.toml");
+        symlink(&path, &link).unwrap();
+        let mut linked = Config::load(&link, CATALOG).unwrap();
+        assert!(
+            linked
+                .add_connection("new", "fake", toml::Table::new(), CATALOG)
+                .is_err()
+        );
+        assert!(link.is_symlink());
+        let dangling = dir.path().join("dangling.toml");
+        symlink(dir.path().join("absent"), &dangling).unwrap();
+        assert!(Config::load_for_startup(&dangling, CATALOG, true).is_err());
+    }
 
     #[test]
     fn display_configuration_is_optional_strict_and_offline() {

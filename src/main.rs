@@ -27,7 +27,7 @@ struct Args {
     /// Alias from the configuration's connections table
     #[arg(long)]
     connection: Option<String>,
-    /// Read only this configuration file (otherwise use the XDG config path)
+    /// Use this config file. A missing default config opens an empty connection picker
     #[arg(long)]
     config: Option<PathBuf>,
     /// Active check/browsing-request deadline in seconds (not displayed-data expiry)
@@ -88,8 +88,9 @@ async fn run(args: Args) -> Result<()> {
             "interactive browsing requires a terminal on stdin/stdout; use --check or schema for headless operation"
         );
     }
+    let allow_missing = args.config.is_none() && !args.check;
     let path = config::config_path(args.config)?;
-    let config = config::Config::load(&path, BUILTINS)?;
+    let config = config::Config::load_for_startup(&path, BUILTINS, allow_missing)?;
     let deadline = Duration::from_secs(args.timeout);
     if !args.check {
         return onetui_tui::run(

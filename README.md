@@ -70,13 +70,13 @@ Choose a connection and press Enter. The demos include wide tables, typed and bi
 
 Run `make dev-traffic` in another terminal for Kafka, Redpanda and NATS traffic. Press `f` on a resource that supports following. Use `make dev-down` when finished. It deletes the disposable fixture data.
 
-For your own databases, create a [configuration file](#configuration), then run:
+For your own databases, run:
 
 ```sh
-onetui --config "$HOME/onetui.toml"
+onetui
 ```
 
-Without `--connection <alias>`, OneTUI starts at the connection picker and makes no datasource request. [Local setup](hack/README.md) covers sample datasets and endpoints. Use `make help` for available tasks.
+Press `a` to add a connection. Choose a datasource, fill in the fields, then press F2 to save. Without `--connection <alias>`, OneTUI stays at the picker and makes no datasource request. [Local setup](hack/README.md) covers sample datasets and endpoints. Use `make help` for available tasks.
 
 For a shorter command, add this to your shell configuration:
 
@@ -145,7 +145,13 @@ OneTUI reads one file, in this order:
 2. `$XDG_CONFIG_HOME/onetui/config.toml` when XDG_CONFIG_HOME is absolute and nonempty.
 3. `$HOME/.config/onetui/config.toml` otherwise, with an absolute HOME.
 
-Files are not merged or created automatically. `~/onetui.toml` requires `--config`.
+If the default file is missing, the TUI opens an empty connection picker. `a` or `:add` creates a connection. Tab moves between fields, F2 saves, and Esc discards. The footer shows the config path. Nothing is written until you save.
+
+Files are not merged. An explicit `--config` path must exist, and `--check` still requires a file. Invalid or unreadable files remain errors. To use `~/onetui.toml`, create it and pass `--config "$HOME/onetui.toml"`.
+
+The form covers endpoints, TLS and authentication references. Lists use commas; booleans use `true` or `false`; blank optional fields keep provider defaults. `_env` fields take environment variable names, not secret values. Set those variables before launching OneTUI. Edit TOML for nested OAuth or decoder settings.
+
+Saving adds an entry without changing existing text or session-only display preferences. New files are private (0600 on Unix). Detected external edits, duplicate aliases, read-only files and symlinks block saving. Reopen after external edits; for a symlink, pass its target path.
 
 ### Supported settings and defaults
 

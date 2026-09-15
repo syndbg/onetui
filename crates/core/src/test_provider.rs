@@ -7,6 +7,7 @@ use tokio::sync::watch;
 pub struct FakeProvider;
 pub const CATALOG: &[FakeProvider] = &[FakeProvider];
 static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    connection_fields: &[crate::provider::ConnectionField::text("secret_env")],
     follow_resources: &[],
     query: None,
     kind: "fake",

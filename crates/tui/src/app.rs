@@ -188,6 +188,8 @@ fn projections(page: &Page) -> Result<Vec<Vec<Option<String>>>, &'static str> {
 }
 
 pub struct App {
+    pub connection_form: Option<crate::connection::Form>,
+    pub(crate) providers: Vec<&'static onetui_core::provider::ProviderDescriptor>,
     pub following: bool,
     pub(crate) follow_due: Option<tokio::time::Instant>,
     pub query_editor: Option<crate::query::Editor>,
@@ -228,6 +230,8 @@ pub struct App {
 impl App {
     pub fn new(config: Config, alias: Option<&str>) -> Self {
         let mut app = Self {
+            connection_form: None,
+            providers: Vec::new(),
             following: false,
             follow_due: None,
             query_editor: None,
@@ -324,6 +328,42 @@ impl App {
         self.filter_restore = None;
         self.detail_text.clear();
         self.clear_detail();
+    }
+
+    pub(crate) fn save_connection<P: onetui_core::provider::Provider>(&mut self, catalog: &[P]) {
+        let Some(form) = self.connection_form.as_mut().filter(|form| form.save) else {
+            return;
+        };
+        form.save = false;
+        let alias = form.inputs[0].text.trim().to_owned();
+        let result = form.options().and_then(|options| {
+            self.config
+                .add_connection(&alias, form.provider().kind, options, catalog)
+        });
+        match result {
+            Ok(()) => {
+                self.connection_form = None;
+                self.connections();
+                self.view.selected = self
+                    .config
+                    .aliases()
+                    .iter()
+                    .position(|(name, _)| *name == alias)
+                    .unwrap_or(0);
+            }
+            Err(error) => self.error = Some(onetui_core::display(&error.to_string())),
+        }
+    }
+
+    pub(crate) fn paste(&mut self, text: &str) {
+        if let Some(form) = &mut self.connection_form {
+            self.error = form.insert(text).err().map(|error| error.to_string());
+        } else if !self.loading
+            && let Some(editor) = &mut self.query_editor
+            && let Err(error) = editor.insert(text)
+        {
+            self.error = Some(error.into());
+        }
     }
 
     fn load(&mut self, offset: i64, reset: bool) {
@@ -461,6 +501,9 @@ impl App {
     }
 
     fn available_while_loading(&self, action: Action, loading: bool) -> bool {
+        if self.connection_form.is_some() {
+            return matches!(action, Action::Back | Action::Cancel);
+        }
         if self.query_editor.is_some() {
             return matches!(action, Action::Back | Action::Cancel);
         }
@@ -482,6 +525,14 @@ impl App {
             );
         }
         match action {
+            Action::Add => {
+                !self.help
+                    && !self.detail
+                    && !self.row_detail
+                    && self.view.alias.is_none()
+                    && self.config.path().is_some()
+                    && !self.providers.is_empty()
+            }
             Action::Follow => {
                 !loading
                     && !self.help
@@ -749,6 +800,13 @@ impl App {
     }
 
     pub fn act(&mut self, action: Action) {
+        if self.connection_form.is_some() {
+            if matches!(action, Action::Back | Action::Cancel) {
+                self.connection_form = None;
+                self.error = None;
+            }
+            return;
+        }
         if self.query_editor.is_some() && matches!(action, Action::Back | Action::Cancel) {
             self.close_query();
             return;
@@ -937,6 +995,10 @@ impl App {
             Action::ScrollLeft => self.horizontal_scroll = self.horizontal_scroll.saturating_sub(8),
             Action::ScrollRight => {
                 self.horizontal_scroll = self.horizontal_scroll.saturating_add(8)
+            }
+            Action::Add => {
+                self.error = None;
+                self.connection_form = Some(crate::connection::Form::new(self.providers.clone()));
             }
             Action::Themes => self.theme_menu = Some(self.config.theme),
             Action::Filter => {
@@ -1143,6 +1205,18 @@ impl App {
 
     pub fn key(&mut self, key: KeyEvent) {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return;
+        }
+        if let Some(form) = &mut self.connection_form {
+            if key.code == KeyCode::Esc
+                || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+            {
+                self.act(Action::Cancel);
+            } else if let Err(error) = form.key(key) {
+                self.error = Some(error.to_string());
+            } else {
+                self.error = None;
+            }
             return;
         }
         if self.query_editor.is_some() {
@@ -1375,6 +1449,51 @@ mod tests {
             app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn add_connection_saves_without_connecting_and_cancel_leaves_no_file() {
+        use crate::test_provider::CATALOG;
+        use onetui_core::provider::Provider;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut app = App::new(
+            Config::load_for_startup(&path, CATALOG, true).unwrap(),
+            None,
+        );
+        app.providers = CATALOG.iter().map(|p| p.descriptor()).collect();
+        command(&mut app, "add");
+        assert!(app.connection_form.is_some());
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.paste("discarded");
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!path.exists());
+        assert!(app.view.page.rows.is_empty());
+        app.key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+        app.save_connection(CATALOG);
+        assert!(app.error.as_ref().unwrap().contains("Alias"));
+        assert!(app.connection_form.is_some());
+        assert!(!path.exists());
+        app.paste("my_connection");
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.paste("UNSET_SECRET");
+        app.key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+        app.save_connection(CATALOG);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(app.connection_form.is_none());
+        assert_eq!(app.config.aliases()[0].0, "my_connection");
+        assert_eq!(app.view.page.rows.len(), 1);
+        assert!(app.request.is_none());
+        assert!(app.view.alias.is_none());
+        assert!(
+            app.config
+                .configure("my_connection", CATALOG, &|_| None)
+                .is_ok()
+        );
+        app.act(Action::Open);
+        assert!(app.request.is_some());
     }
 
     #[test]
