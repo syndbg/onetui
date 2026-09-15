@@ -16,10 +16,12 @@ use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 pub struct QdrantProvider;
 static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
+static REST_SETUP: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     connection_fields: &[
         onetui_core::provider::ConnectionField::text("url"),
+        onetui_core::provider::ConnectionField::text("rest_url"),
         onetui_core::provider::ConnectionField::text("api_key_env"),
     ],
     follow_resources: &[],
@@ -32,8 +34,8 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         scope_resources: &[],
     }),
     kind: "qdrant",
-    entry_resource: Some("qdrant.collections"),
-    browsing: "collections / points / payload / vectors",
+    entry_resource: Some("qdrant.resources"),
+    browsing: "collections / points / payload / vectors / cluster topology",
     resources: crate::browse::RESOURCES,
     documentation: crate::capabilities,
 };
@@ -65,8 +67,10 @@ impl Provider for QdrantProvider {
             .transpose()?;
         Ok(QdrantExecutor {
             url: config.url,
+            rest_url: config.rest_url,
             api_key,
             client: Mutex::new(None),
+            rest_client: Mutex::new(None),
             identity: NEXT_EXECUTOR.fetch_add(1, Ordering::Relaxed),
             status: watch::channel(ConnectionStatus::Configured).0,
             closed: false,
@@ -76,20 +80,22 @@ impl Provider for QdrantProvider {
 
 pub struct QdrantExecutor {
     url: String,
+    rest_url: Option<String>,
     api_key: Option<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>,
     client: Mutex<Option<Channel>>,
+    rest_client: Mutex<Option<reqwest::Client>>,
     identity: u64,
     status: watch::Sender<ConnectionStatus>,
     closed: bool,
 }
 
-struct Lease<'a> {
-    channel: MutexGuard<'a, Option<Channel>>,
+struct Lease<'a, T> {
+    channel: MutexGuard<'a, Option<T>>,
     status: &'a watch::Sender<ConnectionStatus>,
     clean: bool,
 }
 
-impl Drop for Lease<'_> {
+impl<T> Drop for Lease<'_, T> {
     fn drop(&mut self) {
         if !self.clean {
             self.channel.take();
@@ -99,6 +105,79 @@ impl Drop for Lease<'_> {
 }
 
 impl QdrantExecutor {
+    async fn topology(
+        &self,
+        request: &PageRequest,
+        offset: usize,
+        mut context: RequestContext,
+    ) -> Result<Page> {
+        let url = self.rest_url.as_deref().ok_or_else(|| {
+            anyhow!("Qdrant topology requires rest_url in this connection's config")
+        })?;
+        let mut lease = Lease {
+            channel: context.run(self.rest_client.lock()).await?,
+            status: &self.status,
+            clean: false,
+        };
+        let key = self.api_key.as_ref().and_then(|key| key.to_str().ok());
+        let result = context
+            .run(async {
+                if lease.channel.is_none() {
+                    self.status.send_replace(ConnectionStatus::Connecting);
+                    let permit = REST_SETUP.acquire().await?;
+                    let https = crate::qdrant_url(url)?.scheme() == "https";
+                    // Native trust loading can block. A cancelled setup keeps its slot until done.
+                    *lease.channel = Some(
+                        tokio::task::spawn_blocking(move || {
+                            let _permit = permit;
+                            let mut roots = rustls::RootCertStore::empty();
+                            if https {
+                                for cert in rustls_native_certs::load_native_certs().certs {
+                                    roots.add(cert)?;
+                                }
+                                ensure!(
+                                    !roots.is_empty(),
+                                    "No Qdrant REST TLS trust roots available"
+                                );
+                            }
+                            let tls = rustls::ClientConfig::builder_with_provider(
+                                std::sync::Arc::new(rustls::crypto::ring::default_provider()),
+                            )
+                            .with_safe_default_protocol_versions()?
+                            .with_root_certificates(roots)
+                            .with_no_client_auth();
+                            Ok::<_, anyhow::Error>(
+                                reqwest::Client::builder()
+                                    .tls_backend_preconfigured(tls)
+                                    .no_proxy()
+                                    .redirect(reqwest::redirect::Policy::none())
+                                    .retry(reqwest::retry::never())
+                                    .http1_only()
+                                    .pool_max_idle_per_host(1)
+                                    .build()?,
+                            )
+                        })
+                        .await??,
+                    );
+                }
+                let value = crate::topology::read(
+                    lease.channel.as_ref().expect("REST client"),
+                    url,
+                    key,
+                    &request.resource,
+                )
+                .await?;
+                crate::topology::page(&request.resource, value, offset, self.identity)
+            })
+            .await?;
+        let result = context.run(std::future::ready(result)).await?;
+        if result.is_ok() {
+            lease.clean = true;
+            self.status.send_replace(ConnectionStatus::Connected);
+        }
+        result.map_err(|error| onetui_core::diagnostic(error, &[key.unwrap_or("")]))
+    }
+
     fn request<T>(&self, message: T, deadline: Instant) -> tonic::Request<T> {
         let mut request = tonic::Request::new(message);
         request.set_timeout(deadline.saturating_duration_since(Instant::now()));
@@ -224,6 +303,13 @@ impl Executor for QdrantExecutor {
                 .run(std::future::ready(crate::browse::bounded(page)))
                 .await?;
         }
+        if crate::topology::is_resource(request.resource.id) {
+            let offset = match offset {
+                Some(crate::browse::Offset::Topology(n)) => n,
+                _ => 0,
+            };
+            return self.topology(&request, offset, context).await;
+        }
         self.execute(context, |channel, deadline| async move {
             let resource = &request.resource;
             match resource.id {
@@ -315,6 +401,7 @@ impl Executor for QdrantExecutor {
         self.closed = true;
         self.status.send_replace(ConnectionStatus::Closing);
         self.client.get_mut().take();
+        self.rest_client.get_mut().take();
         self.status.send_replace(ConnectionStatus::Closed);
         Ok(())
     }
@@ -323,6 +410,28 @@ impl Executor for QdrantExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn rest_setup_wait_obeys_the_request_deadline() {
+        let _permit = REST_SETUP.acquire().await.unwrap();
+        let options =
+            toml::from_str("url='http://127.0.0.1:1'\nrest_url='http://127.0.0.1:1'").unwrap();
+        let executor = QdrantProvider.configure(&options, &|_| None).unwrap();
+        let (_cancel, context) = RequestContext::new(std::time::Duration::from_millis(20));
+        let error = executor
+            .fetch_page(
+                PageRequest {
+                    resource: onetui_core::Resource::new("qdrant.cluster", vec![]),
+                    continuation: None,
+                },
+                context,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Disconnected);
+        assert!(executor.rest_client.lock().await.is_none());
+    }
+
     #[test]
     fn config_validation_is_strict_and_offline() {
         let options =

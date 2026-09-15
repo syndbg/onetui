@@ -3,6 +3,7 @@ mod browse;
 mod config;
 mod provider;
 mod query;
+mod topology;
 pub use provider::{QdrantExecutor, QdrantProvider};
 use std::net::IpAddr;
 
@@ -15,7 +16,7 @@ fn qdrant_url(value: &str) -> Result<url::Url> {
     let url = url::Url::parse(value).map_err(|_| anyhow!("invalid Qdrant URL"))?;
     ensure!(
         matches!(url.scheme(), "http" | "https") && url.host().is_some(),
-        "Qdrant requires an http:// or https:// gRPC endpoint"
+        "Qdrant requires an http:// or https:// endpoint"
     );
     ensure!(
         url.username().is_empty()
@@ -63,14 +64,16 @@ pub(crate) fn capabilities() -> serde_json::Value {
             "condition": "Nonempty key plus exactly one of match: {value: string|boolean|i64} or range: {gt?, gte?, lt?, lte?}; range requires a numeric bound",
             "unsupported": "Unknown fields, nested conditions, match any/except/text, geo/datetime filters, order_by, user offsets, payload/vector selectors and similarity queries are rejected"
         },
-        "session": "Lazy reusable size-capped gRPC channel; failed/cancelled operations discard it. Shutdown drops the channel. HTTP/2 keepalive interval unset, idle pings disabled; no periodic metadata check or heartbeat TOML setting.",
-        "limits": {"page_rows": 100, "rpc_bytes": 1048576, "display_page_bytes": 1048576, "retained_pages_per_view": 3},
-        "navigation": "Enter: collections -> collection -> points or metadata; points -> point -> payload or vectors. Payload and vectors are separate reads. Enter on a data row inspects cached fields; h/l selects fields.",
-        "paths": {"qdrant.collections": [], "qdrant.collection": ["collection"], "qdrant.metadata": ["collection"], "qdrant.points": ["collection"], "qdrant.point": ["collection", "numeric ID or hyphenated UUID"], "qdrant.payload": ["collection", "ID"], "qdrant.vectors": ["collection", "ID"]},
+        "session": "Lazy reusable size-capped gRPC channel and optional REST client; failed/cancelled operations discard the affected client. Shutdown drops both. REST client/trust setup runs off async workers with one process-wide job slot. No periodic metadata checks or heartbeat TOML setting. HTTP/2 keepalive interval unset; idle pings disabled.",
+        "limits": {"page_rows": 100, "rpc_bytes": 1048576, "rest_bytes": 1048576, "display_page_bytes": 1048576, "retained_pages_per_view": 3},
+        "navigation": "Enter: resources -> collections, cluster or peers. Collection -> points, metadata, shards, transfers or cluster details. Point -> payload or vectors. Enter on a data row inspects cached fields.",
+        "paths": {"qdrant.resources": [], "qdrant.cluster": [], "qdrant.peers": [], "qdrant.shards": ["collection"], "qdrant.transfers": ["collection"], "qdrant.collection_cluster": ["collection"], "qdrant.collections": [], "qdrant.collection": ["collection"], "qdrant.metadata": ["collection"], "qdrant.points": ["collection"], "qdrant.point": ["collection", "numeric ID or hyphenated UUID"], "qdrant.payload": ["collection", "ID"], "qdrant.vectors": ["collection", "ID"]},
+        "topology": "GET /cluster and GET /collections/{name}/cluster through explicit rest_url. Reports that node's observed peers, consensus, replicas and transfers. Full JSON retains resharding and unknown fields. Disabled distributed mode is explicit. Lists re-read per page without a snapshot. Peer addresses are data only. No redirects, proxy discovery, retries, peer management or shard movement. --check still checks gRPC collection access only.",
         "paging": "ID-only Scroll uses the exact server continuation, scoped to executor and resource; refresh restarts. Collections re-read the size-capped List response and display 100 sorted names per page. Neither provides a cross-request snapshot. Filter/sort only inspect displayed text; no payload path expressions or server-side filters.",
         "configuration": {
             "kind": {"required": true, "values": ["qdrant"], "purpose": "Select the Qdrant connector"},
             "url": {"required": true, "type": "HTTP(S) gRPC URL", "purpose": "Explicit endpoint; plaintext only on loopback; no URL credentials, path prefix, query or fragment", "example": "http://127.0.0.1:6334"},
+            "rest_url": {"required": false, "type": "HTTP(S) REST URL", "default": "unset; topology reads unavailable", "purpose": "REST endpoint for cluster topology, using the same api_key_env and verified platform TLS trust. Configure the same Qdrant node as url for consistent local/remote labels. Plaintext only on loopback; no credentials, path prefix, query or fragment. Ports are never inferred", "example": "http://127.0.0.1:6333"},
             "api_key_env": {"required": false, "type": "string", "default": "no API key", "purpose": "Environment variable containing the API key", "values": "Nonempty ASCII letters, digits, underscores or hyphens", "example": "ONETUI_QDRANT_API_KEY"}
         }
     })

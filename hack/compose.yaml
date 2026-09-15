@@ -172,12 +172,27 @@ services:
       retries: 30
   qdrant:
     image: qdrant/qdrant:v1.18.2
+    command: ["./qdrant", "--uri", "http://qdrant:6335"]
     environment:
+      QDRANT__CLUSTER__ENABLED: "true"
       QDRANT__SERVICE__API_KEY: fixture-admin-only
       QDRANT__SERVICE__READ_ONLY_API_KEY: fixture-reader-only
       QDRANT__TELEMETRY_DISABLED: "true"
     ports:
       - "127.0.0.1:16334:6334"
+      - "127.0.0.1:16333:6333"
+    tmpfs:
+      - /qdrant/storage
+  qdrant-peer:
+    image: qdrant/qdrant:v1.18.2
+    command: ["./qdrant", "--bootstrap", "http://qdrant:6335", "--uri", "http://qdrant-peer:6335"]
+    depends_on:
+      - qdrant
+    environment:
+      QDRANT__CLUSTER__ENABLED: "true"
+      QDRANT__SERVICE__API_KEY: fixture-admin-only
+      QDRANT__SERVICE__READ_ONLY_API_KEY: fixture-reader-only
+      QDRANT__TELEMETRY_DISABLED: "true"
     tmpfs:
       - /qdrant/storage
   qdrant-tls:
@@ -192,6 +207,7 @@ services:
       QDRANT__TELEMETRY_DISABLED: "true"
     ports:
       - "127.0.0.1:16335:6334"
+      - "127.0.0.1:16336:6333"
     tmpfs:
       - /qdrant/storage
       - /qdrant/tls

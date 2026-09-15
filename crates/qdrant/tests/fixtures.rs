@@ -15,6 +15,126 @@ use std::time::Duration;
 
 const QDRANT: &str = "http://127.0.0.1:16334";
 
+#[tokio::test]
+#[ignore = "requires the disposable two-node Qdrant fixture"]
+async fn topology_reports_native_peers_local_remote_shards_and_tls_rejection() {
+    let mut executor = onetui_qdrant::QdrantProvider
+        .configure(
+            &toml::from_str(&format!(
+                "url='{QDRANT}'\nrest_url='http://127.0.0.1:16333'\napi_key_env='KEY'"
+            ))
+            .unwrap(),
+            &|_| Some("fixture-reader-only".into()),
+        )
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let peers = fetch(&executor, Resource::new("qdrant.peers", vec![]), None)
+                .await
+                .unwrap();
+            if peers.rows.len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let cluster = fetch(&executor, Resource::new("qdrant.cluster", vec![]), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        cluster.rows[0].cells[0].as_ref().unwrap().text(),
+        Some("enabled")
+    );
+    let client = Qdrant::from_url(QDRANT)
+        .api_key("fixture-admin-only")
+        .skip_compatibility_check()
+        .build()
+        .unwrap();
+    let name = format!("topology_fixture_{}", std::process::id());
+    client
+        .create_collection(
+            CreateCollectionBuilder::new(&name)
+                .vectors_config(VectorParamsBuilder::new(2, Distance::Cosine))
+                .shard_number(2)
+                .replication_factor(2),
+        )
+        .await
+        .unwrap();
+    let result = async {
+        let shards = fetch(
+            &executor,
+            Resource::new("qdrant.shards", vec![name.clone()]),
+            None,
+        )
+        .await?;
+        assert_eq!(shards.rows.len(), 4);
+        assert!(
+            shards
+                .rows
+                .iter()
+                .any(|r| r.cells[2].as_ref().unwrap().text() == Some("local"))
+        );
+        assert!(
+            shards
+                .rows
+                .iter()
+                .any(|r| r.cells[2].as_ref().unwrap().text() == Some("remote"))
+        );
+        let details = fetch(
+            &executor,
+            Resource::new("qdrant.collection_cluster", vec![name.clone()]),
+            None,
+        )
+        .await?;
+        assert!(
+            details.rows[0].cells[0]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("shard_transfers")
+        );
+        fetch(
+            &executor,
+            Resource::new("qdrant.transfers", vec![name.clone()]),
+            None,
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    client.delete_collection(&name).await.unwrap();
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+    result.unwrap();
+
+    let mut tls = onetui_qdrant::QdrantProvider
+        .configure(
+            &toml::from_str(&format!(
+                "url='{QDRANT}'\nrest_url='https://localhost:16336'\napi_key_env='KEY'"
+            ))
+            .unwrap(),
+            &|_| Some("fixture-reader-only".into()),
+        )
+        .unwrap();
+    let error = fetch(&tls, Resource::new("qdrant.cluster", vec![]), None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("fixture-reader-only"));
+    assert!(
+        error.to_lowercase().contains("certificate") || error.to_lowercase().contains("cert"),
+        "{error}"
+    );
+    tls.shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+}
+
 async fn filtered_scroll(
     executor: &onetui_qdrant::QdrantExecutor,
     text: &str,
@@ -765,5 +885,59 @@ fn qdrant_https_verifies_trust_hostname_and_authentication() {
         assert!(!error.contains("fake-wrong-secret"));
         assert!(!error.contains("fixture-reader-only"));
         assert!(!error.contains('\u{1b}'));
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "topology_tls_child", "--nocapture"])
+            .env(
+                "ONETUI_TEST_QDRANT_REST_URL",
+                endpoint.replace("16335", "16336").replace("16334", "16333"),
+            )
+            .env(
+                "ONETUI_TEST_QDRANT_REST_OK",
+                if expected.is_none() { "yes" } else { "no" },
+            )
+            .env("SSL_CERT_FILE", trusted_ca)
+            .env("SSL_CERT_DIR", empty_cert_dir.path())
+            .env("ONETUI_QDRANT_API_KEY", key)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
+}
+
+#[tokio::test]
+async fn topology_tls_child() {
+    let Ok(url) = std::env::var("ONETUI_TEST_QDRANT_REST_URL") else {
+        return;
+    };
+    let key = std::env::var("ONETUI_QDRANT_API_KEY").unwrap();
+    let mut executor = onetui_qdrant::QdrantProvider
+        .configure(
+            &toml::from_str(&format!(
+                "url='{QDRANT}'\nrest_url='{url}'\napi_key_env='KEY'"
+            ))
+            .unwrap(),
+            &|_| Some(key.clone()),
+        )
+        .unwrap();
+    let result = fetch(&executor, Resource::new("qdrant.cluster", vec![]), None).await;
+    if std::env::var("ONETUI_TEST_QDRANT_REST_OK").unwrap() == "yes" {
+        let page = result.unwrap();
+        assert_eq!(
+            page.rows[0].cells[0].as_ref().unwrap().text(),
+            Some("disabled")
+        );
+    } else {
+        let error = result.unwrap_err().to_string();
+        assert!(!error.contains(&key));
+        assert!(!error.contains('\x1b'));
+    }
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
 }

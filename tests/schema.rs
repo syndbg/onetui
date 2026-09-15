@@ -102,7 +102,7 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
     );
     assert_eq!(
         schema["datasources"][1]["resources"][0]["id"],
-        "qdrant.collections"
+        "qdrant.resources"
     );
     assert_eq!(schema["shell"]["keybindings_configurable"], false);
     assert_eq!(schema["browsing_limits"]["page_bookmarks_per_view"], 4096);
@@ -218,14 +218,14 @@ fn qdrant_catalog_filter() {
     assert_eq!(schema["datasources"][0]["id"], "qdrant");
     assert_eq!(
         schema["datasources"][0]["entry_resource"],
-        "qdrant.collections"
+        "qdrant.resources"
     );
     assert_eq!(
         schema["datasources"][0]["resources"]
             .as_array()
             .unwrap()
             .len(),
-        8
+        14
     );
     assert_eq!(schema["datasources"][0]["limits"]["rpc_bytes"], 1048576);
     assert!(schema["datasources"][0]["session"].is_string());

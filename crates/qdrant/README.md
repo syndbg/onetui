@@ -1,10 +1,10 @@
 # onetui-qdrant
 
-Qdrant headless checks, collection/point browsing, separate payload/vector reads, verified gRPC/TLS, bounded response decoding, descriptors and Qdrant-only tests.
+Qdrant collection/point browsing, lazy payload/vector reads and read-only cluster topology, with package-owned tests.
 
 `QdrantProvider` validates its own options and creates a lazy executor. Generated, size-capped `CollectionsClient` and `PointsClient` instances share its channel; cancellation/failure discards it. Shutdown releases it. HTTP/2 keepalive has no configured interval, and idle pings are disabled; no periodic metadata checks or heartbeat setting. Local protocol tests cover reuse, cancellation, no idle queries and channel release separately from PostgreSQL.
 
-`browse.rs` owns all seven resources, scoped continuations and bounded display formatting. The official client's `serde` feature converts payloads to JSON; other default features remain disabled. Collection and point menus use ordinary row targets, so the shared shell needs no backend branches or new keys.
+`browse.rs` and `topology.rs` own resources, scoped continuations and bounded display formatting. Topology uses a lazy async Reqwest client with verified TLS and the same API key, through optional `rest_url`. Redirects, retries and proxy discovery are disabled. The client is released on failure, cancellation or shutdown. Menus use ordinary row targets, so the shared shell needs no backend branches or new keys.
 
 ## Validation
 
@@ -27,4 +27,4 @@ Finish with `make dev-down` only when ready to discard the disposable data. CLI 
 
 The production fixture test also drives the built CLI through a Qdrant-only PTY helper, including paging, cached detail and quit. Its child receives the existing `ONETUI_QDRANT_API_KEY` reference with a fake fixture value. PostgreSQL tests are not imported or parameterized here.
 
-See [configuration](../../README.md#configuration) for settings, defaults, accepted values and examples, and [Qdrant usage](../../docs/qdrant.md) for navigation and fixed limits. No new application settings are required.
+Use `onetui schema --datasource qdrant` for settings, defaults and resources. See [Qdrant usage](../../docs/qdrant.md) for navigation and limits.

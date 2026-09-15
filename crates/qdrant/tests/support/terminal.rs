@@ -166,7 +166,7 @@ impl Pty {
 
 pub fn journey(collection: &str) {
     let mut config = tempfile::NamedTempFile::new().unwrap();
-    write!(config, "[connections.qd]\nkind='qdrant'\nurl='http://127.0.0.1:16334'\napi_key_env='ONETUI_QDRANT_API_KEY'").unwrap();
+    write!(config, "[connections.qd]\nkind='qdrant'\nurl='http://127.0.0.1:16334'\nrest_url='http://127.0.0.1:16333'\napi_key_env='ONETUI_QDRANT_API_KEY'").unwrap();
     let mut command = super::binary();
     command
         .arg("--config")
@@ -174,6 +174,16 @@ pub fn journey(collection: &str) {
         .args(["--connection", "qd"])
         .env("ONETUI_QDRANT_API_KEY", "fixture-reader-only");
     let (mut pty, slave) = Pty::spawn(command);
+    pty.wait(&["qdrant.resources", "collections"]);
+    pty.open_filtered("peers");
+    pty.wait(&["qdrant.peers", "2items", "peer_id", "uri"]);
+    pty.send(b"\r");
+    pty.wait(&["Rowdata|5fields", "peer_id"]);
+    pty.send(b":back\r");
+    pty.wait(&["qdrant.peers", "2items"]);
+    pty.send(b":back\r");
+    pty.wait(&["qdrant.resources"]);
+    pty.open_filtered("collections");
     pty.wait(&["qdrant.collections", collection]);
     assert!(pty.before.local_flags.contains(LocalFlags::ICANON));
     assert!(
@@ -217,6 +227,10 @@ pub fn journey(collection: &str) {
     pty.wait(&["qdrant.collection", "metadata"]);
     pty.send(b"j\r");
     pty.wait(&["qdrant.metadata", "points_count(approximate)"]);
+    pty.send(b":back\r");
+    pty.wait(&["qdrant.collection"]);
+    pty.open_filtered("shards");
+    pty.wait(&["qdrant.shards", "shard_id", "peer_id"]);
     pty.send(b"q");
     let until = Instant::now() + Duration::from_secs(3);
     loop {

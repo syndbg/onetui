@@ -9,16 +9,22 @@ use qdrant_client::qdrant::{
 use serde::{Deserialize, Serialize};
 
 pub static RESOURCES: &[&ResourceDescriptor] = &[
+    &crate::topology::ROOT,
+    &crate::topology::CLUSTER,
+    &crate::topology::PEERS,
+    &crate::topology::SHARDS,
+    &crate::topology::TRANSFERS,
+    &crate::topology::COLLECTION_CLUSTER,
     &ResourceDescriptor {
         id: "qdrant.collections",
-        description: "Collection names; Enter opens points/metadata choices",
+        description: "Collection names; Enter opens browsing and topology choices",
         columns: &["name"],
         paging: true,
         actions: &[],
     },
     &ResourceDescriptor {
         id: "qdrant.collection",
-        description: "Choose points or collection metadata; no read until opened",
+        description: "Choose points, metadata or topology; no read until opened",
         columns: &["resource", "description"],
         paging: true,
         actions: &[],
@@ -116,6 +122,7 @@ fn valid_uuid(s: &str) -> bool {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Offset {
     Collections(usize),
+    Topology(usize),
     Point(Id),
 }
 
@@ -129,7 +136,10 @@ struct Position {
 
 pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Offset>> {
     let valid = match (request.resource.id, request.resource.path.as_slice()) {
-        ("qdrant.collections", []) => true,
+        ("qdrant.resources" | "qdrant.collections" | "qdrant.cluster" | "qdrant.peers", []) => true,
+        ("qdrant.shards" | "qdrant.transfers" | "qdrant.collection_cluster", [name]) => {
+            !name.is_empty() && !matches!(name.as_str(), "." | "..")
+        }
         ("qdrant.collection" | "qdrant.metadata" | "qdrant.points" | "qdrant.query", [name]) => {
             !name.is_empty()
         }
@@ -160,6 +170,10 @@ pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Of
             (&position.offset, request.resource.id),
             (Offset::Collections(_), "qdrant.collections")
                 | (Offset::Point(_), "qdrant.points" | "qdrant.query")
+                | (
+                    Offset::Topology(_),
+                    "qdrant.peers" | "qdrant.shards" | "qdrant.transfers"
+                )
         ),
         "Invalid Qdrant continuation kind"
     );
@@ -169,7 +183,7 @@ pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Of
     Ok(Some(position.offset))
 }
 
-fn continuation(executor: u64, resource: &Resource, offset: Offset) -> Result<String> {
+pub(crate) fn continuation(executor: u64, resource: &Resource, offset: Offset) -> Result<String> {
     Ok(serde_json::to_string(&Position {
         executor,
         resource: resource.id.into(),
@@ -185,7 +199,7 @@ fn row(cells: impl IntoIterator<Item = String>, target: Option<Resource>) -> Row
     }
 }
 
-fn page(resource: &Resource, rows: Vec<Row>, notice: &str) -> Page {
+pub(crate) fn page(resource: &Resource, rows: Vec<Row>, notice: &str) -> Page {
     let descriptor = RESOURCES
         .iter()
         .find(|d| d.id == resource.id)
@@ -218,8 +232,25 @@ pub(crate) fn bounded(page: Page) -> Result<Page> {
 }
 
 pub(crate) fn menu(resource: &Resource) -> Option<Page> {
-    let choices = match resource.id {
-        "qdrant.collection" => [
+    let choices: &[(&str, &'static str, &str)] = match resource.id {
+        "qdrant.resources" => &[
+            (
+                "collections",
+                "qdrant.collections",
+                "Browse collections through gRPC",
+            ),
+            (
+                "cluster",
+                "qdrant.cluster",
+                "Cluster status and consensus; requires rest_url",
+            ),
+            (
+                "peers",
+                "qdrant.peers",
+                "Peer IDs and addresses; requires rest_url",
+            ),
+        ],
+        "qdrant.collection" => &[
             (
                 "points",
                 "qdrant.points",
@@ -230,8 +261,23 @@ pub(crate) fn menu(resource: &Resource) -> Option<Page> {
                 "qdrant.metadata",
                 "Read collection status and approximate counts",
             ),
+            (
+                "shards",
+                "qdrant.shards",
+                "Local/remote shard placement; requires rest_url",
+            ),
+            (
+                "transfers",
+                "qdrant.transfers",
+                "Active shard transfers; requires rest_url",
+            ),
+            (
+                "cluster details",
+                "qdrant.collection_cluster",
+                "Full collection topology, including resharding; requires rest_url",
+            ),
         ],
-        "qdrant.point" => [
+        "qdrant.point" => &[
             ("payload", "qdrant.payload", "Read payload only"),
             ("vectors", "qdrant.vectors", "Read vectors only"),
         ],
@@ -240,8 +286,8 @@ pub(crate) fn menu(resource: &Resource) -> Option<Page> {
     Some(page(
         resource,
         choices
-            .into_iter()
-            .map(|(label, target, description)| {
+            .iter()
+            .map(|&(label, target, description)| {
                 row(
                     [label.into(), description.into()],
                     Some(Resource::new(target, resource.path.clone())),

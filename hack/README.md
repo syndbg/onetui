@@ -20,12 +20,14 @@ For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This de
 | --- | --- |
 | `local_pg` | PostgreSQL: `127.0.0.1:15432` |
 | `local_dynamodb` | DynamoDB Local: `http://127.0.0.1:18000` |
-| `local_qdrant` | gRPC: `127.0.0.1:16334`; TLS fixture: `16335` |
+| `local_qdrant` | gRPC: `127.0.0.1:16334`; REST: `16333`; TLS fixture gRPC/REST: `16335`/`16336` |
 | `local_kafka` | Kafka: `127.0.0.1:19092`; TLS: `19093`; SASL/TLS: `19094`; mTLS: `19095`; OAuth: `19096`; GSSAPI: `19097`; KDC: `18888` (TCP/UDP) |
 | `local_redpanda` | Kafka: `127.0.0.1:29092`; Schema Registry: `http://127.0.0.1:18081` |
 | `local_nats` | NATS: `127.0.0.1:14222`; TLS: `14223`; mTLS/NKEY/domain: `14224`; JWT Core: `14225` |
 
 TLS certificates expire after two days; recreate disposable fixtures when expired. The setup does not modify the host trust store. Remote Docker contexts are refused.
+
+Qdrant runs two peers. Open `local_qdrant` → peers for membership, or collections → a collection → shards for placement. Peer addresses stay inside Docker; OneTUI does not connect to them.
 
 OAuth tests start their own token endpoint and use disposable RSA keys. Kafka's [JWT validator](https://kafka.apache.org/42/javadoc/org/apache/kafka/common/security/oauthbearer/OAuthBearerValidatorCallbackHandler.html) checks signatures, issuer and audience; no external identity provider is needed.
 

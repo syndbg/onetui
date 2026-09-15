@@ -24,6 +24,7 @@ secret_access_key_env = "ONETUI_DYNAMODB_SECRET_KEY"
 
 [connections.local_qdrant]
 kind = "qdrant"
+rest_url = "http://127.0.0.1:16333"
 url = "http://127.0.0.1:16334"
 api_key_env = "ONETUI_QDRANT_API_KEY"
 

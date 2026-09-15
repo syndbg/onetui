@@ -271,7 +271,7 @@ mod tests {
         provider.validate_config(&options).unwrap();
         assert_eq!(
             provider.descriptor().entry_resource,
-            Some("qdrant.collections")
+            Some("qdrant.resources")
         );
         let mut executor = provider
             .configure(&options, &|_| panic!("no configured secret"))

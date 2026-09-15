@@ -930,6 +930,8 @@ mod terminal {
         pty.send(b"c");
         pty.wait(&["connections", "qd"]);
         pty.open_filtered("qd");
+        pty.wait(&["qdrant.resources", "collections"]);
+        pty.send(b"\r");
         pty.wait(&["Connectionqdequery", "read-only", "qdrant.collections", "Connected"]);
         observer.wait_gone(old_pid).await;
         observer.wait_count(0).await;
