@@ -8,7 +8,7 @@ Install rustup, Make, Bash and Docker Compose. Rust is pinned in [rust-toolchain
 
 On macOS, install Xcode Command Line Tools and `brew install cmake`; SASL/Kerberos comes from the system. On Debian/Ubuntu, install `build-essential cmake perl pkg-config libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit`.
 
-Use `make dev-up`, then `make run`. See [local fixtures](hack/README.md) and `make help`. `make dev-down` deletes the disposable data.
+Use `make run` to open the app. For demos, use `make dev-up`, then `make dev-run`. See [local fixtures](hack/README.md) and `make help`. `make dev-down` deletes the disposable data.
 
 ## Changes and pull requests
 

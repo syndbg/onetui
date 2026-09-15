@@ -63,7 +63,7 @@ Try the sample databases from the repository with Docker Compose running:
 
 ```sh
 make dev-up
-make run
+make dev-run
 ```
 
 Choose a connection and press Enter. The demos include wide tables, typed and binary values, vector collections, and Avro/Protobuf messages with a local Schema Registry.

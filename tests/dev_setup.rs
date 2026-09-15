@@ -172,13 +172,62 @@ fn shared_traffic_starts_all_and_reaps_them_on_interrupt_or_failure() {
 }
 
 #[test]
-fn local_run_does_not_select_a_connection() {
+fn normal_run_needs_no_demo_files_or_config_override() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/Makefile"),
+        temp.path().join("Makefile"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(temp.path().join("target/debug")).unwrap();
+    for (name, script) in [
+        (
+            "cargo",
+            "#!/bin/bash\n[[ \"$*\" == 'build --workspace --locked' ]]\n",
+        ),
+        (
+            "target/debug/onetui",
+            "#!/bin/bash\n[[ $# == 0 ]] || exit 1\nprintf 'App started\\n'\n",
+        ),
+    ] {
+        let path = temp.path().join(name);
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let output = Command::new("make")
+        .arg("run")
+        .current_dir(temp.path())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                temp.path().display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("App started\n"));
+}
+
+#[test]
+fn demo_run_uses_prepared_config_without_running_seeders() {
     let temp = tempfile::tempdir().unwrap();
     let cargo = temp.path().join("cargo");
-    std::fs::write(&cargo, "#!/bin/bash\nexit 0\n").unwrap();
+    std::fs::write(&cargo, "#!/bin/bash\nexit 99\n").unwrap();
     std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::create_dir_all(temp.path().join("hack")).unwrap();
     std::fs::create_dir_all(temp.path().join("target/debug")).unwrap();
+    std::fs::write(
+        temp.path().join("target/demo-onetui.toml"),
+        "[connections]\n",
+    )
+    .unwrap();
     std::fs::copy(
         concat!(env!("CARGO_MANIFEST_DIR"), "/hack/dev.sh"),
         temp.path().join("hack/dev.sh"),
@@ -209,6 +258,15 @@ fn local_run_does_not_select_a_connection() {
         String::from_utf8(output.stdout).unwrap(),
         "--config\ntarget/demo-onetui.toml\n"
     );
+    std::fs::remove_file(temp.path().join("target/demo-onetui.toml")).unwrap();
+    let output = Command::new("bash")
+        .args(["hack/dev.sh", "run"])
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("make dev-up"));
+    assert!(output.stdout.is_empty());
 }
 
 #[test]

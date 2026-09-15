@@ -106,7 +106,7 @@ Group/member arrays are limited to 4 MiB of native structures during conversion,
 
 ### Configuration and group offsets
 
-For local topic settings, run `make run` and choose `local_kafka` → Topics → `demo_events` → Configuration. The `kafka.topic_config` and `kafka.broker_config` views show each setting's name, value, source and `is_default`, `is_read_only`, `is_sensitive` flags. Open `synonyms` to see fallback names, values and sources in broker precedence order; an empty list means none returned. Sensitive values are null, including synonyms of a sensitive setting. Null also represents a value the broker did not return; an empty string remains distinct. Secret retrieval is not supported.
+For local topic settings, run `make dev-run` and choose `local_kafka` → Topics → `demo_events` → Configuration. The `kafka.topic_config` and `kafka.broker_config` views show each setting's name, value, source and `is_default`, `is_read_only`, `is_sensitive` flags. Open `synonyms` to see fallback names, values and sources in broker precedence order; an empty list means none returned. Sensitive values are null, including synonyms of a sensitive setting. Null also represents a value the broker did not return; an empty string remains distinct. Secret retrieval is not supported.
 
 Configuration reads require `DescribeConfigs` on the selected topic, or on the cluster for broker configuration. These permissions are separate from record-reading permissions. The disposable `fixture-reader` account deliberately lacks them so tests can verify native authorization errors; the local plaintext connection can inspect the fixtures.
 
@@ -124,7 +124,7 @@ Offsets require group `Describe`; watermarks also require topic `Describe`. An a
 
 ### Browse or follow a whole topic
 
-Run `make run`, then choose `local_kafka` → Topics → `demo_events` → `kafka.records`. This reads all three fixture partitions. Use `n/p` to page forward/backward, Enter to inspect a record, or `f` to follow new records across the topic. For the traffic producer, choose the same entry under `demo_live`.
+Run `make dev-run`, then choose `local_kafka` → Topics → `demo_events` → `kafka.records`. This reads all three fixture partitions. Use `n/p` to page forward/backward, Enter to inspect a record, or `f` to follow new records across the topic. For the traffic producer, choose the same entry under `demo_live`.
 
 The `kafka.records` resource accepts `[topic]` for all partitions or `[topic, partition]` for a single partition. Topic-wide rows add a leading `partition` column; single-partition columns are unchanged. Offset/timestamp replay remains single-partition only: open Partitions and select one before using `e`.
 
@@ -287,7 +287,7 @@ Each response is limited to 256 KiB plus 16 KiB of headers. A writer bundle is l
 
 `FIELD_schema` identifies the registry endpoint and schema ID. Lookup failures retain that identity when the prefix was valid and show the returned HTTP status/body or native error in `FIELD_decode_error`, subject to credential redaction and the existing 512-byte display limit. Malformed prefixes retain raw bytes without a schema identity. Errors on one record do not hide other records; an overall request deadline or cancellation still retains the previous page. Null fields trigger no lookup. Empty bytes are a truncated Confluent prefix.
 
-Run `make dev-up`, then open `local_redpanda` in `make run`. The [Redpanda demo](../hack/README.md#redpanda-and-schema-registry) has four Avro/Protobuf registry and catalog topics, 1,000 messages each, with live traffic through `make dev-traffic`. Local validation is not certification against a hosted Confluent deployment.
+Run `make dev-up`, then open `local_redpanda` in `make dev-run`. The [Redpanda demo](../hack/README.md#redpanda-and-schema-registry) has four Avro/Protobuf registry and catalog topics, 1,000 messages each, with live traffic through `make dev-traffic`. Local validation is not certification against a hosted Confluent deployment.
 
 ### Record values and bounds
 

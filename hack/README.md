@@ -5,16 +5,16 @@ Use [Makefile](../Makefile) tasks; `make help` lists them. [Prerequisites](../CO
 ```sh
 make dev-up
 make check-local
-make run
+make dev-run
 ```
 
 `make dev-down` deletes fixture data. These are disposable, loopback-only services with fake credentials and temporary storage, not production templates. Do not run setup/tests concurrently; ports and the Compose project are fixed.
 
-For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This deletes all fixture data, recreates services/certificates and reseeds demos. Reopen `make run` afterward.
+For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This deletes all fixture data, recreates services/certificates and reseeds demos. Reopen `make dev-run` afterward.
 
 ## Fixture security and configuration
 
-`make` tasks generate `target/demo-onetui.toml` from [connections.toml](connections.toml), with absolute catalog paths under `target/demo-schemas` for Redpanda and `target/nats-schemas` for NATS. `make run` loads it and supplies fixture credentials. For service settings, see [compose.yaml](compose.yaml).
+`make dev-up` and `make dev-seed` generate `target/demo-onetui.toml` from [connections.toml](connections.toml), with absolute catalog paths under `target/demo-schemas` for Redpanda and `target/nats-schemas` for NATS. `make dev-run` loads it and supplies fixture credentials. `make run` uses your normal config without preparing or loading demos. For service settings, see [compose.yaml](compose.yaml).
 
 | Alias | Endpoint |
 | --- | --- |
@@ -44,7 +44,7 @@ Choose `local_redpanda` → Topics → a topic below → Records. Each starts wi
 
 Enter opens a record; select `value_decoded` for readable JSON. `value` retains wire bytes. `value_schema` identifies the source; `value_decode_error` should be NULL. Protobuf samples include nested records, Unicode, arrays, bytes, booleans, numbers and optional fields. Sources: [event.proto](fixtures/schemas/event.proto), [customer.proto](fixtures/schemas/customer.proto).
 
-For an existing setup, use `make dev-seed`, then restart `make run`. Seeding preserves existing messages, including traffic. Apache Kafka remains alongside Redpanda for broker-specific security and transaction tests.
+For an existing setup, use `make dev-seed`, then restart `make dev-run`. Seeding preserves existing messages, including traffic. Apache Kafka remains alongside Redpanda for broker-specific security and transaction tests.
 
 ## Shared traffic
 

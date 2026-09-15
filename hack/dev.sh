@@ -109,14 +109,20 @@ case "${1:-}" in
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
-        cargo run -p onetui-kafka --example seed_redpanda --locked -- --prepare
-        cargo run -p onetui-nats --example seed_nats --locked -- --prepare
+        if [[ "$1" != run ]]; then
+            cargo run -p onetui-kafka --example seed_redpanda --locked -- --prepare
+            cargo run -p onetui-nats --example seed_nats --locked -- --prepare
+        fi
         ;;
     down|logs) ;;
     *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|traffic|traffic-kafka|traffic-nats|down|logs}\n' >&2; exit 2 ;;
 esac
 
 if [[ "$1" == run ]]; then
+    if [[ ! -f target/demo-onetui.toml ]]; then
+        printf 'Prepare demos with make dev-up (or make dev-seed for running fixtures).\n' >&2
+        exit 1
+    fi
     exec ./target/debug/onetui --config target/demo-onetui.toml
 fi
 

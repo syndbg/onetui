@@ -78,4 +78,4 @@ PartiQL uses `ExecuteStatement`, `BatchExecuteStatement` and `ExecuteTransaction
 
 A `SELECT` without a key condition can scan the table. If the endpoint ignores `Limit`, OneTUI rejects excess rows instead of truncating them; narrow the predicate. A continuation without a usable `NextToken` also fails visibly. No writes or administration.
 
-For local samples, use `make dev-up`, then `make run` → `local_dynamodb`. The fixture uses fake credentials and keeps its data in memory. `make test-integration` includes package-owned DynamoDB Local tests; it refuses to reset existing fixtures.
+For local samples, use `make dev-up`, then `make dev-run` → `local_dynamodb`. The fixture uses fake credentials and keeps its data in memory. `make test-integration` includes package-owned DynamoDB Local tests; it refuses to reset existing fixtures.

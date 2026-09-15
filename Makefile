@@ -3,12 +3,12 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint theme-gallery dev-up dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint theme-gallery dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package
 
 help:
 	@printf '%s\n' \
 	  'build / build-release  Build the debug / release binary (locked dependencies)' \
-	  'run                    Build and open the local connection picker (start with dev-up)' \
+	  'run                    Build and open the app with your normal config (no fixtures needed)' \
 	  'fmt                    Format Rust sources' \
 	  'lint                   Check formatting, Clippy and shell syntax' \
 	  'test                   Run tests without Docker' \
@@ -16,6 +16,7 @@ help:
 	  'workflow-lint          Validate GitHub workflows (requires Go; downloads pinned actionlint)' \
 	  'theme-gallery          Regenerate all theme previews from the UI (no database needed)' \
 	  'dev-up                 Build and start ready-to-use disposable local databases' \
+	  'dev-run                Build and open the prepared demos (start with dev-up)' \
 	  'dev-reset              Delete fixture data, recreate services and reseed demos' \
 	  'dev-seed               Add demo data to running fixtures without resetting existing data' \
 	  'dev-traffic            Produce Kafka, Redpanda and NATS traffic every 15 seconds; Ctrl-C stops all' \
@@ -35,7 +36,7 @@ build-release:
 	cargo build --release --locked
 
 run: build
-	bash hack/dev.sh run
+	./target/debug/onetui
 
 fmt:
 	cargo fmt --all
@@ -59,6 +60,9 @@ theme-gallery:
 
 dev-up: build
 	bash hack/dev.sh up
+
+dev-run: build
+	bash hack/dev.sh run
 
 dev-reset: build
 	bash hack/dev.sh down

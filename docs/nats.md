@@ -171,7 +171,7 @@ Catalogs are Unix-only, reject symlinks and duplicate stems, and load at most 25
 
 ```sh
 make dev-up
-make run                 # local_nats → Streams → DEMO_EVENTS or DEMO_LIVE
+make dev-run                 # local_nats → Streams → DEMO_EVENTS or DEMO_LIVE
 make dev-traffic         # separate terminal; Kafka, Redpanda and NATS, every 15 seconds
 ```
 
@@ -179,4 +179,4 @@ Open `DEMO_LIVE` and press `f` to follow future arrivals. See [fixture setup](..
 
 `KV → DEMO_SETTINGS` includes 125 service keys, retained history, binary/empty values and delete/purge markers. `Objects → DEMO_FILES` has 110 JSON objects, a multi-page binary object, empty and deleted objects. `Consumers → DEMO_EVENTS → demo_reader` shows an unconsumed durable's pending state.
 
-`DEMO_AVRO` and `DEMO_PROTOBUF` each contain 250 schema-bound messages with Unicode and binary fields. `make run` prepares their local schema files and config paths.
+`DEMO_AVRO` and `DEMO_PROTOBUF` each contain 250 schema-bound messages with Unicode and binary fields. `make dev-up` prepares their local schema files and config paths.
