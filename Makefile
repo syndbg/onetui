@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint theme-gallery dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package
+.PHONY: help build build-release run fmt lint test verify workflow-lint theme-gallery dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package package-deb package-rpm
 
 help:
 	@printf '%s\n' \
@@ -27,7 +27,9 @@ help:
 	  'test-integration       Start fresh fixtures, test, then clean up (refuses existing fixtures)' \
 	  'test-buf-live          Verify public Buf label/commit discovery and decoding (Internet)' \
 	  'release-check TAG=v...  Verify the release tag matches Cargo version' \
-	  'package TAG=v...        Build a native archive and SHA-256 file under dist/'
+	  'package TAG=v...        Build a native archive and SHA-256 file under dist/' \
+	  'package-deb TAG=v...    Package on Debian/Ubuntu (requires Go; run package first)' \
+	  'package-rpm TAG=v...    Package on Fedora (requires Go; run package first)'
 
 build:
 	cargo build --workspace --locked
@@ -44,7 +46,8 @@ fmt:
 lint:
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets --locked -- -D warnings
-	for script in hack/dev.sh hack/release.sh; do bash -n "$$script" || exit; done
+	for script in hack/dev.sh scripts/release.sh; do bash -n "$$script" || exit; done
+	sh -n install.sh
 	for script in hack/fixtures/*.sh; do sh -n "$$script" || exit; done
 
 test:
@@ -96,7 +99,13 @@ test-buf-live:
 	cargo test -p onetui-kafka --lib hosted_buf_label_and_pinned_commit_decode_the_same_message --locked -- --ignored --nocapture
 
 release-check:
-	bash hack/release.sh check "$$TAG"
+	bash scripts/release.sh check "$$TAG"
 
 package:
-	bash hack/release.sh package "$$TAG"
+	bash scripts/release.sh package "$$TAG"
+
+package-deb:
+	bash scripts/release.sh deb "$$TAG"
+
+package-rpm:
+	bash scripts/release.sh rpm "$$TAG"

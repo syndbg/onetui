@@ -11,6 +11,7 @@
 
 ## Development
 
+- Keep `hack/` for local setup and fixtures. Release tooling belongs in `scripts/` or the repository root.
 - Read the relevant source and ADRs. Stay in scope; reuse existing code and dependencies.
 - Keep implementation and tests in their owning package. No shared loops over datasource test suites; small duplicated fixture helpers are fine.
 - Add regression tests for bugs. Preserve validation, security and error handling; never weaken tests to pass.

@@ -35,6 +35,20 @@ The project is working toward **v0.1.0**. This initial version is **read-only**.
 
 ## Install
 
+### GitHub Releases
+
+Download a Linux x86_64, macOS Apple Silicon or macOS Intel archive from [Releases](https://github.com/syndbg/onetui/releases). Linux also has `.deb` and `.rpm` packages. Each download has a SHA-256 file. Linux archives and Debian packages target Ubuntu 24.04 or newer. RPMs build separately on Fedora 43. macOS binaries require macOS 15 or newer and are not Developer ID signed or notarized.
+
+For a user-local installation, download and inspect the release's `install.sh`, then run:
+
+```sh
+sh install.sh --version v0.1.0
+```
+
+The installer selects your platform and verifies the archive checksum and binary version before replacing `~/.local/bin/onetui`. Add that directory to `PATH`. Omit `--version` for the latest stable release, or use `--prefix /absolute/path` to change the installation directory. Run it again to upgrade. It never changes your configuration or invokes sudo. Linux archive installs need the runtime libraries listed in [Contributing](CONTRIBUTING.md#local-packaging-and-verification).
+
+For system installation, use `sudo apt install ./onetui-v0.1.0-x86_64.deb` or `sudo dnf install ./onetui-v0.1.0-x86_64.rpm`. Use the same package manager for upgrades. OneTUI does not check for updates or update itself.
+
 ### Homebrew
 
 Install the development version from [syndbg/tap](https://github.com/syndbg/homebrew-tap):
@@ -212,6 +226,8 @@ Providers live in separate crates and use [static enum dispatch](docs/adr/0002-u
 - [Architecture decisions](docs/adr/)
 
 ## Contributing
+
+Planned work lives in [GitHub issues on the roadmap board](https://github.com/users/syndbg/projects/3/views/1).
 
 Bug reports and focused pull requests are welcome. For a bug, include the OneTUI version, datasource, reproduction steps and sanitized diagnostics in a [GitHub issue](https://github.com/syndbg/onetui/issues).
 

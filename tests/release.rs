@@ -41,7 +41,7 @@ fn native_kafka_notices_match_locked_dependencies() {
         );
         assert!(notices.contains(attribution), "Missing {name} attribution");
     }
-    assert!(include_str!("../hack/release.sh").contains("LICENSE THIRD_PARTY_NOTICES.md"));
+    assert!(include_str!("../scripts/release.sh").contains("LICENSE THIRD_PARTY_NOTICES.md"));
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn release_tag_must_match_the_cargo_version() {
         "v0.1.0\n",
     ] {
         let output = Command::new("bash")
-            .args(["hack/release.sh", "check", tag])
+            .args(["scripts/release.sh", "check", tag])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
             .unwrap();
