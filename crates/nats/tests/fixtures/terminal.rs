@@ -181,6 +181,39 @@ impl Pty {
 }
 
 #[test]
+#[ignore = "disposable NATS system-account fixture; actual CLI discovery and details"]
+fn actual_cli_system_discovery_and_details() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut config = tempfile::NamedTempFile::new().unwrap();
+    write!(config, "[connections.system]\nkind='nats'\nservers=['nats://127.0.0.1:14226']\ntls=false\njetstream=false\nsystem_discovery=true\nusername_env='NATS_USER'\npassword_env='NATS_PASS'").unwrap();
+    let binary = std::env::var_os("ONETUI_TEST_BIN")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let mut command = Command::new("sh");
+    command.args(["-c", "\"$1\" --config \"$2\"; status=$?; printf '\\nONETUI_DONE\\n'; read -r finish; exit \"$status\"", "discovery-pty"])
+        .arg(binary).arg(config.path()).env("NATS_USER", "fixture-reader").env("NATS_PASS", "fixture-reader-only");
+    let (mut pty, slave) = Pty::spawn(command);
+    pty.wait(&["connections", "system"]);
+    pty.open_filtered("system");
+    pty.wait(&["nats.resources", "Servers"]);
+    pty.open_filtered("Servers");
+    pty.wait(&["nats.servers", "2shown/2loaded", "system-a", "system-b"]);
+    pty.send(b"\r");
+    pty.wait(&["Rowdata", "8fields", "details"]);
+    pty.send(b"jjjjjjj\r");
+    pty.wait(&["statsz"]);
+    pty.send(b"q");
+    pty.wait_token("ONETUI_DONE", Duration::from_secs(4));
+    assert!(
+        tcgetattr(&slave)
+            .unwrap()
+            .local_flags
+            .contains(LocalFlags::ICANON)
+    );
+    pty.send(b"\n");
+}
+
+#[test]
 #[ignore = "seeded disposable NATS; actual CLI paging, byte inspection, live producer and terminal restoration"]
 fn actual_cli_nats_browsing_and_following() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

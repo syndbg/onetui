@@ -22,15 +22,12 @@ fn help_version_and_nonterminal_error_work_without_configuration() {
         if arg == "--version" {
             assert_eq!(text.trim(), concat!("onetui ", env!("CARGO_PKG_VERSION")));
         } else {
-            assert!(text.contains("Qdrant collections and points"), "{text}");
+            assert!(text.contains("Read-only terminal browser"), "{text}");
             assert!(
-                text.contains("Kafka topics, partitions and read-committed records"),
+                text.contains("schema to list supported datasources, settings and actions"),
                 "{text}"
             );
-            assert!(
-                text.contains("payloads and vectors loaded on demand"),
-                "{text}"
-            );
+            assert!(text.contains("filter or sort the displayed page"), "{text}");
             assert!(!text.contains("not implemented"), "{text}");
         }
     }

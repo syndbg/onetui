@@ -84,7 +84,7 @@ async fn keyboard_sql_editor_results_and_browsing_return() {
     assert!(app.row_detail);
     key(&mut app, KeyCode::Esc);
     key(&mut app, KeyCode::Esc);
-    assert_eq!(app.view.resource.id, "postgres.schemas");
+    assert_eq!(app.view.resource.id, "postgres.resources");
     executor
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))
         .await
@@ -104,6 +104,8 @@ async fn keyboard_bookmarks_return_through_evicted_active_customer_pages() {
     let config = Config::load(file.path(), catalog).unwrap();
     let mut executor = config.configure("pg", catalog, &|_| Some("host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable".into())).unwrap();
     let mut app = App::new(config, Some("pg"));
+    complete(&mut app, &executor).await;
+    key(&mut app, KeyCode::Enter);
     complete(&mut app, &executor).await;
     select(&mut app, "demo");
     key(&mut app, KeyCode::Enter);
@@ -167,6 +169,8 @@ async fn keyboard_to_postgres_rows_detail_paging_metadata_and_failure() {
     let config = Config::load(file.path(), catalog).unwrap();
     let mut executor = config.configure("pg", catalog, &|_| Some("host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable".into())).unwrap();
     let mut app = App::new(config, None);
+    key(&mut app, KeyCode::Enter);
+    complete(&mut app, &executor).await;
     key(&mut app, KeyCode::Enter);
     complete(&mut app, &executor).await;
     select(&mut app, "public");
@@ -348,7 +352,11 @@ mod terminal {
             request: PageRequest,
             context: RequestContext,
         ) -> anyhow::Result<onetui_core::Page> {
+            let offline_menu = request.resource.id == "postgres.resources";
             let page = self.inner.fetch_page(request, context).await?;
+            if offline_menu {
+                return Ok(page);
+            }
             match self.fault {
                 Fault::Panic => {
                     let mut trigger = tokio::signal::unix::signal(
@@ -427,6 +435,9 @@ mod terminal {
                 .env("ONETUI_LIFECYCLE_TEST_MODE", mode)
                 .env("ONETUI_LIFECYCLE_TEST_DSN", PG_READER);
             let (mut pty, slave) = Pty::spawn(command);
+            pty.wait_token("postgres.resources", Duration::from_secs(5));
+            observer.wait_count(0).await;
+            pty.send(b"\r");
             pty.wait_token("ONETUI_LIVE_CLIENT_READY", Duration::from_secs(5));
             assert!(
                 !tcgetattr(&slave)
@@ -687,6 +698,8 @@ mod terminal {
             .env("ONETUI_LIVE_PTY_DSN", PG_READER);
         let (mut pty, slave) = Pty::spawn(command);
         pty.wait_token("\x1b[>1u", Duration::from_secs(3));
+        pty.wait(&["postgres.resources", "Schemas"]);
+        pty.open_filtered("Schemas");
         pty.wait(&["postgres.schemas", "public"]);
         assert!(
             !tcgetattr(&slave)
@@ -820,6 +833,8 @@ mod terminal {
         let observer = Observer::connect().await;
         observer.wait_count(0).await;
         let (mut pty, slave) = Pty::spawn(command);
+        pty.wait(&["postgres.resources", "Schemas"]);
+        pty.open_filtered("Schemas");
         pty.wait(&["postgres.schemas", "public"]);
         assert!(
             !tcgetattr(&slave)
@@ -909,6 +924,8 @@ mod terminal {
             pty.send(b"c");
             pty.wait(&["connections", "pg_other"]);
             pty.open_filtered(alias);
+            pty.wait(&["postgres.resources", "Schemas"]);
+            pty.open_filtered("Schemas");
             pty.wait(&[&format!("Connection{alias}equery"), "postgres.schemas", "public"]);
             observer.wait_gone(old_pid).await;
             observer.wait_count(1).await;
@@ -988,6 +1005,8 @@ mod terminal {
         pty.send(b"c");
         pty.wait(&["connections", "pg"]);
         pty.open_filtered("pg");
+        pty.wait(&["postgres.resources", "Schemas"]);
+        pty.open_filtered("Schemas");
         pty.wait(&["Connectionpgequery", "postgres.schemas", "public"]);
         pty.open_filtered("public");
         pty.wait(&["postgres.relations", "keyed_rows"]);

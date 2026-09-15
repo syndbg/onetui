@@ -24,10 +24,15 @@ For a clean restart, stop `make dev-traffic`, then run `make dev-reset`. This de
 | `local_kafka` | Kafka: `127.0.0.1:19092`; TLS: `19093`; SASL/TLS: `19094`; mTLS: `19095`; OAuth: `19096`; GSSAPI: `19097`; KDC: `18888` (TCP/UDP) |
 | `local_redpanda` | Kafka: `127.0.0.1:29092`; Schema Registry: `http://127.0.0.1:18081` |
 | `local_nats` | NATS: `127.0.0.1:14222`; TLS: `14223`; mTLS/NKEY/domain: `14224`; JWT Core: `14225` |
+| `local_nats_system` | NATS system account: `127.0.0.1:14226`; two routed servers, restricted discovery reader |
+| `local_pg_replica` | PostgreSQL streaming standby: `127.0.0.1:15433`; primary remains at `15432` |
+| `local_rabbitmq` | Management HTTP: `127.0.0.1:15672`; TLS: `15671` |
 
 TLS certificates expire after two days; recreate disposable fixtures when expired. The setup does not modify the host trust store. Remote Docker contexts are refused.
 
 Qdrant runs two peers. Open `local_qdrant` → peers for membership, or collections → a collection → shards for placement. Peer addresses stay inside Docker; OneTUI does not connect to them.
+
+RabbitMQ includes 120 classic queues, quorum/stream queues, bindings, a policy and a Unicode vhost. Its monitoring user cannot publish or consume. A separate fixture container sends a synthetic event every 15 seconds and consumes it to populate connection/channel/consumer metrics. It runs with Compose, independently of `make dev-traffic`, and stops with `make dev-down`.
 
 OAuth tests start their own token endpoint and use disposable RSA keys. Kafka's [JWT validator](https://kafka.apache.org/42/javadoc/org/apache/kafka/common/security/oauthbearer/OAuthBearerValidatorCallbackHandler.html) checks signatures, issuer and audience; no external identity provider is needed.
 

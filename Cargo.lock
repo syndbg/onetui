@@ -2350,6 +2350,7 @@ dependencies = [
  "onetui-nats",
  "onetui-postgres",
  "onetui-qdrant",
+ "onetui-rabbitmq",
  "onetui-theme",
  "onetui-tui",
  "serde_json",
@@ -2510,6 +2511,25 @@ dependencies = [
  "toml",
  "tonic",
  "tonic-prost",
+ "url",
+]
+
+[[package]]
+name = "onetui-rabbitmq"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "nix",
+ "onetui-core",
+ "reqwest",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
  "url",
 ]
 

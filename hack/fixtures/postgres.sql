@@ -1,5 +1,9 @@
 CREATE ROLE onetui_reader LOGIN PASSWORD 'fixture-reader-only';
 ALTER ROLE onetui_reader SET default_transaction_read_only = on;
+GRANT pg_read_all_stats TO onetui_reader;
+CREATE ROLE onetui_replication LOGIN REPLICATION PASSWORD 'fixture-replica-only';
+CREATE ROLE onetui_limited_stats LOGIN PASSWORD 'fixture-limited-only';
+ALTER ROLE onetui_limited_stats SET default_transaction_read_only = on;
 CREATE TYPE order_state AS ENUM ('pending', 'paid');
 CREATE DOMAIN positive_amount AS numeric CHECK (VALUE >= 0);
 CREATE TABLE sample_rows (

@@ -32,14 +32,17 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         scope_resources: &[],
     }),
     kind: "postgres",
-    entry_resource: Some("postgres.schemas"),
-    browsing: "rows + metadata",
+    entry_resource: Some("postgres.resources"),
+    browsing: "rows, metadata and connected replication processes",
     resources: &[
+        &crate::replication::ROOT,
         &crate::SCHEMAS,
         &crate::RELATIONS,
         &crate::COLUMNS,
         &crate::ROWS,
         &crate::query::RESOURCE,
+        &crate::replication::REPLICAS,
+        &crate::replication::RECEIVER,
     ],
     documentation: crate::capabilities,
 };
@@ -190,6 +193,8 @@ impl PostgresExecutor {
                         crate::query::fetch(client, text, position.offset).await?
                     } else if request.resource.id == "postgres.rows" {
                         crate::rows::fetch(client, &request.resource, position.offset, position.inner.as_deref()).await?
+                    } else if matches!(request.resource.id, "postgres.replication" | "postgres.wal_receiver") {
+                        crate::replication::fetch(client, &request.resource, position.offset).await?
                     } else {
                         crate::browse::metadata(client, &request.resource, position.offset).await?
                     };
@@ -296,7 +301,16 @@ impl Executor for PostgresExecutor {
         }
     }
 
-    async fn fetch_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
+    async fn fetch_page(&self, request: PageRequest, mut context: RequestContext) -> Result<Page> {
+        ensure!(!self.closed, "PostgreSQL session is closed");
+        if request.resource.id == "postgres.resources" {
+            return context
+                .run(std::future::ready(crate::replication::root(
+                    &request.resource,
+                    request.continuation.as_deref(),
+                )))
+                .await?;
+        }
         ensure!(
             request.resource.id != "postgres.query",
             "Use the provider query operation"

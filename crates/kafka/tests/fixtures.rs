@@ -776,6 +776,9 @@ async fn kafka_transactions_limits_and_application_offsets() {
             .iter()
             .find(|row| row.cells[0] == Some(group_name.clone().into()))
             .expect("fixture application group");
+        assert_eq!(group.cells[5], Some("1".into()));
+        assert_eq!(group.cells[6], Some("127.0.0.1".into()));
+        assert_eq!(group.cells[7], Some("19092".into()));
         let group_menu = fetch(&executor, group.target.clone().unwrap(), None).await;
         let members = fetch(&executor, group_menu.rows[0].target.clone().unwrap(), None).await;
         assert_eq!(members.rows.len(), 1);

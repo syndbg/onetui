@@ -16,7 +16,7 @@ use clap::{Parser, Subcommand};
 #[command(
     version,
     about,
-    long_about = "OneTUI database browser. Browse PostgreSQL rows and metadata, Qdrant collections and points with payloads and vectors loaded on demand, or Kafka topics, partitions and read-committed records. Check connectivity without a terminal, or dump the offline capability catalog. Filter and sort the displayed page locally."
+    long_about = "Read-only terminal browser for databases and message systems. Browse resources, inspect values, and filter or sort the displayed page. Check connectivity without a terminal, or use schema to list supported datasources, settings and actions."
 )]
 struct Args {
     #[command(subcommand)]

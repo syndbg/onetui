@@ -13,7 +13,8 @@ fn nats_catalog_is_offline_and_exposes_read_operations() {
         serde_json::json!(["nats.messages", "nats.core_messages", "nats.kv_history"])
     );
     assert_eq!(nats["query"]["resource"], "nats.query");
-    assert_eq!(nats["resources"].as_array().unwrap().len(), 19);
+    assert_eq!(nats["resources"].as_array().unwrap().len(), 20);
+    assert_eq!(nats["configuration"]["system_discovery"]["default"], false);
     for resource in nats["resources"].as_array().unwrap() {
         assert!(nats["paths"][resource["id"].as_str().unwrap()].is_array());
     }
@@ -98,7 +99,7 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
     );
     assert_eq!(
         schema["datasources"][0]["resources"][0]["id"],
-        "postgres.schemas"
+        "postgres.resources"
     );
     assert_eq!(
         schema["datasources"][1]["resources"][0]["id"],
@@ -196,10 +197,10 @@ fn postgres_catalog_filter() {
     assert_eq!(schema["datasources"][0]["query_max_bytes"], 16384);
     assert_eq!(
         schema["datasources"][0]["entry_resource"],
-        "postgres.schemas"
+        "postgres.resources"
     );
     assert_eq!(
-        schema["datasources"][0]["resources"][1]["actions"][0]["target"],
+        schema["datasources"][0]["resources"][2]["actions"][0]["target"],
         "postgres.columns"
     );
     assert!(schema["datasources"][0]["session"].is_string());

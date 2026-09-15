@@ -84,7 +84,16 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
     &ResourceDescriptor {
         id: "kafka.groups",
         description: "Consumer group state and protocol; Enter chooses members or offsets",
-        columns: &["name", "state", "protocol_type", "protocol", "members"],
+        columns: &[
+            "name",
+            "state",
+            "protocol_type",
+            "protocol",
+            "members",
+            "broker_id",
+            "broker_host",
+            "broker_port",
+        ],
         paging: true,
         actions: &[],
     },
@@ -266,7 +275,8 @@ pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
                     "headers" => "JSON (ordered header names and nullable byte arrays)",
                     "synonyms" => "JSON (configuration precedence order)",
                     "offset" | "timestamp_ms" | "partition" | "leader" | "partitions" | "port"
-                    | "members" | "committed" | "low" | "stable_end" | "lag" => "integer",
+                    | "members" | "committed" | "low" | "stable_end" | "lag" | "broker_id"
+                    | "broker_port" => "integer",
                     "id" if resource.id == "kafka.brokers" => "integer",
                     _ => "text",
                 }

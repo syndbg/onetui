@@ -1,6 +1,6 @@
 # Contributing to OneTUI
 
-Check relevant ADRs before larger changes.
+Check the relevant [ADRs](docs/adr/) before larger changes.
 
 ## Local setup
 
@@ -55,6 +55,3 @@ Linux binaries dynamically link system SASL (`libsasl2-2` on Debian/Ubuntu); GSS
 The formula lives in [syndbg/homebrew-tap](https://github.com/syndbg/homebrew-tap). Use that repository's checks when changing it. After installing through the tap, run `brew test --HEAD syndbg/tap/onetui` to check the installed CLI and offline catalog.
 
 After publishing a release, update the tap's formula with its source archive URL and verified SHA-256. Keep `head` for development builds. Test the source build and installed CLI before publishing the formula update. The OneTUI release workflow does not update the tap automatically.
-
-### Validation status
-

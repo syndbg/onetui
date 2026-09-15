@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/avro", "crates/protobuf", "crates/schema-source", "crates/postgres", "crates/qdrant", "crates/kafka", "crates/nats", "crates/dynamodb", "crates/theme", "crates/tui"]
+members = ["crates/core", "crates/avro", "crates/protobuf", "crates/schema-source", "crates/postgres", "crates/qdrant", "crates/kafka", "crates/nats", "crates/dynamodb", "crates/rabbitmq", "crates/theme", "crates/tui"]
 resolver = "3"
 
 [workspace.package]
@@ -55,6 +55,7 @@ onetui-qdrant = { path = "crates/qdrant" }
 onetui-kafka = { path = "crates/kafka" }
 onetui-nats = { path = "crates/nats" }
 onetui-dynamodb = { path = "crates/dynamodb" }
+onetui-rabbitmq = { path = "crates/rabbitmq" }
 onetui-tui = { path = "crates/tui" }
 onetui-theme = { path = "crates/theme" }
 toml.workspace = true

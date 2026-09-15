@@ -30,4 +30,4 @@ The replay fixture test checks offset ranges, timestamp lookup, an empty result 
 
 The live CLI test also needs `cargo build -p onetui-kafka --example produce_demo --locked`; the full integration runner builds it automatically. It sends two records 15 seconds apart to `demo_live` and verifies live arrival, stop, inspection, restart and connection switching. The example is a fixture-only producer; `make dev-traffic` runs it continuously after `make dev-up`.
 
-See [Kafka usage/configuration](../../docs/kafka.md), [ADR-0006](../../docs/adr/0006-browse-kafka-with-rust-rdkafka.md), [ADR-0007](../../docs/adr/0007-follow-live-records-in-bounded-batches.md).
+See [Kafka usage/configuration](../../docs/kafka.md), [ADR-0006](../../docs/adr/0006-browse-kafka-with-rust-rdkafka.md) and [ADR-0007](../../docs/adr/0007-follow-live-records-in-bounded-batches.md).

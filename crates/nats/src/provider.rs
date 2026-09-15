@@ -15,6 +15,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         onetui_core::provider::ConnectionField::list("servers"),
         onetui_core::provider::ConnectionField::boolean("tls"),
         onetui_core::provider::ConnectionField::boolean("jetstream"),
+        onetui_core::provider::ConnectionField::boolean("system_discovery"),
         onetui_core::provider::ConnectionField::list("subjects"),
         onetui_core::provider::ConnectionField::text("token_env"),
         onetui_core::provider::ConnectionField::text("username_env"),
@@ -190,8 +191,12 @@ impl NatsExecutor {
             ensure!(!self.closed, "NATS session is closed");
             if let Some((request, live)) = &page {
                 crate::browse::validate(request, *live)?;
-                if !matches!(request.resource.id, "nats.resources" | "nats.subjects" | "nats.core_messages") {
+                if !matches!(request.resource.id, "nats.resources" | "nats.subjects" | "nats.core_messages" | "nats.servers") {
                     ensure!(self.config.jetstream, "JetStream is disabled for this connection");
+                }
+                if request.resource.id == "nats.servers" {
+                    ensure!(self.config.system_discovery, "NATS server discovery requires system_discovery=true");
+                    ensure!(request.continuation.is_none(), "NATS server discovery has one bounded observation page; refresh to rediscover");
                 }
                 if request.resource.id == "nats.core_messages" {
                     ensure!(self.config.subjects.contains(&request.resource.path[0]), "NATS subject is not configured");
@@ -233,6 +238,7 @@ impl NatsExecutor {
                             Some((request, live)) => {
                                 if let Some(previous) = session.subscription.take() { previous.stop(client).await?; }
                                 if let Some(page) = crate::browse::local_page(&self.config, &request)? { return Ok(page); }
+                                if request.resource.id == "nats.servers" { return crate::discovery::page(client).await; }
                                 crate::browse::page(&api, self.session, request, live, replay.as_ref()).await
                             },
                             None => {

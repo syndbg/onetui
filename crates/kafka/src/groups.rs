@@ -80,6 +80,9 @@ impl Groups {
                             Some(text(group.protocol_type)?.into()),
                             Some(text(group.protocol)?.into()),
                             Some(members.len().to_string().into()),
+                            Some(group.broker.id.to_string().into()),
+                            Some(text(group.broker.host)?.into()),
+                            Some(group.broker.port.to_string().into()),
                         ],
                         target: Some(Resource::new("kafka.group", vec![name.into()])),
                     });
@@ -175,6 +178,49 @@ unsafe fn bytes(ptr: *const c_void, count: i32) -> Result<Option<Value>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn originating_broker_fields_survive_group_conversion() {
+        let mut group = native::rd_kafka_group_info {
+            broker: native::rd_kafka_metadata_broker {
+                id: 42,
+                host: c"broker.example".as_ptr().cast_mut(),
+                port: 9093,
+            },
+            group: c"application".as_ptr().cast_mut(),
+            err: native::rd_kafka_resp_err_t::RD_KAFKA_RESP_ERR_NO_ERROR,
+            state: c"Empty".as_ptr().cast_mut(),
+            protocol_type: c"consumer".as_ptr().cast_mut(),
+            protocol: c"range".as_ptr().cast_mut(),
+            members: std::ptr::null_mut(),
+            member_cnt: 0,
+        };
+        let list = native::rd_kafka_group_list {
+            groups: &mut group,
+            group_cnt: 1,
+        };
+        // The native deallocator must not free this stack-owned response.
+        let groups = std::mem::ManuallyDrop::new(Groups(&list));
+        let page = groups
+            .page(&Resource::new("kafka.groups", vec![]), 0, 1)
+            .unwrap();
+        assert_eq!(page.columns.len(), 8);
+        assert_eq!(
+            page.rows[0].cells[4..],
+            [
+                Some("0".into()),
+                Some("42".into()),
+                Some("broker.example".into()),
+                Some("9093".into()),
+            ]
+        );
+        assert_eq!(page.columns[5].datatype, "integer");
+        assert_eq!(page.columns[7].datatype, "integer");
+        assert_eq!(
+            page.rows[0].target,
+            Some(Resource::new("kafka.group", vec!["application".into()]))
+        );
+    }
 
     #[test]
     fn group_errors_and_raw_metadata_survive_without_lossy_utf8() {

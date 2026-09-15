@@ -16,6 +16,9 @@ mod core;
 #[path = "fixtures/metadata.rs"]
 mod metadata;
 
+#[path = "fixtures/discovery.rs"]
+mod discovery;
+
 #[path = "fixtures/replay.rs"]
 mod replay;
 

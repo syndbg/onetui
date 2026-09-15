@@ -10,6 +10,9 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 const PG: &str = "host=127.0.0.1 port=15432 user=onetui_reader password=fixture-reader-only dbname=onetui_fixture sslmode=disable";
 const PG_ADMIN: &str = "host=127.0.0.1 port=15432 user=onetui_fixture_admin password=fixture-admin-only dbname=onetui_fixture sslmode=disable";
 
+#[path = "fixtures/replication.rs"]
+mod replication;
+
 async fn sql_query(
     reader: &onetui_postgres::PostgresExecutor,
     text: &str,

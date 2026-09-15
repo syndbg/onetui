@@ -4,6 +4,8 @@ PostgreSQL row/metadata/check queries, verified TLS, cancellation, descriptors a
 
 ## Validation
 
+The resource menu exposes schemas, downstream replication and the upstream WAL receiver. Replication views retain native columns and permission-limited NULLs through the existing bounded SQL reader. See [replication usage](../../docs/postgres.md#replication).
+
 `PostgresProvider` owns strict configuration and descriptors. Its executor connects lazily, reuses successful sessions and keeps the native driver alive while idle. Cancellation or failed reads retire the connection; explicit reads may reconnect. Transactions end before display, and shutdown owns driver cleanup. PostgreSQL-only fixtures verify physical session reuse over TLS, transaction-free idle time, cancellation retirement and server-disconnect recovery. See [lifecycle and keepalive defaults](../../docs/postgres.md#request-and-terminal-lifecycle).
 
 Explicit CA bundles must be regular PEM files of at most 1 MiB. A single-slot blocking trust loader keeps certificate I/O off async workers and prevents cancelled retries from accumulating OS reads. CLI tests cover FIFO rejection, native-root stalls under deadline/SIGINT and process exit; unit tests cover type/size rejection and slot recovery after cancellation. An interrupted OS read may finish later; see the [configuration limits](../../README.md#configuration).

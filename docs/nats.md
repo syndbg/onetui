@@ -71,6 +71,16 @@ Press `f` / `:follow` in a JetStream message view to start after the stream's cu
 
 Messages are fetched in stream-sequence order. Historical pages retain an upper sequence boundary, but are independent reads, not a snapshot. The server skips deleted sequences. Retention or stream recreation can invalidate bookmarks; refresh rather than silently starting elsewhere. Stream listings use server offset pagination and can shift under concurrent changes.
 
+## Server discovery
+
+Set `system_discovery = true` on an alias with system-account credentials, then open **Servers**. Use `jetstream = false` for a system-only alias. Discovery is disabled by default. `onetui schema --datasource nats` lists its settings and columns.
+
+OneTUI publishes `{}` to `$SYS.REQ.SERVER.PING.STATSZ` and collects private replies for one second. Rows show server identity, cluster/domain, version and observation time. Details retain the full response and statistics. The list contains observed responders, not guaranteed complete membership or independently verified health. Refresh repeats discovery. Returned hostnames are never contacted.
+
+Grant publish access only to that request subject and subscription access to private `_INBOX` replies. The view needs no application-data publishing rights and does not change the connection allowlist. It rejects observations above 100 servers or 1 MiB rather than silently truncating them. Permission errors and malformed responses remain errors. `--check` does not request server discovery.
+
+The local demo's `local_nats_system` alias exposes two routed servers through these restricted permissions.
+
 ## Permissions, lifetime and limits
 
 On a stream or message view, `e` / `:query` opens replay JSON above the results. Enter/F5 executes; Shift-Enter adds a line. For example:

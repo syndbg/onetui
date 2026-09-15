@@ -33,4 +33,3 @@ Replay uses explicit subject and sequence bounds. Timestamp filtering scans boun
 Use native NKEY nonce signing, standard JWT credentials, verified mTLS and domain routing. Keep authentication modes mutually exclusive. Credentials come from explicit environment references; TLS files load only on connection. Authentication rotation requires reselecting the connection.
 
 Bind payload decoders to exact subjects with explicit framing. Reuse `onetui-avro` and `onetui-protobuf` for JSON/native inspection, preserve original bytes and report errors per message. Cache schemas for the selected connection and bound parsing outside the TUI. Share file, directory, registry and Buf loading through `onetui-schema-source`, not a dependency on Kafka. [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the format boundary.
-

@@ -1,5 +1,40 @@
 name: onetui-fixtures
 services:
+  rabbitmq:
+    build:
+      context: ./fixtures
+      dockerfile: rabbitmq.Dockerfile
+    hostname: rabbitmq
+    entrypoint: ["/bin/sh", "/rabbitmq-tls.sh"]
+    environment:
+      RABBITMQ_DEFAULT_USER: fixture-admin
+      RABBITMQ_DEFAULT_PASS: fixture-admin-only
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "+S 2:2"
+    ports:
+      - "127.0.0.1:15672:15672"
+      - "127.0.0.1:15671:15671"
+    tmpfs:
+      - /var/lib/rabbitmq
+      - /tls
+    volumes:
+      - ./fixtures/rabbitmq.conf:/etc/rabbitmq/conf.d/20-onetui.conf:ro
+      - ./fixtures/rabbitmq-tls.sh:/rabbitmq-tls.sh:ro
+      - ./fixtures/rabbitmq-server.ext:/server.ext:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "-u", "fixture-admin:fixture-admin-only", "http://localhost:15672/api/overview"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  rabbitmq-traffic:
+    build:
+      context: ./fixtures
+      dockerfile: rabbitmq.Dockerfile
+    entrypoint: ["python3", "/rabbitmq-traffic.py"]
+    volumes:
+      - ./fixtures/rabbitmq-traffic.py:/rabbitmq-traffic.py:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
   dynamodb:
     image: amazon/dynamodb-local:3.3.1
     command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb", "-disableTelemetry"]
@@ -79,6 +114,24 @@ services:
       interval: 1s
       timeout: 3s
       retries: 30
+  nats-system: &nats_system_fixture
+    <<: *nats_fixture
+    entrypoint: ["nats-server", "-c", "/system.conf", "--name", "system-a"]
+    ports:
+      - "127.0.0.1:14226:4222"
+    volumes:
+      - ./fixtures/nats-system.conf:/system.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8222/healthz"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  nats-system-peer:
+    <<: *nats_system_fixture
+    entrypoint: ["nats-server", "-c", "/system.conf", "--name", "system-b", "--routes", "nats://nats-system:6222"]
+    ports: []
+    depends_on:
+      - nats-system
   kafka:
     build:
       context: ./fixtures
@@ -170,6 +223,23 @@ services:
       interval: 1s
       timeout: 3s
       retries: 30
+  postgres-replica:
+    image: postgres:16.13
+    entrypoint: ["/bin/sh", "/onetui-replica.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:15433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./fixtures/postgres-replica.sh:/onetui-replica.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onetui_reader -d onetui_fixture"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
   qdrant:
     image: qdrant/qdrant:v1.18.2
     command: ["./qdrant", "--uri", "http://qdrant:6335"]

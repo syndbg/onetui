@@ -15,7 +15,7 @@
 - Keep implementation and tests in their owning package. No shared loops over datasource test suites; small duplicated fixture helpers are fine.
 - Add regression tests for bugs. Preserve validation, security and error handling; never weaken tests to pass.
 - Update affected usage docs, config examples, CLI help and schema when behavior changes. Document non-obvious limits, not everything.
-- ADRs record decisions and rejected alternatives. Keep delivery checklists in issues and pull requests.
+- Keep lasting decisions and rejected alternatives in ADRs, and user guidance in the public docs. Keep delivery checklists and test reports in issues and pull requests.
 
 ## Checks
 

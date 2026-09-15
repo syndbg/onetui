@@ -9,6 +9,7 @@ use onetui_kafka::{KafkaExecutor, KafkaProvider};
 use onetui_nats::{NatsExecutor, NatsProvider};
 use onetui_postgres::{PostgresExecutor, PostgresProvider};
 use onetui_qdrant::{QdrantExecutor, QdrantProvider};
+use onetui_rabbitmq::{RabbitMqExecutor, RabbitMqProvider};
 use tokio::sync::watch;
 
 pub enum BuiltinProvider {
@@ -17,6 +18,7 @@ pub enum BuiltinProvider {
     Kafka(KafkaProvider),
     Nats(NatsProvider),
     DynamoDb(DynamoDbProvider),
+    RabbitMq(RabbitMqProvider),
 }
 
 pub const BUILTINS: &[BuiltinProvider] = &[
@@ -25,6 +27,7 @@ pub const BUILTINS: &[BuiltinProvider] = &[
     BuiltinProvider::Kafka(KafkaProvider),
     BuiltinProvider::Nats(NatsProvider),
     BuiltinProvider::DynamoDb(DynamoDbProvider),
+    BuiltinProvider::RabbitMq(RabbitMqProvider),
 ];
 
 pub enum BuiltinExecutor {
@@ -33,6 +36,7 @@ pub enum BuiltinExecutor {
     Kafka(KafkaExecutor),
     Nats(NatsExecutor),
     DynamoDb(DynamoDbExecutor),
+    RabbitMq(RabbitMqExecutor),
 }
 
 impl Provider for BuiltinProvider {
@@ -45,6 +49,7 @@ impl Provider for BuiltinProvider {
             Self::Kafka(p) => p.descriptor(),
             Self::Nats(p) => p.descriptor(),
             Self::DynamoDb(p) => p.descriptor(),
+            Self::RabbitMq(p) => p.descriptor(),
         }
     }
 
@@ -55,6 +60,7 @@ impl Provider for BuiltinProvider {
             Self::Kafka(p) => p.validate_config(options),
             Self::Nats(p) => p.validate_config(options),
             Self::DynamoDb(p) => p.validate_config(options),
+            Self::RabbitMq(p) => p.validate_config(options),
         }
     }
 
@@ -69,6 +75,7 @@ impl Provider for BuiltinProvider {
             Self::Kafka(p) => p.configure(options, env).map(BuiltinExecutor::Kafka),
             Self::Nats(p) => p.configure(options, env).map(BuiltinExecutor::Nats),
             Self::DynamoDb(p) => p.configure(options, env).map(BuiltinExecutor::DynamoDb),
+            Self::RabbitMq(p) => p.configure(options, env).map(BuiltinExecutor::RabbitMq),
         }
     }
 }
@@ -81,6 +88,7 @@ impl Executor for BuiltinExecutor {
             Self::Kafka(e) => e.stop_follow(context).await,
             Self::Nats(e) => e.stop_follow(context).await,
             Self::DynamoDb(e) => e.stop_follow(context).await,
+            Self::RabbitMq(e) => e.stop_follow(context).await,
         }
     }
     async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
@@ -90,6 +98,7 @@ impl Executor for BuiltinExecutor {
             Self::Kafka(e) => e.follow_page(request, context).await,
             Self::Nats(e) => e.follow_page(request, context).await,
             Self::DynamoDb(e) => e.follow_page(request, context).await,
+            Self::RabbitMq(e) => e.follow_page(request, context).await,
         }
     }
     async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
@@ -99,6 +108,7 @@ impl Executor for BuiltinExecutor {
             Self::Kafka(e) => e.query_page(request, context).await,
             Self::Nats(e) => e.query_page(request, context).await,
             Self::DynamoDb(e) => e.query_page(request, context).await,
+            Self::RabbitMq(e) => e.query_page(request, context).await,
         }
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
@@ -108,6 +118,7 @@ impl Executor for BuiltinExecutor {
             Self::Kafka(e) => e.status(),
             Self::Nats(e) => e.status(),
             Self::DynamoDb(e) => e.status(),
+            Self::RabbitMq(e) => e.status(),
         }
     }
 
@@ -118,6 +129,7 @@ impl Executor for BuiltinExecutor {
             Self::Kafka(e) => e.check(context).await,
             Self::Nats(e) => e.check(context).await,
             Self::DynamoDb(e) => e.check(context).await,
+            Self::RabbitMq(e) => e.check(context).await,
         }
     }
 
@@ -128,6 +140,7 @@ impl Executor for BuiltinExecutor {
             Self::Kafka(e) => e.fetch_page(request, context).await,
             Self::Nats(e) => e.fetch_page(request, context).await,
             Self::DynamoDb(e) => e.fetch_page(request, context).await,
+            Self::RabbitMq(e) => e.fetch_page(request, context).await,
         }
     }
 
@@ -138,6 +151,7 @@ impl Executor for BuiltinExecutor {
             Self::Kafka(e) => e.shutdown(context).await,
             Self::Nats(e) => e.shutdown(context).await,
             Self::DynamoDb(e) => e.shutdown(context).await,
+            Self::RabbitMq(e) => e.shutdown(context).await,
         }
     }
 }
@@ -223,7 +237,7 @@ mod tests {
     #[tokio::test]
     async fn postgres_variant_delegates_configuration_status_cancel_and_shutdown() {
         validate_catalog(BUILTINS).unwrap();
-        assert_eq!(BUILTINS.len(), 5);
+        assert_eq!(BUILTINS.len(), 6);
         let provider = find_provider(BUILTINS, "postgres").unwrap();
         let options = toml::from_str("url_env='DSN'").unwrap();
         provider.validate_config(&options).unwrap();

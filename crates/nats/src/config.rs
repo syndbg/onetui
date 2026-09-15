@@ -25,6 +25,8 @@ pub(crate) struct Config {
     pub subjects: Vec<String>,
     #[serde(default = "tls_default")]
     pub jetstream: bool,
+    #[serde(default)]
+    pub system_discovery: bool,
 }
 
 fn tls_default() -> bool {

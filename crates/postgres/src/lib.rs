@@ -3,6 +3,7 @@ mod check;
 mod config;
 mod provider;
 mod query;
+mod replication;
 mod rows;
 use onetui_core::catalog::{Action, ActionSource, ResourceAction, ResourceDescriptor};
 pub use provider::{PostgresExecutor, PostgresProvider};
@@ -51,6 +52,7 @@ pub(crate) fn capabilities() -> serde_json::Value {
         "query_syntax": "One SELECT, VALUES or read-only WITH statement, optionally ending in a semicolon. No parameters, utility statements or writes. 1..256 result columns, 100 rows per page, 1 MiB page cap. Independent OFFSET reads; specify a unique ORDER BY. Server read-only transaction plus rollback and DISCARD ALL; use least-privilege credentials because SQL functions may have external effects.",
         "resources": [&SCHEMAS, &RELATIONS, &COLUMNS, &ROWS],
         "row_paging": "100 rows; non-null unique default-B-tree bigint/text keysets (all composite components), otherwise best-effort OFFSET. No cross-page snapshot.",
+        "replication": {"resources": ["postgres.replication", "postgres.wal_receiver"], "path": [], "columns": "All native pg_stat_replication / pg_stat_wal_receiver columns for the connected server version", "permissions": "PostgreSQL may return NULL for restricted fields without pg_read_all_stats; preserve those NULLs. Server obfuscates sensitive conninfo fields.", "limits": "100 rows per page, 1 MiB; independent reads, not an HA membership inventory. No changes to replication slots or configuration."},
         "session": "Lazy reusable connection; no idle transaction/cursor. Failed or cancelled reads retire transport; the next explicit read reconnects. Shutdown/cancel cleanup: 1 second. Native TCP keepalive enabled with 7200-second idle threshold and OS interval/retry defaults; no SQL heartbeat or heartbeat TOML setting.",
         "configuration": {
             "kind": {"required": true, "values": ["postgres"], "purpose": "Select the PostgreSQL connector"},

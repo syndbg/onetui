@@ -25,7 +25,7 @@ Source snapshot: `main` at `6607e3f`.
 | [PostgreSQL descriptors](../../crates/postgres/src/lib.rs) and [Qdrant capabilities](../../crates/qdrant/src/lib.rs) | Existing connector-owned data to reuse; Qdrant currently advertises checks only |
 | [PostgreSQL requests](../../crates/postgres/src/browse.rs), `fetch` | Each request owns and discards its client/driver; cancellation cleanup has a one-second budget |
 
-Connectors have separate packages, but adding one still requires edits across shared modules. PostgreSQL opens a connection per browsing request.
+When this decision was made, connectors had separate packages, but adding one required edits across shared modules. PostgreSQL opened a connection per browsing request.
 
 ## Provider and executor interfaces
 

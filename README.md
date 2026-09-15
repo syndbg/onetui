@@ -90,12 +90,12 @@ alias ot='onetui --config "$HOME/onetui.toml"'
 
 | Datasource | Supported reads | Not yet supported |
 | --- | --- | --- |
-| [PostgreSQL](docs/postgres.md) | Schemas, tables/views, columns, row paging, SQL queries | Query parameters, writes |
+| [PostgreSQL](docs/postgres.md) | Schemas, tables/views, columns, row paging, SQL queries, downstream replicas and upstream WAL receiver | Query parameters, writes |
 | [Qdrant](docs/qdrant.md) | Collections, point paging, filtered Scroll, payloads, dense/sparse/multivectors, cluster peers, shard placement and transfers | Advanced filters, similarity search, writes |
 | [Kafka](docs/kafka.md) | Broker/topic metadata, configuration and synonyms, consumer groups and lag, partition/topic browsing and following, offset/timestamp replay, Avro/Protobuf inspection and Avro reader schemas | Publishing, administration |
-| [NATS](docs/nats.md) | Core subscriptions, JetStream streams/messages, live following, subject/sequence/time replay, consumer state, KV history/watch, object metadata/chunks, Avro/Protobuf decoding and domains | Publishing, administration |
+| [NATS](docs/nats.md) | Core subscriptions, JetStream streams/messages, live following, subject/sequence/time replay, consumer state, KV history/watch, object metadata/chunks, Avro/Protobuf decoding, domains and opt-in server discovery | Publishing, administration |
 | [DynamoDB](docs/dynamodb.md) | Table/index metadata, replicas, typed items, bounded Scan/Query/GetItem, batch/transactional reads, read-only PartiQL, vector search, backup/import/export inspection, Streams/shards/records, sequence replay and following | Writes and administration |
-| RabbitMQ | Planned | All operations |
+| [RabbitMQ](docs/rabbitmq.md) | Management overview, nodes, virtual hosts, queues, exchanges, bindings, connections, channels, consumers, policies and metrics | Message inspection, publishing, administration |
 | ScyllaDB / Cassandra | Planned (`scylla` async driver) | All operations |
 
 Kafka and NATS support schema files, directory catalogs, Confluent registries and Buf Protobuf sources. Their guides cover TLS/mTLS and authentication: Kafka supports SASL PLAIN/SCRAM, OAuth client credentials and GSSAPI ticket caches. NATS supports tokens, user/password and NKEY/JWT.
@@ -199,7 +199,7 @@ OneTUI preserves native diagnostics, redacts configured secrets and escapes term
 
 ## Tech stack
 
-OneTUI uses Rust 2024, Ratatui/Crossterm and Tokio. Its native clients are `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka, `async-nats` and the AWS SDK for Rust. Qdrant topology uses Reqwest. Decoding uses `apache-avro`, `prost-reflect` and `protox`. Clap, Serde and TOML handle the CLI and configuration.
+OneTUI uses Rust 2024, Ratatui/Crossterm and Tokio. Its native clients are `tokio-postgres`, `qdrant-client`/Tonic, `rdkafka`/librdkafka, `async-nats` and the AWS SDK for Rust. Qdrant topology and RabbitMQ management use Reqwest/Rustls. Decoding uses `apache-avro`, `prost-reflect` and `protox`. Clap, Serde and TOML handle the CLI and configuration.
 
 Providers live in separate crates and use [static enum dispatch](docs/adr/0002-use-static-enum-dispatch-for-built-in-providers.md). Datasources are built into the binary. There are no runtime plugins.
 

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
 pub(crate) const RESOURCES: &[&ResourceDescriptor] = &[
+    &crate::discovery::RESOURCE,
     &ResourceDescriptor {
         id: "nats.query",
         description: "Subject-filtered sequence/time replay without consumers",
@@ -225,6 +226,7 @@ pub(crate) fn validate(request: &PageRequest, live: bool) -> Result<()> {
                 "nats.streams"
                 | "nats.resources"
                 | "nats.subjects"
+                | "nats.servers"
                 | "nats.consumer_streams"
                 | "nats.kv_buckets"
                 | "nats.object_buckets" => 0,
@@ -318,6 +320,15 @@ pub(crate) fn local_page(
                 ],
                 target: Some(Resource::new("nats.subjects", vec![])),
             });
+            if config.system_discovery {
+                page.rows.push(Row {
+                    cells: vec![
+                        Some("Servers".into()),
+                        Some("Observed system-account responders".into()),
+                    ],
+                    target: Some(Resource::new("nats.servers", vec![])),
+                });
+            }
         }
         "nats.subjects" => {
             page.columns = columns(&[("subject", "text")]);

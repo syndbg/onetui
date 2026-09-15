@@ -14,6 +14,10 @@ unicode = "literal"
 kind = "postgres"
 url_env = "ONETUI_POSTGRES_URL"
 
+[connections.local_pg_replica]
+kind = "postgres"
+url_env = "ONETUI_POSTGRES_REPLICA_URL"
+
 [connections.local_dynamodb]
 kind = "dynamodb"
 region = "us-east-1"
@@ -74,6 +78,21 @@ kind = "nats"
 subjects = ["demo.live", "demo.*"]
 servers = ["nats://127.0.0.1:14222"]
 tls = false
+username_env = "ONETUI_NATS_USERNAME"
+password_env = "ONETUI_NATS_PASSWORD"
+
+[connections.local_rabbitmq]
+kind = "rabbitmq"
+url = "http://127.0.0.1:15672"
+username_env = "ONETUI_RABBITMQ_USERNAME"
+password_env = "ONETUI_RABBITMQ_PASSWORD"
+
+[connections.local_nats_system]
+kind = "nats"
+servers = ["nats://127.0.0.1:14226"]
+tls = false
+jetstream = false
+system_discovery = true
 username_env = "ONETUI_NATS_USERNAME"
 password_env = "ONETUI_NATS_PASSWORD"
 
