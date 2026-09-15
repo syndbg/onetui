@@ -34,7 +34,7 @@ Target: v0.1.0. Follow Semantic Versioning; update Cargo.toml and Cargo.lock tog
 
 1. Use a reviewed main commit with passing checks. Run `make release-check TAG=v0.1.0` (substitute the intended version).
 2. In **Releases → Draft a new release**, select/create that tag at the reviewed commit. Describe shipped changes; mark prereleases.
-3. Publish. Wait for the [release workflow](.github/workflows/release.yaml) and verify Linux x86_64 and macOS arm64 archives plus their SHA-256 files before announcing.
+3. Publish. Wait for the [release workflow](.github/workflows/release.yaml) and verify the Linux x86_64 archive and its SHA-256 file before announcing. All CI jobs use Ubuntu 24.04. macOS users build locally or use Homebrew.
 
 Never move a published tag. Uploads refuse overwrites; inspect partial assets before retrying. Keep the license and third-party notices with redistributed binaries.
 
@@ -43,12 +43,18 @@ Never move a published tag. Uploads refuse overwrites; inspect partial assets be
 ```sh
 make package TAG=v0.1.0
 cd dist
-shasum -a 256 -c onetui-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
+shasum -a 256 -c onetui-v0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 Use the filename matching your platform. Packaging refuses existing artifacts. Releases are unsigned/unnotarized; older GNU libc and musl compatibility is unverified. Review native dependency licenses when updating them.
 
 Linux binaries dynamically link system SASL (`libsasl2-2` on Debian/Ubuntu); GSSAPI also needs `libsasl2-modules-gssapi-mit`. Kerberos libraries are not bundled.
+
+### Homebrew
+
+The formula lives in [syndbg/homebrew-tap](https://github.com/syndbg/homebrew-tap). Use that repository's checks when changing it. After installing through the tap, run `brew test --HEAD syndbg/tap/onetui` to check the installed CLI and offline catalog.
+
+After publishing a release, update the tap's formula with its source archive URL and verified SHA-256. Keep `head` for development builds. Test the source build and installed CLI before publishing the formula update. The OneTUI release workflow does not update the tap automatically.
 
 ### Validation status
 

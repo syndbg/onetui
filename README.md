@@ -35,6 +35,18 @@ The project is working toward **v0.1.0**. This initial version is **read-only**.
 
 ## Install
 
+### Homebrew
+
+Install the development version from [syndbg/tap](https://github.com/syndbg/homebrew-tap):
+
+```sh
+brew install --HEAD syndbg/tap/onetui
+```
+
+Homebrew builds from source on macOS or Linux and installs the build dependencies. It needs Rust 1.98.1 or newer. There are no OneTUI bottles yet, and `--HEAD` follows `main`, not a release. While the repository is private, Git access is required.
+
+### From source
+
 Build from source with the pinned Rust toolchain and [native build tools](CONTRIBUTING.md#local-setup):
 
 ```sh

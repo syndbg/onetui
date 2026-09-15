@@ -19,6 +19,8 @@
 
 ## Checks
 
+Do not add tests that inspect GitHub workflow files or assert their configuration. Use `make workflow-lint` for workflow validation.
+
 Use [Makefile](Makefile) targets. Features require passing `make verify`, `make test-integration` and `make workflow-lint`. Docs-only edits need content/link checks and `git diff --check`. Report failed or unrun checks; local success is not hosted CI proof.
 
 Prefix agent shell commands with `rtk`; use `rtk proxy` when needed. Keep user-facing commands plain.
