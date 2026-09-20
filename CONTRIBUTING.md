@@ -36,7 +36,7 @@ Target: v0.1.0. Follow Semantic Versioning; update Cargo.toml and Cargo.lock tog
 
 1. Use a reviewed main commit with passing checks. Run `make release-check TAG=v0.1.0` (substitute the intended version).
 2. In **Releases → Draft a new release**, select/create that tag at the reviewed commit. Describe shipped changes; mark prereleases.
-3. Publish. Wait for the [release workflow](.github/workflows/release.yaml) and verify the Linux x86_64 and macOS Apple Silicon/Intel archives, `.deb`, `.rpm`, installer and SHA-256 files before announcing. PR and main CI use Ubuntu 24.04. Releases also use native macOS 15 runners. The RPM builds in a Fedora 43 container on Ubuntu because its SASL library ABI differs from Ubuntu's. Assets upload only after every platform job succeeds.
+3. Publish. Wait for the [release workflow](.github/workflows/release.yaml) and verify its archives, packages and SHA-256 files before announcing.
 
 Never move a published tag. Uploads refuse overwrites; inspect partial assets before retrying. Keep the license and third-party notices with redistributed binaries.
 
@@ -48,7 +48,7 @@ cd dist
 shasum -a 256 -c onetui-v0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
-Use the filename matching your platform. Packaging refuses existing artifacts. macOS release builds target macOS 15 or newer, use system libraries, and check the extracted binary's version and offline schema. They are not Developer ID signed or notarized. Linux packages are unsigned. Older GNU libc and musl compatibility is unverified. Review native dependency licenses when updating them.
+Use the filename matching your platform. Packaging refuses existing artifacts. Review native dependency licenses when updating them.
 
 After `make package`, use `make package-deb TAG=v0.1.0` on Debian/Ubuntu or `make package-rpm TAG=v0.1.0` on Fedora. These use pinned nFPM through Go. Never repackage the Ubuntu binary as a Fedora RPM. The release workflow installs each package and checks its version and offline schema before uploading.
 

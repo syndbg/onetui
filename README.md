@@ -29,17 +29,9 @@ The project is working toward **v0.1.0**. This version is **read-only**.
 
 ### GitHub Releases
 
-Download an archive or Linux package from [Releases](https://github.com/syndbg/onetui/releases). Archives support Linux x86_64 and macOS Apple Silicon/Intel. Linux archives and `.deb` packages target Ubuntu 24.04 or newer; `.rpm` packages target Fedora 43. macOS requires version 15 or newer. Binaries are not Developer ID signed or notarized; Linux packages are unsigned.
+Download an archive or Linux package from [Releases](https://github.com/syndbg/onetui/releases).
 
-For a user-local install, download and inspect the release's `install.sh`, then run:
-
-```sh
-sh install.sh --version v0.1.0
-```
-
-The installer verifies the checksum and binary version, then installs to `~/.local/bin`. Add that directory to `PATH`. Omit `--version` for the latest stable release. Run it again to upgrade. Configuration is preserved. Linux archives need the [runtime libraries](CONTRIBUTING.md#local-packaging-and-verification).
-
-For system installation, use `sudo apt install ./onetui-v0.1.0-x86_64.deb` or `sudo dnf install ./onetui-v0.1.0-x86_64.rpm`. Upgrade through the same package manager. OneTUI does not update itself.
+Install a package with `sudo apt install ./onetui-*.deb` or `sudo dnf install ./onetui-*.rpm`.
 
 ### Homebrew
 

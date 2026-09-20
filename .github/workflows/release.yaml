@@ -39,10 +39,6 @@ jobs:
           sudo apt install -y ./dist/*.deb
           test "$(/usr/bin/onetui --version)" = "onetui ${RELEASE_TAG#v}"
           /usr/bin/onetui schema --datasource postgres > /dev/null
-      - name: Include the release installer
-        run: |
-          install -m 644 install.sh dist/install.sh
-          (cd dist && shasum -a 256 install.sh > install.sh.sha256)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-ubuntu-24.04

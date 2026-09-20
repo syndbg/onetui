@@ -47,7 +47,6 @@ lint:
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 	for script in hack/dev.sh scripts/release.sh; do bash -n "$$script" || exit; done
-	sh -n install.sh
 	for script in hack/fixtures/*.sh; do sh -n "$$script" || exit; done
 
 test:
