@@ -13,6 +13,8 @@ package_id=$(cargo pkgid --locked)
 version=${package_id##*#}
 version=${version##*@}
 tag=${2:-}
+git_hash=$(git rev-parse --short HEAD)
+expected_version="onetui $version ($git_hash)"
 if [[ "$tag" != "v$version" ]]; then
     printf 'Release tag must match Cargo.toml exactly: v%s\n' "$version" >&2
     exit 1
@@ -32,7 +34,7 @@ if [[ "$1" == deb || "$1" == rpm ]]; then
         deb:ubuntu|deb:debian|rpm:fedora) ;;
         *) printf 'Build deb on Debian/Ubuntu and rpm on Fedora.\n' >&2; exit 1 ;;
     esac
-    [[ "$(target/x86_64-unknown-linux-gnu/release/onetui --version)" == "onetui $version" ]] || { printf 'Run make package with the matching version first.\n' >&2; exit 1; }
+    [[ "$(target/x86_64-unknown-linux-gnu/release/onetui --version)" == "$expected_version" ]] || { printf 'Run make package from the matching version and commit first.\n' >&2; exit 1; }
     export ONETUI_PACKAGE_VERSION="$version"
     export ONETUI_PACKAGE_BINARY=target/x86_64-unknown-linux-gnu/release/onetui
     ONETUI_GLIBC_VERSION=$(getconf GNU_LIBC_VERSION)
@@ -51,7 +53,7 @@ if [[ -e "dist/$archive" || -e "dist/$archive.sha256" ]]; then
 fi
 # An explicit native target prevents ambient CARGO_BUILD_TARGET from mislabelling the archive.
 cargo build --release --locked --target "$target" --target-dir target
-[[ "$("target/$target/release/onetui" --version)" == "onetui $version" ]] || { printf 'Built binary version does not match Cargo.\n' >&2; exit 1; }
+[[ "$("target/$target/release/onetui" --version)" == "$expected_version" ]] || { printf 'Built binary version does not match Cargo and Git.\n' >&2; exit 1; }
 mkdir -p dist
 tar -czf "dist/$archive" -C "$repo_root/target/$target/release" onetui -C "$repo_root" README.md LICENSE THIRD_PARTY_NOTICES.md
 (cd dist && shasum -a 256 "$archive" > "$archive.sha256")

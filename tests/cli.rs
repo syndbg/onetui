@@ -20,7 +20,16 @@ fn help_version_and_nonterminal_error_work_without_configuration() {
         let text = String::from_utf8_lossy(&output.stdout);
         assert!(text.contains("onetui"), "{text}");
         if arg == "--version" {
-            assert_eq!(text.trim(), concat!("onetui ", env!("CARGO_PKG_VERSION")));
+            assert_eq!(
+                text.trim(),
+                concat!(
+                    "onetui ",
+                    env!("CARGO_PKG_VERSION"),
+                    " (",
+                    env!("ONETUI_GIT_HASH"),
+                    ")"
+                )
+            );
         } else {
             assert!(text.contains("Read-only terminal browser"), "{text}");
             assert!(

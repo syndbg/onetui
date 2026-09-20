@@ -37,7 +37,7 @@ jobs:
         run: |
           make package-deb TAG="$RELEASE_TAG"
           sudo apt install -y ./dist/*.deb
-          test "$(/usr/bin/onetui --version)" = "onetui ${RELEASE_TAG#v}"
+          test "$(/usr/bin/onetui --version)" = "onetui ${RELEASE_TAG#v} ($(git rev-parse --short HEAD))"
           /usr/bin/onetui schema --datasource postgres > /dev/null
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -72,7 +72,7 @@ jobs:
         run: |
           make package package-rpm TAG="$RELEASE_TAG"
           dnf install -y ./dist/*.rpm
-          test "$(/usr/bin/onetui --version)" = "onetui ${RELEASE_TAG#v}"
+          test "$(/usr/bin/onetui --version)" = "onetui ${RELEASE_TAG#v} ($(git rev-parse --short HEAD))"
           /usr/bin/onetui schema --datasource postgres > /dev/null
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -116,8 +116,9 @@ jobs:
           (cd dist && shasum -a 256 -c "$archive.sha256")
           unpacked=$(mktemp -d)
           tar -xzf "dist/$archive" -C "$unpacked"
-          test "$("$unpacked/onetui" --version)" = "onetui ${RELEASE_TAG#v}"
-          test "$("$unpacked/onetui" -V)" = "onetui ${RELEASE_TAG#v}"
+          expected_version="onetui ${RELEASE_TAG#v} ($(git rev-parse --short HEAD))"
+          test "$("$unpacked/onetui" --version)" = "$expected_version"
+          test "$("$unpacked/onetui" -V)" = "$expected_version"
           "$unpacked/onetui" schema --datasource postgres > /dev/null
           # Release binaries must not depend on the runner's Homebrew installation.
           otool -L "$unpacked/onetui" > "$unpacked/libraries.txt"

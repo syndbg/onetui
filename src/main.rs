@@ -12,9 +12,16 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("ONETUI_GIT_HASH"),
+    ")"
+);
+
 #[derive(Parser)]
 #[command(
-    version,
+    version = VERSION,
     about,
     long_about = "Read-only terminal browser for databases and message systems. Browse resources, inspect values, and filter or sort the displayed page. Check connectivity without a terminal, or use schema to list supported datasources, settings and actions."
 )]
