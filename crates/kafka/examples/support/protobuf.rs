@@ -66,6 +66,29 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
     Ok(ids)
 }
 
+pub fn key_schema(topic: &str) -> Result<u32> {
+    broker::register(
+        &format!("{topic}_key"),
+        json!({"schemaType":"PROTOBUF", "schema":CUSTOMER}),
+    )
+}
+
+pub fn key_raw(n: u32) -> Vec<u8> {
+    Customer {
+        id: u64::from(n % 23),
+        name: format!("customer-{n}"),
+    }
+    .encode_to_vec()
+}
+
+pub fn key_message(n: u32, id: u32) -> Vec<u8> {
+    let mut framed = vec![0];
+    framed.extend(id.to_be_bytes());
+    framed.push(0);
+    framed.extend(key_raw(n));
+    framed
+}
+
 pub fn raw(n: u32) -> Vec<u8> {
     Event {
         id: u64::from(n),
@@ -93,5 +116,9 @@ pub fn message(n: u32, ids: [u32; 2]) -> Vec<u8> {
 
 pub async fn seed(topic: &str, count: u32) -> Result<()> {
     let ids = schemas(topic)?;
-    broker::seed(topic, count, |n| Ok(message(n, ids))).await
+    let key_id = key_schema(topic)?;
+    broker::seed_keyed(topic, count, |n| {
+        Ok((key_message(n, key_id), message(n, ids)))
+    })
+    .await
 }

@@ -22,6 +22,23 @@ async fn demo_avro_config_browsing_and_live_traffic() {
     let raw = fetch(&executor, catalog.clone(), None).await;
     assert_eq!(first.rows.len(), 100);
     assert_eq!(raw.rows.len(), 100);
+    assert_eq!(first.columns.len(), 15);
+    assert_eq!(first.columns[10].name, "key_decoded");
+    let key: serde_json::Value =
+        serde_json::from_str(first.rows[1].cells[10].as_ref().unwrap().text().unwrap()).unwrap();
+    assert_eq!(key["id"], 1);
+    assert_eq!(key["name"], "customer-1");
+    assert!(
+        first.rows[1].cells[11]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("#id=")
+    );
+    assert!(first.rows[1].cells[12].is_none());
+    assert!(first.rows[1].cells[13].is_some());
+    assert!(first.rows[1].cells[14].is_none());
     assert_eq!(first.rows[2].cells[5], raw.rows[1].cells[5]);
     assert_eq!(raw.rows[1].cells[7], None);
     assert!(
@@ -48,6 +65,8 @@ async fn demo_avro_config_browsing_and_live_traffic() {
     assert_eq!(live.rows.len(), 1);
     assert_eq!(raw_live.rows.len(), 1);
     assert_eq!(live.rows[0].cells[7], None);
+    assert!(live.rows[0].cells[10].is_some());
+    assert!(live.rows[0].cells[12].is_none());
     assert_eq!(raw_live.rows[0].cells[7], None);
     assert_eq!(live.rows[0].cells[5], raw_live.rows[0].cells[5]);
     executor

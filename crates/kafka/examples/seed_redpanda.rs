@@ -64,7 +64,9 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let avro_ids = fixture::schemas("demo_avro")?;
+    let avro_key_id = fixture::key_schema("demo_avro")?;
     let proto_ids = protobuf::schemas("demo_protobuf")?;
+    let proto_key_id = protobuf::key_schema("demo_protobuf")?;
     let producer = broker::config().create()?;
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(15));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -74,13 +76,21 @@ async fn main() -> anyhow::Result<()> {
             signal = tokio::signal::ctrl_c() => { signal?; return Ok(()); }
             _ = ticks.tick() => {}
         }
-        for (topic, raw) in [
-            ("demo_avro", fixture::message(n, avro_ids)?),
-            ("demo_protobuf", protobuf::message(n, proto_ids)),
-            ("demo_avro_catalog", fixture::raw(n)?),
-            ("demo_protobuf_catalog", protobuf::raw(n)),
+        for (topic, key, value) in [
+            (
+                "demo_avro",
+                fixture::key_message(n, avro_key_id)?,
+                fixture::message(n, avro_ids)?,
+            ),
+            (
+                "demo_protobuf",
+                protobuf::key_message(n, proto_key_id),
+                protobuf::message(n, proto_ids),
+            ),
+            ("demo_avro_catalog", b"demo".to_vec(), fixture::raw(n)?),
+            ("demo_protobuf_catalog", b"demo".to_vec(), protobuf::raw(n)),
         ] {
-            let offset = broker::send(&producer, topic, &raw).await?;
+            let offset = broker::send_keyed(&producer, topic, &key, &value).await?;
             println!("{topic} partition=0 offset={offset} sequence={n}");
         }
         n = n

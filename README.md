@@ -46,15 +46,15 @@ Browse typed DynamoDB items:
 
 [![Browse typed DynamoDB items](docs/assets/demo/dynamodb-items.svg)](docs/assets/demo/dynamodb-items.svg)
 
-Kafka schema bindings work independently for keys and values.
+Each Kafka demo binds schemas to both the key and value. The screens below show the decoded key and its schema identity.
 
 Inspect an Avro-decoded key beside its original bytes and schema:
 
 [![Inspect an Avro-decoded Kafka key and its schema](docs/assets/demo/avro.svg)](docs/assets/demo/avro.svg)
 
-Inspect a Protobuf-decoded value beside its original bytes and schema:
+Inspect a Protobuf-decoded key beside its original bytes and schema:
 
-[![Inspect a Protobuf-decoded Kafka value and its schema](docs/assets/demo/protobuf.svg)](docs/assets/demo/protobuf.svg)
+[![Inspect a Protobuf-decoded Kafka key and its schema](docs/assets/demo/protobuf.svg)](docs/assets/demo/protobuf.svg)
 
 ### Operational views
 

@@ -83,6 +83,8 @@ framing = "raw"
 schema_file = "/absolute/path/event.avsc"
 ```
 
+Set `field` to `key` or `value`. Add separate bindings to decode both. Each binding can use Avro or Protobuf and its own schema source.
+
 For raw Protobuf, set `format = "protobuf"`, use a binary descriptor set including imports, and add `message_name = "demo.Event"`. See the [protoc example](../crates/protobuf/README.md#try-a-raw-message) and [example bindings](../hack/kafka-decoders.toml.example). Avro supports an optional `reader_schema_file` for reader projections.
 
 Decoded JSON, schema identity, native typed values and errors appear beside the original field. JSON is not a lossless typed export; inspect the native view or original bytes when type details matter. Schemas and framing must be explicit. Reopen the connection to reload schemas, and restart after editing binding settings.

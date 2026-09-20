@@ -52,8 +52,22 @@ framing = "confluent"
 url = "http://127.0.0.1:18081"
 
 [[connections.local_redpanda.decoders]]
+topic = "demo_avro"
+field = "key"
+format = "avro"
+framing = "confluent"
+registry = { url = "http://127.0.0.1:18081" }
+
+[[connections.local_redpanda.decoders]]
 topic = "demo_protobuf"
 field = "value"
+format = "protobuf"
+framing = "confluent"
+registry = { url = "http://127.0.0.1:18081" }
+
+[[connections.local_redpanda.decoders]]
+topic = "demo_protobuf"
+field = "key"
 format = "protobuf"
 framing = "confluent"
 registry = { url = "http://127.0.0.1:18081" }

@@ -11,6 +11,7 @@ fn demo_protobuf_descriptors_match_producer_and_registry_framing() {
     fixture::prepare(dir.path()).unwrap();
     let descriptors = std::fs::read(dir.path().join("protobuf_event.pb")).unwrap();
     let decoder = onetui_protobuf::Decoder::new(&descriptors, "demo.Event").unwrap();
+    let key_decoder = onetui_protobuf::Decoder::new(&descriptors, "demo.Customer").unwrap();
     for n in [0, 1, 999, 1000] {
         let raw = fixture::raw(n);
         let json: serde_json::Value =
@@ -23,6 +24,22 @@ fn demo_protobuf_descriptors_match_producer_and_registry_framing() {
         assert_eq!(json["tags"], serde_json::json!(["demo", "protobuf"]));
         assert!(json["attachment"].is_string());
         assert_eq!(json.get("note").is_some(), n % 2 == 1);
+        let key: serde_json::Value = serde_json::from_str(
+            &key_decoder
+                .decode(&fixture::key_raw(n))
+                .unwrap()
+                .json()
+                .unwrap(),
+        )
+        .unwrap();
+        if n.is_multiple_of(23) {
+            assert!(key.get("id").is_none());
+        } else {
+            assert_eq!(key["id"], (n % 23).to_string());
+        }
+        assert_eq!(key["name"], format!("customer-{n}"));
+        let framed_key = fixture::key_message(n, 41);
+        assert_eq!(&framed_key[..6], &[0, 0, 0, 0, 41, 0]);
         let framed = fixture::message(n, [42, 43]);
         assert_eq!(&framed[..6], &[0, 0, 0, 0, 42 + (n % 2) as u8, 0]);
         assert_eq!(&framed[6..], raw);

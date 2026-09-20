@@ -280,36 +280,68 @@ fn synthetic_app(
 }
 
 fn decoded_message(format: &str) -> crate::App {
-    let (topic, field, wire, decoded, native, schema) = if format == "avro" {
+    let (
+        topic,
+        key_wire,
+        key_decoded,
+        key_native,
+        key_schema,
+        value_wire,
+        value_decoded,
+        value_native,
+        value_schema,
+    ) = if format == "avro" {
         (
             "demo_avro",
-            "key",
-            vec![0, 0, 0, 0, 14, 12, 65, 45, 49, 48, 52, 50],
-            serde_json::json!({"order_id": "A-1042"}),
+            vec![0, 0, 0, 0, 13, 14, 8, 77, 105, 110, 97],
+            serde_json::json!({"id": 7, "name": "Mina"}),
             serde_json::json!({
                 "type": "record",
-                "fields": [["order_id", {"type": "string", "value": "A-1042"}]]
+                "fields": [
+                    ["id", {"type": "long", "value": 7}],
+                    ["name", {"type": "string", "value": "Mina"}]
+                ]
+            }),
+            "confluent:https://registry.local#id=13",
+            vec![0, 0, 0, 0, 14, 12, 65, 45, 49, 48, 52, 50],
+            serde_json::json!({"id": 1042, "tags": ["demo", "avro"]}),
+            serde_json::json!({
+                "type": "record",
+                "fields": [
+                    ["id", {"type": "long", "value": 1042}],
+                    ["tags", {"type": "array", "value": [
+                        {"type": "string", "value": "demo"},
+                        {"type": "string", "value": "avro"}
+                    ]}]
+                ]
             }),
             "confluent:https://registry.local#id=14",
         )
     } else {
         (
             "demo_protobuf",
-            "value",
-            vec![0, 0, 0, 0, 21, 0, 10, 6, 80, 45, 50, 48, 52, 56],
-            serde_json::json!({"orderId": "P-2048"}),
+            vec![0, 0, 0, 0, 20, 0, 8, 9, 18, 3, 90, 111, 101],
+            serde_json::json!({"id": "9", "name": "Zoe"}),
             serde_json::json!({
-                "type": "demo.Order",
-                "fields": [{
-                    "name": "order_id",
-                    "number": 1,
-                    "datatype": "string",
-                    "extension": false,
-                    "value": {"type": "string", "value": "P-2048"}
-                }],
+                "type": "demo.Customer",
+                "fields": [
+                    {"name": "id", "number": 1, "datatype": "uint64", "extension": false, "value": {"type": "u64", "value": 9}},
+                    {"name": "name", "number": 2, "datatype": "string", "extension": false, "value": {"type": "string", "value": "Zoe"}}
+                ],
                 "unknown_fields": []
             }),
-            "confluent:https://registry.local#id=21&message=demo.Order",
+            "confluent:https://registry.local#id=20&message=demo.Customer",
+            vec![0, 0, 0, 0, 21, 0, 8, 128, 16],
+            serde_json::json!({"id": "2048", "title": "Synthetic Protobuf event 2048"}),
+            serde_json::json!({
+                "type": "demo.Event",
+                "fields": [
+                    {"name": "id", "number": 1, "datatype": "uint64", "extension": false, "value": {"type": "u64", "value": 2048}},
+                    {"name": "title", "number": 3, "datatype": "string", "extension": false, "value": {"type": "string", "value": "Synthetic Protobuf event 2048"}}
+                ],
+                "unknown_fields": []
+            }),
+            "confluent:https://registry.local#id=21&message=demo.Event",
         )
     };
     let mut columns = [
@@ -328,28 +360,22 @@ fn decoded_message(format: &str) -> crate::App {
         datatype: datatype.into(),
     })
     .collect::<Vec<_>>();
-    columns.extend(
-        [
-            ("decoded", "JSON projection (not wire bytes)"),
-            ("schema", "schema identity"),
-            ("decode_error", "text"),
-            ("native", "JSON typed inspection (not wire bytes)"),
-            ("native_error", "text"),
-        ]
-        .into_iter()
-        .map(|(suffix, datatype)| Column {
-            name: format!("{field}_{suffix}"),
-            datatype: datatype.into(),
-        }),
-    );
-    let (key, value) = if field == "key" {
-        (
-            Value::Bytes(wire),
-            Value::Bytes(br#"{"event":"created"}"#.to_vec()),
-        )
-    } else {
-        (Value::Bytes(b"order-2048".to_vec()), Value::Bytes(wire))
-    };
+    for field in ["value", "key"] {
+        columns.extend(
+            [
+                ("decoded", "JSON projection (not wire bytes)"),
+                ("schema", "schema identity"),
+                ("decode_error", "text"),
+                ("native", "JSON typed inspection (not wire bytes)"),
+                ("native_error", "text"),
+            ]
+            .into_iter()
+            .map(|(suffix, datatype)| Column {
+                name: format!("{field}_{suffix}"),
+                datatype: datatype.into(),
+            }),
+        );
+    }
     let mut app = synthetic_app(
         "demo_kafka",
         &KAFKA,
@@ -359,8 +385,8 @@ fn decoded_message(format: &str) -> crate::App {
             cells: vec![
                 Some("1042".into()),
                 Some("1789909200000".into()),
-                Some(key),
-                Some(value),
+                Some(Value::Bytes(key_wire)),
+                Some(Value::Bytes(value_wire)),
                 Some(Value::Json(
                     serde_json::json!([{
                         "name": "content-type",
@@ -368,16 +394,21 @@ fn decoded_message(format: &str) -> crate::App {
                     }])
                     .to_string(),
                 )),
-                Some(Value::Json(decoded.to_string())),
-                Some(schema.into()),
+                Some(Value::Json(value_decoded.to_string())),
+                Some(value_schema.into()),
                 None,
-                Some(Value::Json(native.to_string())),
+                Some(Value::Json(value_native.to_string())),
+                None,
+                Some(Value::Json(key_decoded.to_string())),
+                Some(key_schema.into()),
+                None,
+                Some(Value::Json(key_native.to_string())),
                 None,
             ],
             target: None,
         }],
     );
-    app.view.column = 5;
+    app.view.column = 11;
     app.act(Action::Open);
     app
 }
@@ -850,8 +881,8 @@ fn demos() -> [(String, &'static str); 11] {
         (
             render_app(
                 &protobuf,
-                "OneTUI inspecting a Protobuf-decoded Kafka value",
-                "Inspect a Protobuf-decoded Kafka value and its schema in OneTUI",
+                "OneTUI inspecting a Protobuf-decoded Kafka key",
+                "Inspect a Protobuf-decoded Kafka key and its schema in OneTUI",
             ),
             "protobuf.svg",
         ),

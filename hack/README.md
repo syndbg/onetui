@@ -36,7 +36,9 @@ Choose `local_redpanda` → Topics → a topic → Records. Decoder bindings and
 | `demo_avro` | Confluent Avro |
 | `demo_avro_catalog` | Raw Avro from a local catalog |
 
-Open a record's `value_decoded`, `value_native` or original `value` to compare representations.
+The registry topics use schema-encoded keys and values. The catalog topics keep plain keys and schema-encoded values.
+
+Open a registry record's `key_decoded` or `value_decoded` to compare it with the original `key` or `value` bytes. Native typed views are available beside each decoded field.
 
 ## Shared traffic
 

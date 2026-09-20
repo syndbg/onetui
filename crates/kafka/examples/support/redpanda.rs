@@ -44,6 +44,32 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
     Ok(ids)
 }
 
+pub fn key_schema(topic: &str) -> Result<u32> {
+    broker::register(
+        &format!("{topic}_key"),
+        json!({"schemaType":"AVRO","schema":CUSTOMER}),
+    )
+}
+
+pub fn key_raw(n: u32) -> Result<Vec<u8>> {
+    let schema = Schema::parse_str(CUSTOMER)?;
+    Ok(
+        apache_avro::writer::datum::GenericDatumWriter::builder(&schema)
+            .build()?
+            .write_value_to_vec(Value::Record(vec![
+                ("id".into(), Value::Long(i64::from(n % 23))),
+                ("name".into(), Value::String(format!("customer-{n}"))),
+            ]))?,
+    )
+}
+
+pub fn key_message(n: u32, id: u32) -> Result<Vec<u8>> {
+    let mut framed = vec![0];
+    framed.extend(id.to_be_bytes());
+    framed.extend(key_raw(n)?);
+    Ok(framed)
+}
+
 pub fn message(n: u32, ids: [u32; 2]) -> Result<Vec<u8>> {
     let version = (n % 2) as usize;
     let root = writer(version);
@@ -92,7 +118,11 @@ pub fn message(n: u32, ids: [u32; 2]) -> Result<Vec<u8>> {
 
 pub async fn seed(topic: &str, count: u32) -> Result<()> {
     let ids = schemas(topic)?;
-    broker::seed(topic, count, |n| message(n, ids)).await
+    let key_id = key_schema(topic)?;
+    broker::seed_keyed(topic, count, |n| {
+        Ok((key_message(n, key_id)?, message(n, ids)?))
+    })
+    .await
 }
 
 pub fn raw(n: u32) -> Result<Vec<u8>> {

@@ -55,13 +55,15 @@ pub fn register(subject: &str, body: serde_json::Value) -> Result<u32> {
     Ok(id as u32)
 }
 
-pub async fn send(producer: &FutureProducer, topic: &str, raw: &[u8]) -> Result<i64> {
+pub async fn send_keyed(
+    producer: &FutureProducer,
+    topic: &str,
+    key: &[u8],
+    raw: &[u8],
+) -> Result<i64> {
     let delivery = producer
         .send(
-            FutureRecord::to(topic)
-                .partition(0)
-                .key("demo")
-                .payload(raw),
+            FutureRecord::to(topic).partition(0).key(key).payload(raw),
             Duration::from_secs(5),
         )
         .await
@@ -69,7 +71,16 @@ pub async fn send(producer: &FutureProducer, topic: &str, raw: &[u8]) -> Result<
     Ok(delivery.offset)
 }
 
+#[allow(dead_code)]
 pub async fn seed(topic: &str, count: u32, message: impl Fn(u32) -> Result<Vec<u8>>) -> Result<()> {
+    seed_keyed(topic, count, |n| Ok((b"demo".to_vec(), message(n)?))).await
+}
+
+pub async fn seed_keyed(
+    topic: &str,
+    count: u32,
+    message: impl Fn(u32) -> Result<(Vec<u8>, Vec<u8>)>,
+) -> Result<()> {
     let config = config();
     let reader: BaseConsumer = config.create()?;
     let existing = reader.fetch_metadata(None, Duration::from_secs(5))?;
@@ -101,7 +112,8 @@ pub async fn seed(topic: &str, count: u32, message: impl Fn(u32) -> Result<Vec<u
     }
     let producer: FutureProducer = config.create()?;
     for n in 0..count {
-        send(&producer, topic, &message(n)?).await?;
+        let (key, value) = message(n)?;
+        send_keyed(&producer, topic, &key, &value).await?;
     }
     println!("Seeded {topic}: {count} records");
     Ok(())
