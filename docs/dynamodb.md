@@ -42,4 +42,4 @@ PartiQL accepts one `SELECT` from the selected table per statement. Prefer typed
 
 Open **Streams** → a stream → **Shards** → a shard. Use `f` to follow new records or `e` to replay from a sequence. When a shard closes, select its child shard explicitly.
 
-Try `local_dynamodb` in the [demo fixtures](../hack/README.md). DynamoDB Local does not implement every AWS feature. Cloud-only metadata and vector search have protocol tests, not live AWS validation.
+Try `local_dynamodb` in the [demo fixtures](../hack/README.md). DynamoDB Local does not implement every AWS feature.

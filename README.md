@@ -24,7 +24,7 @@
 
 OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect data, run native queries and follow live messages without switching tools.
 
-The project is working toward **v0.1.0**. This version is **read-only**.
+OneTUI is mostly focused read-only in its initial version. Write support requires a few more features that will be work-in-progress soon.
 
 ## Demo
 
@@ -141,7 +141,7 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 | [DynamoDB](docs/dynamodb.md) | Metadata, typed items, native reads, PartiQL, vector search and Streams |
 | [RabbitMQ](docs/rabbitmq.md) | Management metadata and metrics, without message inspection |
 
-Kafka and NATS can decode Avro and Protobuf using files, directory catalogs, Confluent registries or Buf. ScyllaDB/Cassandra is planned.
+Kafka and NATS can decode Avro and Protobuf using files, directory catalogs, Confluent registries or Buf.
 
 Use read-only credentials. Reads still consume server resources. Connector guides explain their distinctive limits.
 
@@ -178,7 +178,7 @@ onetui schema --datasource kafka
 onetui --check --connection local_pg
 ```
 
-`schema` works offline. `--check` requires configuration and tests the selected connector's check operation, not every resource permission. Use `--config <path>` to select another file or `--timeout <seconds>` to change the active-request deadline.
+`schema` works offline. `--check` requires configuration and verifies the selected connection, not every resource permission. Use `--config <path>` to select another file or `--timeout <seconds>` to change the request timeout.
 
 See connector guides for authentication and TLS. Use plaintext only for local development.
 
@@ -197,7 +197,7 @@ Connector guides are linked in the datasource table above. For implementation de
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development and releases. `make help` lists development tasks. Planned work lives on the [roadmap board](https://github.com/users/syndbg/projects/3/views/1).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and releases. `make help` lists development tasks.
 
 For bugs, include `onetui --version`, the datasource, reproduction steps and sanitized diagnostics in a [GitHub issue](https://github.com/syndbg/onetui/issues). Configured secrets are redacted, but errors can contain server-returned data. Review them before sharing.
 

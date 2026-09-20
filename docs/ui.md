@@ -24,7 +24,7 @@ The header shows your current connection, resource and available actions. Press 
 
 ## Value display controls
 
-Enter on a row opens its fields. Select a field and press Enter again to inspect its full retained value. Use `v` to choose text, JSON, hex or binary, and adjust pretty printing, highlighting, wrapping or Unicode display.
+Enter on a row opens its fields. Select a field and press Enter again to inspect its full value. Use `v` to choose text, JSON, hex or binary, and adjust pretty printing, highlighting, wrapping or Unicode display.
 
 Auto shows readable text or JSON and falls back to hex for other bytes. With wrapping disabled, use `H/L` to scroll horizontally.
 
@@ -42,6 +42,6 @@ Check an alias without opening the TUI:
 onetui --check --connection my_alias
 ```
 
-This tests the connector's check operation, not access to every resource. Confirm the endpoint, secret environment variables and required permissions in the connector guide. Use `--timeout <seconds>` for slow requests.
+This verifies the connection, not access to every resource. Confirm the endpoint, secret environment variables and required permissions in the connector guide. Use `--timeout <seconds>` for slow requests.
 
 The TUI requires interactive stdin and stdout. For query keyboard issues, see [terminal input](queries.md#terminal-input). Before sharing an error, review it for server-returned data even though configured secrets are redacted.

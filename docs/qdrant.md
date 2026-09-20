@@ -24,6 +24,6 @@ Similarity search, export and writes are not supported. See [shared controls](ui
 
 Open **cluster** or **peers**, or a collection's **shards**, **transfers** or **cluster details**. These show the configured REST node's observations, not independently verified peer health.
 
-Topology may require permissions beyond point browsing. `--check` tests gRPC collection access only. Without `rest_url`, point browsing still works.
+Topology may require permissions beyond point browsing. `--check` verifies collection access only. Without `rest_url`, point browsing still works.
 
 Try `local_qdrant` in the [demo fixtures](../hack/README.md).

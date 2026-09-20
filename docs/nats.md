@@ -69,6 +69,6 @@ schema_file = "/absolute/path/event.avsc"
 
 For raw Protobuf, use a descriptor set including imports and set `message_name`. Directory catalogs, Confluent registries and Buf are also supported. See the [schema source examples](kafka.md#schema-bound-key-and-value-previews), replacing Kafka's `topic` and `field` selectors with `subject`.
 
-Decoded and native views appear beside the original `data`. Errors leave the original bytes available. Reopen the connection after changing schemas. Use `onetui schema --datasource nats` for all binding options.
+Decoded and native views appear beside the original `data`. Errors leave the original bytes available. Use `onetui schema --datasource nats` for all binding options.
 
 Try `local_nats` in the [demo fixtures](../hack/README.md#nats-traffic).

@@ -20,7 +20,7 @@ For private CAs, set `ca_file` to an absolute PEM path. For mTLS, set `client_ce
 
 ### Kerberos (GSSAPI)
 
-Use `sasl_mechanism = "GSSAPI"` and set `kerberos_principal` to match your system ticket cache. Obtain and renew tickets outside OneTUI. Set `KRB5_CONFIG` and `KRB5CCNAME` before launch if needed. Restart after replacing expired tickets or changing caches. See [system dependencies](../CONTRIBUTING.md#local-setup).
+Use `sasl_mechanism = "GSSAPI"` and set `kerberos_principal` to match your system ticket cache. Obtain and renew tickets outside OneTUI. Set `KRB5_CONFIG` and `KRB5CCNAME` before launch if needed. See [system dependencies](../CONTRIBUTING.md#local-setup).
 
 ### OAuth
 
@@ -34,7 +34,7 @@ client_secret_env = "ONETUI_OAUTH_CLIENT_SECRET"
 scope = "kafka.read"
 ```
 
-The endpoint must return signed JWT access tokens with `sub` and `exp`. Opaque tokens and interactive login are unsupported. Token-endpoint credentials and optional `ca_file` are separate from broker authentication. Reopen the connection after rotating credentials.
+The endpoint must return signed JWT access tokens with `sub` and `exp`. Opaque tokens and interactive login are unsupported. Token-endpoint credentials and optional `ca_file` are separate from broker authentication.
 
 ## Browsing
 
@@ -66,7 +66,7 @@ Browsing depends on retention. Refresh to include newer records or after a parti
 
 ## Permissions
 
-Record browsing needs topic `Read` and `Describe`. It also needs group `Describe` for OneTUI's internal consumer group ID, `onetui-<process-id>-<session-id>`. Kafka's consumer client requires this ID, but OneTUI does not join the group or commit offsets. Group `Read` is not required. Inspecting consumer groups requires `Describe` for those groups.
+Record browsing needs topic `Read` and `Describe`, plus group `Describe` for its temporary ID, `onetui-<process-id>-<session-id>`. OneTUI does not join that group or commit offsets, so group `Read` is not required. Inspecting consumer groups requires `Describe` for those groups.
 
 Configuration reads need `DescribeConfigs` on the topic, or on the cluster for broker settings. `--check` validates metadata and configured schema sources, not record-reading access.
 
@@ -87,7 +87,7 @@ Set `field` to `key` or `value`. Add separate bindings to decode both. Each bind
 
 For raw Protobuf, set `format = "protobuf"`, use a binary descriptor set including imports, and add `message_name = "demo.Event"`. See the [protoc example](../crates/protobuf/README.md#try-a-raw-message) and [example bindings](../hack/kafka-decoders.toml.example). Avro supports an optional `reader_schema_file` for reader projections.
 
-Decoded JSON, schema identity, native typed values and errors appear beside the original field. JSON is not a lossless typed export; inspect the native view or original bytes when type details matter. Schemas and framing must be explicit. Reopen the connection to reload schemas, and restart after editing binding settings.
+Decoded JSON, schema identity, native typed values and errors appear beside the original field. JSON is not a lossless typed export; inspect the native view or original bytes when type details matter. Schemas and framing must be explicit.
 
 ### Local directory catalogs
 
@@ -107,7 +107,7 @@ For raw Protobuf, replace `schema_file` with:
 buf = { url = "https://buf.build", module = "your-org/your-module", label = "main" }
 ```
 
-Use `revision` instead of `label` to pin a commit. Add `token_env` inside `buf` for private modules. Keep `message_name` in the decoder binding. Reopen the connection to resolve a changed label.
+Use `revision` instead of `label` to pin a commit. Add `token_env` inside `buf` for private modules. Keep `message_name` in the decoder binding.
 
 ### Confluent Avro registry
 
