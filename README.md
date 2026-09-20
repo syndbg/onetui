@@ -107,10 +107,9 @@ Install a package with `sudo apt install ./onetui-*.deb` or `sudo dnf install ./
 ### Homebrew
 
 ```sh
+# For the latest from origin/main
 brew install --HEAD syndbg/tap/onetui
 ```
-
-This builds the development version from `main`, not a release. It requires Rust 1.98.1 or newer. While the repository is private, Git access is required.
 
 ### From source
 
