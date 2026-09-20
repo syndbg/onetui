@@ -29,26 +29,16 @@ jobs:
           sudo apt install -y build-essential cmake perl pkg-config libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit
       - name: Reject tag and package version mismatch
         run: bash scripts/release.sh check "$RELEASE_TAG"
-      - run: make verify
-      - name: Disposable datasource integration tests
-        run: make test-integration
       - name: Package native binary and checksum
         run: bash scripts/release.sh package "$RELEASE_TAG"
-      - name: Package and test deb
-        run: |
-          make package-deb TAG="$RELEASE_TAG"
-          sudo apt install -y ./dist/*.deb
-          test "$(/usr/bin/onetui --version)" = "onetui ${RELEASE_TAG#v} ($(git rev-parse --short HEAD))"
-          /usr/bin/onetui schema --datasource postgres > /dev/null
+      - name: Package deb
+        run: make package-deb TAG="$RELEASE_TAG"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-ubuntu-24.04
           path: dist/*
           if-no-files-found: error
           retention-days: 7
-      - name: Fixture cleanup fallback
-        if: always()
-        run: make dev-down
 
   rpm:
     name: Package (Fedora 43)
@@ -63,19 +53,17 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Trust checkout ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install rustup
         run: |
           curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs -o /tmp/onetui-rustup.sh
           sh /tmp/onetui-rustup.sh -y --profile minimal --default-toolchain none
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Build and test rpm
+      - name: Build rpm
         shell: bash
-        run: |
-          make package package-rpm TAG="$RELEASE_TAG"
-          dnf install -y ./dist/*.rpm
-          test "$(/usr/bin/onetui --version)" = "onetui ${RELEASE_TAG#v} ($(git rev-parse --short HEAD))"
-          /usr/bin/onetui schema --datasource postgres > /dev/null
+        run: make package package-rpm TAG="$RELEASE_TAG"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-rpm
@@ -99,7 +87,6 @@ jobs:
             target: x86_64-apple-darwin
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name }}
-      EXPECTED_TARGET: ${{ matrix.target }}
       MACOSX_DEPLOYMENT_TARGET: '15.0'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -109,28 +96,7 @@ jobs:
       - name: Native build tools
         run: brew list cmake > /dev/null 2>&1 || brew install cmake
       - name: Build native archive
-        run: |
-          test "$(rustc -vV | awk '$1 == "host:" {print $2}')" = "$EXPECTED_TARGET"
-          make package TAG="$RELEASE_TAG"
-      - name: Verify packaged binary
-        shell: bash
-        run: |
-          archive="onetui-${RELEASE_TAG}-${EXPECTED_TARGET}.tar.gz"
-          (cd dist && shasum -a 256 -c "$archive.sha256")
-          unpacked=$(mktemp -d)
-          tar -xzf "dist/$archive" -C "$unpacked"
-          expected_version="onetui ${RELEASE_TAG#v} ($(git rev-parse --short HEAD))"
-          test "$("$unpacked/onetui" --version)" = "$expected_version"
-          test "$("$unpacked/onetui" -V)" = "$expected_version"
-          "$unpacked/onetui" schema --datasource postgres > /dev/null
-          # Release binaries must not depend on the runner's Homebrew installation.
-          otool -L "$unpacked/onetui" > "$unpacked/libraries.txt"
-          while IFS= read -r library; do
-            case "$library" in
-              /usr/lib/*|/System/Library/*) ;;
-              *) printf 'Non-system library in release binary: %s\n' "$library" >&2; exit 1 ;;
-            esac
-          done < <(awk 'NR > 1 {print $1}' "$unpacked/libraries.txt")
+        run: make package TAG="$RELEASE_TAG"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.target }}

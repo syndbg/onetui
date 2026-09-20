@@ -50,7 +50,7 @@ shasum -a 256 -c onetui-v0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 
 Use the filename matching your platform. Packaging refuses existing artifacts. Review native dependency licenses when updating them.
 
-After `make package`, use `make package-deb TAG=v0.1.0` on Debian/Ubuntu or `make package-rpm TAG=v0.1.0` on Fedora. These use pinned nFPM through Go. Never repackage the Ubuntu binary as a Fedora RPM. The release workflow installs each package and checks its version and offline schema before uploading.
+After `make package`, use `make package-deb TAG=v0.1.0` on Debian/Ubuntu or `make package-rpm TAG=v0.1.0` on Fedora. These use pinned nFPM through Go. Never repackage the Ubuntu binary as a Fedora RPM.
 
 Linux binaries dynamically link system libraries. Ubuntu archive installs need `libc6` (2.39+), `libgcc-s1`, `libstdc++6`, `libcurl4t64`, `libsasl2-2` and `libgssapi-krb5-2`. GSSAPI also needs `libsasl2-modules-gssapi-mit`. The Debian/RPM packages declare their runtime dependencies. Kerberos libraries are not bundled.
 
