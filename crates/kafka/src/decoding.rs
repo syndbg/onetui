@@ -311,7 +311,11 @@ impl Entry {
 pub(crate) struct Bindings(Vec<Entry>);
 
 impl Bindings {
-    pub fn new(bindings: Vec<Binding>) -> Self {
+    pub fn new(mut bindings: Vec<Binding>) -> Self {
+        bindings.sort_by_key(|binding| match binding.field {
+            Field::Key => 0,
+            Field::Value => 1,
+        });
         Self(
             bindings
                 .into_iter()

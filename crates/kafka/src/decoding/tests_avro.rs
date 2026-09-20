@@ -146,6 +146,26 @@ fn avro_projection_retains_raw_null_errors_and_session_schema() {
 }
 
 #[test]
+fn key_projection_precedes_value_projection_regardless_of_config_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema = dir.path().join("event.avsc");
+    std::fs::write(&schema, r#""long""#).unwrap();
+    let value = binding(&schema);
+    let mut key = value.clone();
+    key.field = Field::Key;
+    let mut bindings = Bindings::new(vec![value, key]);
+    let mut data = page(vec![Some(Value::Bytes(vec![16]))]);
+    data.rows[0].cells[0] = Some(Value::Bytes(vec![14]));
+
+    bindings.project("events", &mut data, || Ok(())).unwrap();
+
+    assert_eq!(data.columns[2].name, "key_decoded");
+    assert_eq!(data.columns[7].name, "value_decoded");
+    assert_eq!(data.rows[0].cells[2], Some(Value::Json("7".into())));
+    assert_eq!(data.rows[0].cells[7], Some(Value::Json("8".into())));
+}
+
+#[test]
 fn avro_missing_files_limits_and_live_columns_are_stable() {
     let dir = tempfile::tempdir().unwrap();
     let schema = dir.path().join("event.avsc");

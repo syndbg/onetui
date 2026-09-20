@@ -62,9 +62,17 @@ Inspect connected PostgreSQL WAL senders:
 
 [![Inspect PostgreSQL replication state](docs/assets/demo/postgres-replication.svg)](docs/assets/demo/postgres-replication.svg)
 
+Inspect the upstream PostgreSQL WAL receiver:
+
+[![Inspect the PostgreSQL WAL receiver](docs/assets/demo/postgres-wal-receiver.svg)](docs/assets/demo/postgres-wal-receiver.svg)
+
 Inspect Kafka consumer groups:
 
 [![Inspect Kafka consumer groups](docs/assets/demo/kafka-groups.svg)](docs/assets/demo/kafka-groups.svg)
+
+Inspect read-only Kafka broker configuration, with sensitive values withheld:
+
+[![Inspect Kafka broker configuration](docs/assets/demo/kafka-broker-config.svg)](docs/assets/demo/kafka-broker-config.svg)
 
 Inspect Qdrant consensus state:
 

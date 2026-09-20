@@ -45,7 +45,7 @@ bootstrap_servers = ["127.0.0.1:29092"]
 security_protocol = "PLAINTEXT"
 [[connections.local_redpanda.decoders]]
 topic = "demo_avro"
-field = "value"
+field = "key"
 format = "avro"
 framing = "confluent"
 [connections.local_redpanda.decoders.registry]
@@ -53,21 +53,21 @@ url = "http://127.0.0.1:18081"
 
 [[connections.local_redpanda.decoders]]
 topic = "demo_avro"
-field = "key"
+field = "value"
 format = "avro"
 framing = "confluent"
 registry = { url = "http://127.0.0.1:18081" }
 
 [[connections.local_redpanda.decoders]]
 topic = "demo_protobuf"
-field = "value"
+field = "key"
 format = "protobuf"
 framing = "confluent"
 registry = { url = "http://127.0.0.1:18081" }
 
 [[connections.local_redpanda.decoders]]
 topic = "demo_protobuf"
-field = "key"
+field = "value"
 format = "protobuf"
 framing = "confluent"
 registry = { url = "http://127.0.0.1:18081" }

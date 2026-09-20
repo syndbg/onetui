@@ -57,9 +57,31 @@ const KAFKA_GROUP: ResourceDescriptor = ResourceDescriptor {
     paging: true,
     actions: &[],
 };
+const KAFKA_BROKER_CONFIG: ResourceDescriptor = ResourceDescriptor {
+    id: "kafka.broker_config",
+    description: "Read-only broker settings; sensitive values are withheld",
+    columns: &[
+        "name",
+        "value",
+        "source",
+        "is_default",
+        "is_read_only",
+        "is_sensitive",
+        "synonyms",
+    ],
+    paging: true,
+    actions: &[],
+};
 const POSTGRES_REPLICATION: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.replication",
     description: "Connected WAL senders from pg_stat_replication; columns follow the server version",
+    columns: &[],
+    paging: true,
+    actions: &[],
+};
+const POSTGRES_WAL_RECEIVER: ResourceDescriptor = ResourceDescriptor {
+    id: "postgres.wal_receiver",
+    description: "Upstream WAL receiver from pg_stat_wal_receiver; columns follow the server version",
     columns: &[],
     paging: true,
     actions: &[],
@@ -124,7 +146,12 @@ static KAFKA: ProviderDescriptor = ProviderDescriptor {
     kind: "kafka",
     entry_resource: Some("kafka.records"),
     browsing: "Kafka records",
-    resources: &[&KAFKA_RECORDS, &KAFKA_GROUPS, &KAFKA_GROUP],
+    resources: &[
+        &KAFKA_RECORDS,
+        &KAFKA_GROUPS,
+        &KAFKA_GROUP,
+        &KAFKA_BROKER_CONFIG,
+    ],
     documentation: empty_documentation,
 };
 static POSTGRES: ProviderDescriptor = ProviderDescriptor {
@@ -134,7 +161,7 @@ static POSTGRES: ProviderDescriptor = ProviderDescriptor {
     kind: "postgres",
     entry_resource: Some("postgres.replication"),
     browsing: "connected replication processes",
-    resources: &[&POSTGRES_REPLICATION],
+    resources: &[&POSTGRES_REPLICATION, &POSTGRES_WAL_RECEIVER],
     documentation: empty_documentation,
 };
 static QDRANT: ProviderDescriptor = ProviderDescriptor {
@@ -360,7 +387,7 @@ fn decoded_message(format: &str) -> crate::App {
         datatype: datatype.into(),
     })
     .collect::<Vec<_>>();
-    for field in ["value", "key"] {
+    for field in ["key", "value"] {
         columns.extend(
             [
                 ("decoded", "JSON projection (not wire bytes)"),
@@ -394,21 +421,21 @@ fn decoded_message(format: &str) -> crate::App {
                     }])
                     .to_string(),
                 )),
-                Some(Value::Json(value_decoded.to_string())),
-                Some(value_schema.into()),
-                None,
-                Some(Value::Json(value_native.to_string())),
-                None,
                 Some(Value::Json(key_decoded.to_string())),
                 Some(key_schema.into()),
                 None,
                 Some(Value::Json(key_native.to_string())),
                 None,
+                Some(Value::Json(value_decoded.to_string())),
+                Some(value_schema.into()),
+                None,
+                Some(Value::Json(value_native.to_string())),
+                None,
             ],
             target: None,
         }],
     );
-    app.view.column = 11;
+    app.view.column = 6;
     app.act(Action::Open);
     app
 }
@@ -507,6 +534,64 @@ fn postgres_replication() -> crate::App {
     app
 }
 
+fn postgres_wal_receiver() -> crate::App {
+    let columns = [
+        ("pid", "int4"),
+        ("status", "text"),
+        ("receive_start_lsn", "pg_lsn"),
+        ("receive_start_tli", "int4"),
+        ("written_lsn", "pg_lsn"),
+        ("flushed_lsn", "pg_lsn"),
+        ("received_tli", "int4"),
+        ("last_msg_send_time", "timestamptz"),
+        ("last_msg_receipt_time", "timestamptz"),
+        ("latest_end_lsn", "pg_lsn"),
+        ("latest_end_time", "timestamptz"),
+        ("slot_name", "text"),
+        ("sender_host", "text"),
+        ("sender_port", "int4"),
+        ("conninfo", "text"),
+    ];
+    let mut app = synthetic_app(
+        "demo_pg",
+        &POSTGRES,
+        Resource::new("postgres.wal_receiver", vec![]),
+        columns
+            .into_iter()
+            .map(|(name, datatype)| Column {
+                name: name.into(),
+                datatype: datatype.into(),
+            })
+            .collect(),
+        vec![Row {
+            cells: [
+                Some("612"),
+                Some("streaming"),
+                Some("0/3A000000"),
+                Some("1"),
+                Some("0/3A4F2C18"),
+                Some("0/3A4F2C18"),
+                Some("1"),
+                Some("2026-09-20 18:42:03+00"),
+                Some("2026-09-20 18:42:03+00"),
+                Some("0/3A4F2C18"),
+                Some("2026-09-20 18:42:03+00"),
+                Some("primary_slot"),
+                Some("postgres-primary.internal"),
+                Some("5432"),
+                Some("user=replicator passfile=/run/secrets/pgpass sslmode=verify-full"),
+            ]
+            .into_iter()
+            .map(|value| value.map(Value::from))
+            .collect(),
+            target: None,
+        }],
+    );
+    app.view.page.notice = "Connected replication processes only, not HA membership. PostgreSQL may hide fields without pg_read_all_stats. Independent reads; no replication slots, promotion or configuration changes.".into();
+    app.view.column = 1;
+    app
+}
+
 fn kafka_groups() -> crate::App {
     let groups = [
         ("orders-api", "Stable", "consumer", "cooperative-sticky", 6),
@@ -551,6 +636,107 @@ fn kafka_groups() -> crate::App {
             .collect(),
     );
     app.view.page.notice = "Read-only group metadata; no membership changes or offset commits. Assignments remain protocol bytes.".into();
+    app
+}
+
+fn kafka_broker_config() -> crate::App {
+    let row = |name: &str,
+               value: Option<&str>,
+               source: &str,
+               is_default: bool,
+               is_read_only: bool,
+               is_sensitive: bool| Row {
+        cells: vec![
+            Some(name.into()),
+            value.map(Value::from),
+            Some(source.into()),
+            Some(is_default.to_string().into()),
+            Some(is_read_only.to_string().into()),
+            Some(is_sensitive.to_string().into()),
+            Some(Value::Json(
+                serde_json::json!([{
+                    "name": name,
+                    "value": if is_sensitive { None } else { value },
+                    "source": source
+                }])
+                .to_string(),
+            )),
+        ],
+        target: None,
+    };
+    let mut app = synthetic_app(
+        "demo_kafka",
+        &KAFKA,
+        Resource::new("kafka.broker_config", vec!["1".into()]),
+        [
+            ("name", "text"),
+            ("value", "text"),
+            ("source", "text"),
+            ("is_default", "boolean"),
+            ("is_read_only", "boolean"),
+            ("is_sensitive", "boolean"),
+            ("synonyms", "JSON (configuration precedence order)"),
+        ]
+        .into_iter()
+        .map(|(name, datatype)| Column {
+            name: name.into(),
+            datatype: datatype.into(),
+        })
+        .collect(),
+        vec![
+            row(
+                "advertised.listeners",
+                Some("PLAINTEXT://broker:9092"),
+                "STATIC_BROKER_CONFIG",
+                false,
+                true,
+                false,
+            ),
+            row(
+                "auto.create.topics.enable",
+                Some("false"),
+                "DEFAULT_CONFIG",
+                true,
+                false,
+                false,
+            ),
+            row(
+                "log.cleanup.policy",
+                Some("delete"),
+                "DEFAULT_CONFIG",
+                true,
+                false,
+                false,
+            ),
+            row(
+                "log.retention.hours",
+                Some("168"),
+                "DEFAULT_CONFIG",
+                true,
+                false,
+                false,
+            ),
+            row(
+                "num.partitions",
+                Some("3"),
+                "STATIC_BROKER_CONFIG",
+                false,
+                true,
+                false,
+            ),
+            row(
+                "ssl.keystore.password",
+                None,
+                "STATIC_BROKER_CONFIG",
+                false,
+                false,
+                true,
+            ),
+        ],
+    );
+    app.view.page.notice =
+        "Read-only configuration; sensitive values withheld. Re-read per page, no snapshot.".into();
+    app.view.selected = 5;
     app
 }
 
@@ -828,7 +1014,7 @@ fn render(theme: Theme) -> String {
     )
 }
 
-fn demos() -> [(String, &'static str); 11] {
+fn demos() -> [(String, &'static str); 13] {
     let browse = app(Theme::Catppuccin);
     let mut inspect = app(Theme::Catppuccin);
     inspect.act(Action::Open);
@@ -840,7 +1026,9 @@ fn demos() -> [(String, &'static str); 11] {
     let avro = decoded_message("avro");
     let protobuf = decoded_message("protobuf");
     let replication = postgres_replication();
+    let wal_receiver = postgres_wal_receiver();
     let groups = kafka_groups();
+    let broker_config = kafka_broker_config();
     let consensus = qdrant_consensus();
     let dynamodb = dynamodb_items();
     let shards = dynamodb_stream_shards();
@@ -896,11 +1084,27 @@ fn demos() -> [(String, &'static str); 11] {
         ),
         (
             render_app(
+                &wal_receiver,
+                "OneTUI showing the PostgreSQL WAL receiver",
+                "Inspect the connected PostgreSQL WAL receiver in OneTUI",
+            ),
+            "postgres-wal-receiver.svg",
+        ),
+        (
+            render_app(
                 &groups,
                 "OneTUI showing Kafka consumer groups",
                 "Inspect Kafka consumer groups in OneTUI",
             ),
             "kafka-groups.svg",
+        ),
+        (
+            render_app(
+                &broker_config,
+                "OneTUI showing Kafka broker configuration",
+                "Inspect read-only Kafka broker configuration in OneTUI",
+            ),
+            "kafka-broker-config.svg",
         ),
         (
             render_app(

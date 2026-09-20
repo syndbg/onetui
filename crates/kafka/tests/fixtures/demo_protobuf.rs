@@ -23,29 +23,29 @@ async fn demo_protobuf_config_browsing_and_live_traffic() {
     let first = fetch(&executor, registry.clone(), None).await;
     assert_eq!(first.rows.len(), 100);
     assert_eq!(first.columns.len(), 15);
-    assert_eq!(first.columns[10].name, "key_decoded");
-    assert_eq!(first.rows[1].cells[7], None);
+    assert_eq!(first.columns[5].name, "key_decoded");
+    assert_eq!(first.rows[1].cells[12], None);
     let decoded: serde_json::Value =
-        serde_json::from_str(first.rows[1].cells[5].as_ref().unwrap().text().unwrap()).unwrap();
+        serde_json::from_str(first.rows[1].cells[10].as_ref().unwrap().text().unwrap()).unwrap();
     assert_eq!(decoded["title"], "Synthetic Protobuf event 1");
     assert!(decoded["note"].is_string());
     let key: serde_json::Value =
-        serde_json::from_str(first.rows[1].cells[10].as_ref().unwrap().text().unwrap()).unwrap();
+        serde_json::from_str(first.rows[1].cells[5].as_ref().unwrap().text().unwrap()).unwrap();
     assert_eq!(key["id"], "1");
     assert_eq!(key["name"], "customer-1");
     assert!(
-        first.rows[1].cells[11]
+        first.rows[1].cells[6]
             .as_ref()
             .unwrap()
             .text()
             .unwrap()
             .contains("&message=demo.Customer")
     );
-    assert!(first.rows[1].cells[12].is_none());
-    assert!(first.rows[1].cells[13].is_some());
-    assert!(first.rows[1].cells[14].is_none());
+    assert!(first.rows[1].cells[7].is_none());
+    assert!(first.rows[1].cells[8].is_some());
+    assert!(first.rows[1].cells[9].is_none());
     let raw = fetch(&executor, catalog.clone(), None).await;
-    assert_eq!(raw.rows[1].cells[5], first.rows[1].cells[5]);
+    assert_eq!(raw.rows[1].cells[5], first.rows[1].cells[10]);
     assert_eq!(raw.rows[1].cells[7], None);
     assert!(
         raw.rows[1].cells[6]
@@ -70,11 +70,12 @@ async fn demo_protobuf_config_browsing_and_live_traffic() {
     let raw_live = follow(&executor, catalog, raw_tail.continuation).await;
     assert_eq!(live.rows.len(), 1);
     assert_eq!(raw_live.rows.len(), 1);
-    assert_eq!(live.rows[0].cells[7], None);
+    assert!(live.rows[0].cells[5].is_some());
+    assert!(live.rows[0].cells[7].is_none());
     assert!(live.rows[0].cells[10].is_some());
     assert!(live.rows[0].cells[12].is_none());
     assert_eq!(raw_live.rows[0].cells[7], None);
-    assert_eq!(live.rows[0].cells[5], raw_live.rows[0].cells[5]);
+    assert_eq!(live.rows[0].cells[10], raw_live.rows[0].cells[5]);
     executor
         .shutdown(ShutdownContext::new(Duration::from_secs(2)))
         .await

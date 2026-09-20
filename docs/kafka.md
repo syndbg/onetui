@@ -83,7 +83,7 @@ framing = "raw"
 schema_file = "/absolute/path/event.avsc"
 ```
 
-Set `field` to `key` or `value`. Add separate bindings to decode both. Each binding can use Avro or Protobuf and its own schema source.
+Set `field` to `key` or `value`. Add separate bindings to decode both. Each binding can use Avro or Protobuf and its own schema source. Key-derived columns always appear before value-derived columns.
 
 For raw Protobuf, set `format = "protobuf"`, use a binary descriptor set including imports, and add `message_name = "demo.Event"`. See the [protoc example](../crates/protobuf/README.md#try-a-raw-message) and [example bindings](../hack/kafka-decoders.toml.example). Avro supports an optional `reader_schema_file` for reader projections.
 
