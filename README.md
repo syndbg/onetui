@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
+  <a href="#demo">Demo</a> ·
   <a href="#features-and-datasource-support">Datasources</a> ·
   <a href="#themes">Themes</a> ·
   <a href="#configuration">Configuration</a> ·
@@ -24,6 +25,42 @@
 OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect data, run native queries and follow live messages without switching tools.
 
 The project is working toward **v0.1.0**. This version is **read-only**.
+
+## Demo
+
+Browse rows:
+
+[![Browse PostgreSQL rows in OneTUI](docs/assets/demo/browse.svg)](docs/assets/demo/browse.svg)
+
+Inspect a row:
+
+[![Inspect every field in a selected row](docs/assets/demo/inspect.svg)](docs/assets/demo/inspect.svg)
+
+Run a native query:
+
+[![Edit a native PostgreSQL query above its results](docs/assets/demo/query.svg)](docs/assets/demo/query.svg)
+
+Inspect decoded Avro beside the original value and schema:
+
+[![Inspect decoded Avro and its schema](docs/assets/demo/avro.svg)](docs/assets/demo/avro.svg)
+
+Inspect decoded Protobuf beside the original value and schema:
+
+[![Inspect decoded Protobuf and its schema](docs/assets/demo/protobuf.svg)](docs/assets/demo/protobuf.svg)
+
+Inspect Qdrant consensus state:
+
+[![Inspect Qdrant consensus state](docs/assets/demo/qdrant-consensus.svg)](docs/assets/demo/qdrant-consensus.svg)
+
+Try the disposable demos from a source checkout:
+
+```sh
+make dev-up
+make dev-run
+make dev-traffic # optional live Kafka, Redpanda and NATS messages
+```
+
+See [local demos](hack/README.md) for what to open. `make dev-down` deletes the fixture data.
 
 ## Install
 
@@ -59,15 +96,6 @@ Run `onetui`. Press `a` to add a connection, fill in its fields and press F2 to 
 
 Enter opens a resource or value; Esc goes back. Press `?` for available actions, `/` to filter rows, `e` for a native query or `f` to follow where supported. See the [user guide](docs/ui.md).
 
-To try disposable sample databases from a source checkout:
-
-```sh
-make dev-up
-make dev-run
-```
-
-Use `make dev-traffic` for live messages. `make dev-down` deletes the fixture data. See [local demos](hack/README.md) for prerequisites and examples.
-
 ## Features and datasource support
 
 | Datasource | Functionality |
@@ -84,8 +112,6 @@ Kafka and NATS can decode Avro and Protobuf using files, directory catalogs, Con
 Use read-only credentials. Reads still consume server resources. Connector guides explain their distinctive limits.
 
 ## Themes
-
-[![OneTUI with the default Catppuccin theme and synthetic customer data](docs/assets/themes/catppuccin.svg)](docs/themes.md)
 
 Press `T` to preview ten built-in themes. Set `theme` in your config to keep a preference between runs. See the [theme gallery](docs/themes.md).
 

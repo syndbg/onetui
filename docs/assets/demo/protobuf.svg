@@ -1,0 +1,329 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1472" height="736" viewBox="0 0 1472 736" role="img" aria-label="OneTUI inspecting decoded Protobuf">
+<title>Inspect decoded Protobuf and its schema in OneTUI</title>
+<rect width="100%" height="100%" fill="#1e1e2e"/>
+<g font-family="'DejaVu Sans Mono',Consolas,monospace" font-size="16">
+<rect x="16" y="16" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="33" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭</text>
+<rect x="26" y="16" width="110" height="22" fill="#1e1e2e"/>
+<text x="26" y="33" fill="#89dceb" font-weight="bold" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Context | </text>
+<rect x="136" y="16" width="90" height="22" fill="#1e1e2e"/>
+<text x="136" y="33" fill="#f38ba8" font-weight="bold" textLength="90" lengthAdjust="spacingAndGlyphs" xml:space="preserve">read-only</text>
+<rect x="226" y="16" width="10" height="22" fill="#1e1e2e"/>
+<rect x="236" y="16" width="1220" height="22" fill="#1e1e2e"/>
+<text x="236" y="33" fill="#b4befe" font-weight="normal" textLength="1220" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
+<rect x="16" y="38" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="55" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="38" width="110" height="22" fill="#1e1e2e"/>
+<text x="26" y="55" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Connection </text>
+<rect x="136" y="38" width="100" height="22" fill="#1e1e2e"/>
+<text x="136" y="55" fill="#b4befe" font-weight="normal" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">demo_kafka</text>
+<rect x="236" y="38" width="430" height="22" fill="#1e1e2e"/>
+<rect x="666" y="38" width="70" height="22" fill="#1e1e2e"/>
+<text x="666" y="55" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">T      </text>
+<rect x="736" y="38" width="60" height="22" fill="#1e1e2e"/>
+<text x="736" y="55" fill="#a6adc8" font-weight="normal" textLength="60" lengthAdjust="spacingAndGlyphs" xml:space="preserve">themes</text>
+<rect x="796" y="38" width="70" height="22" fill="#1e1e2e"/>
+<rect x="866" y="38" width="70" height="22" fill="#1e1e2e"/>
+<text x="866" y="55" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Enter  </text>
+<rect x="936" y="38" width="40" height="22" fill="#1e1e2e"/>
+<text x="936" y="55" fill="#a6adc8" font-weight="normal" textLength="40" lengthAdjust="spacingAndGlyphs" xml:space="preserve">open</text>
+<rect x="976" y="38" width="80" height="22" fill="#1e1e2e"/>
+<rect x="1056" y="38" width="100" height="22" fill="#1e1e2e"/>
+<text x="1056" y="55" fill="#89dceb" font-weight="bold" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">?         </text>
+<rect x="1156" y="38" width="40" height="22" fill="#1e1e2e"/>
+<text x="1156" y="55" fill="#a6adc8" font-weight="normal" textLength="40" lengthAdjust="spacingAndGlyphs" xml:space="preserve">help</text>
+<rect x="1196" y="38" width="60" height="22" fill="#1e1e2e"/>
+<rect x="1256" y="38" width="80" height="22" fill="#1e1e2e"/>
+<text x="1256" y="55" fill="#89dceb" font-weight="bold" textLength="80" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Ctrl-d  </text>
+<rect x="1336" y="38" width="110" height="22" fill="#1e1e2e"/>
+<text x="1336" y="55" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">half_page_d</text>
+<rect x="1446" y="38" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="55" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="60" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="77" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="60" width="110" height="22" fill="#1e1e2e"/>
+<text x="26" y="77" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Datasource </text>
+<rect x="136" y="60" width="50" height="22" fill="#1e1e2e"/>
+<text x="136" y="77" fill="#89b4fa" font-weight="normal" textLength="50" lengthAdjust="spacingAndGlyphs" xml:space="preserve">kafka</text>
+<rect x="186" y="60" width="480" height="22" fill="#1e1e2e"/>
+<rect x="666" y="60" width="70" height="22" fill="#1e1e2e"/>
+<text x="666" y="77" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">v      </text>
+<rect x="736" y="60" width="70" height="22" fill="#1e1e2e"/>
+<text x="736" y="77" fill="#a6adc8" font-weight="normal" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">display</text>
+<rect x="806" y="60" width="60" height="22" fill="#1e1e2e"/>
+<rect x="866" y="60" width="70" height="22" fill="#1e1e2e"/>
+<text x="866" y="77" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Esc    </text>
+<rect x="936" y="60" width="40" height="22" fill="#1e1e2e"/>
+<text x="936" y="77" fill="#a6adc8" font-weight="normal" textLength="40" lengthAdjust="spacingAndGlyphs" xml:space="preserve">back</text>
+<rect x="976" y="60" width="80" height="22" fill="#1e1e2e"/>
+<rect x="1056" y="60" width="100" height="22" fill="#1e1e2e"/>
+<text x="1056" y="77" fill="#89dceb" font-weight="bold" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">q         </text>
+<rect x="1156" y="60" width="40" height="22" fill="#1e1e2e"/>
+<text x="1156" y="77" fill="#a6adc8" font-weight="normal" textLength="40" lengthAdjust="spacingAndGlyphs" xml:space="preserve">quit</text>
+<rect x="1196" y="60" width="250" height="22" fill="#1e1e2e"/>
+<rect x="1446" y="60" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="77" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="82" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="99" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="82" width="110" height="22" fill="#1e1e2e"/>
+<text x="26" y="99" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Resource   </text>
+<rect x="136" y="82" width="130" height="22" fill="#1e1e2e"/>
+<text x="136" y="99" fill="#f9e2af" font-weight="normal" textLength="130" lengthAdjust="spacingAndGlyphs" xml:space="preserve">kafka.records</text>
+<rect x="266" y="82" width="400" height="22" fill="#1e1e2e"/>
+<rect x="666" y="82" width="70" height="22" fill="#1e1e2e"/>
+<text x="666" y="99" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">h      </text>
+<rect x="736" y="82" width="40" height="22" fill="#1e1e2e"/>
+<text x="736" y="99" fill="#a6adc8" font-weight="normal" textLength="40" lengthAdjust="spacingAndGlyphs" xml:space="preserve">left</text>
+<rect x="776" y="82" width="90" height="22" fill="#1e1e2e"/>
+<rect x="866" y="82" width="70" height="22" fill="#1e1e2e"/>
+<text x="866" y="99" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">c      </text>
+<rect x="936" y="82" width="110" height="22" fill="#1e1e2e"/>
+<text x="936" y="99" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">connections</text>
+<rect x="1046" y="82" width="10" height="22" fill="#1e1e2e"/>
+<rect x="1056" y="82" width="100" height="22" fill="#1e1e2e"/>
+<text x="1056" y="99" fill="#89dceb" font-weight="bold" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Ctrl-c    </text>
+<rect x="1156" y="82" width="60" height="22" fill="#1e1e2e"/>
+<text x="1156" y="99" fill="#a6adc8" font-weight="normal" textLength="60" lengthAdjust="spacingAndGlyphs" xml:space="preserve">cancel</text>
+<rect x="1216" y="82" width="230" height="22" fill="#1e1e2e"/>
+<rect x="1446" y="82" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="99" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="104" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="121" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="104" width="110" height="22" fill="#1e1e2e"/>
+<text x="26" y="121" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Path       </text>
+<rect x="136" y="104" width="170" height="22" fill="#1e1e2e"/>
+<text x="136" y="121" fill="#89dceb" font-weight="normal" textLength="170" lengthAdjust="spacingAndGlyphs" xml:space="preserve">demo_protobuf / 0</text>
+<rect x="306" y="104" width="360" height="22" fill="#1e1e2e"/>
+<rect x="666" y="104" width="70" height="22" fill="#1e1e2e"/>
+<text x="666" y="121" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">l      </text>
+<rect x="736" y="104" width="50" height="22" fill="#1e1e2e"/>
+<text x="736" y="121" fill="#a6adc8" font-weight="normal" textLength="50" lengthAdjust="spacingAndGlyphs" xml:space="preserve">right</text>
+<rect x="786" y="104" width="80" height="22" fill="#1e1e2e"/>
+<rect x="866" y="104" width="110" height="22" fill="#1e1e2e"/>
+<text x="866" y="121" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">n      next</text>
+<rect x="976" y="104" width="80" height="22" fill="#1e1e2e"/>
+<rect x="1056" y="104" width="100" height="22" fill="#1e1e2e"/>
+<text x="1056" y="121" fill="#89dceb" font-weight="bold" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">PageUp    </text>
+<rect x="1156" y="104" width="70" height="22" fill="#1e1e2e"/>
+<text x="1156" y="121" fill="#a6adc8" font-weight="normal" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">page_up</text>
+<rect x="1226" y="104" width="220" height="22" fill="#1e1e2e"/>
+<rect x="1446" y="104" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="121" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="126" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="143" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="126" width="110" height="22" fill="#1e1e2e"/>
+<text x="26" y="143" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Loaded     </text>
+<rect x="136" y="126" width="530" height="22" fill="#1e1e2e"/>
+<text x="136" y="143" fill="#cdd6f4" font-weight="normal" textLength="530" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 items | 1 shown                                    </text>
+<rect x="666" y="126" width="70" height="22" fill="#1e1e2e"/>
+<text x="666" y="143" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">k      </text>
+<rect x="736" y="126" width="20" height="22" fill="#1e1e2e"/>
+<text x="736" y="143" fill="#a6adc8" font-weight="normal" textLength="20" lengthAdjust="spacingAndGlyphs" xml:space="preserve">up</text>
+<rect x="756" y="126" width="110" height="22" fill="#1e1e2e"/>
+<rect x="866" y="126" width="150" height="22" fill="#1e1e2e"/>
+<text x="866" y="143" fill="#a6adc8" font-weight="normal" textLength="150" lengthAdjust="spacingAndGlyphs" xml:space="preserve">p      previous</text>
+<rect x="1016" y="126" width="40" height="22" fill="#1e1e2e"/>
+<rect x="1056" y="126" width="100" height="22" fill="#1e1e2e"/>
+<text x="1056" y="143" fill="#89dceb" font-weight="bold" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">PageDown  </text>
+<rect x="1156" y="126" width="90" height="22" fill="#1e1e2e"/>
+<text x="1156" y="143" fill="#a6adc8" font-weight="normal" textLength="90" lengthAdjust="spacingAndGlyphs" xml:space="preserve">page_down</text>
+<rect x="1246" y="126" width="200" height="22" fill="#1e1e2e"/>
+<rect x="1446" y="126" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="143" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="148" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="165" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="148" width="110" height="22" fill="#1e1e2e"/>
+<text x="26" y="165" fill="#a6adc8" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Transport  </text>
+<rect x="136" y="148" width="90" height="22" fill="#1e1e2e"/>
+<text x="136" y="165" fill="#a6e3a1" font-weight="normal" textLength="90" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Connected</text>
+<rect x="226" y="148" width="440" height="22" fill="#1e1e2e"/>
+<rect x="666" y="148" width="70" height="22" fill="#1e1e2e"/>
+<text x="666" y="165" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">j      </text>
+<rect x="736" y="148" width="40" height="22" fill="#1e1e2e"/>
+<text x="736" y="165" fill="#a6adc8" font-weight="normal" textLength="40" lengthAdjust="spacingAndGlyphs" xml:space="preserve">down</text>
+<rect x="776" y="148" width="90" height="22" fill="#1e1e2e"/>
+<rect x="866" y="148" width="70" height="22" fill="#1e1e2e"/>
+<text x="866" y="165" fill="#89dceb" font-weight="bold" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">r      </text>
+<rect x="936" y="148" width="70" height="22" fill="#1e1e2e"/>
+<text x="936" y="165" fill="#a6adc8" font-weight="normal" textLength="70" lengthAdjust="spacingAndGlyphs" xml:space="preserve">refresh</text>
+<rect x="1006" y="148" width="50" height="22" fill="#1e1e2e"/>
+<rect x="1056" y="148" width="100" height="22" fill="#1e1e2e"/>
+<text x="1056" y="165" fill="#89dceb" font-weight="bold" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Ctrl-u    </text>
+<rect x="1156" y="148" width="100" height="22" fill="#1e1e2e"/>
+<text x="1156" y="165" fill="#a6adc8" font-weight="normal" textLength="100" lengthAdjust="spacingAndGlyphs" xml:space="preserve">half_page_</text>
+<rect x="1256" y="148" width="190" height="22" fill="#1e1e2e"/>
+<rect x="1446" y="148" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="165" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="170" width="1440" height="22" fill="#1e1e2e"/>
+<text x="16" y="187" fill="#b4befe" font-weight="normal" textLength="1440" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+<rect x="16" y="192" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="209" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭</text>
+<rect x="26" y="192" width="690" height="22" fill="#1e1e2e"/>
+<text x="26" y="209" fill="#89dceb" font-weight="bold" textLength="690" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Row data | 10 fields | PgUp/PgDn value | Enter full value, Esc back </text>
+<rect x="716" y="192" width="740" height="22" fill="#1e1e2e"/>
+<text x="716" y="209" fill="#b4befe" font-weight="normal" textLength="740" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────────────────────╮</text>
+<rect x="16" y="214" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="231" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="214" width="1420" height="22" fill="#1e1e2e"/>
+<text x="26" y="231" fill="#f9e2af" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  FIELD                              TYPE                               VALUE                                                                 </text>
+<rect x="1446" y="214" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="231" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="236" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="253" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="236" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="236" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="253" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">offset                            </text>
+<rect x="386" y="236" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="253" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> integer                            1042                                                                  </text>
+<rect x="1446" y="236" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="253" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="258" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="275" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="258" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="258" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="275" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">timestamp_ms                      </text>
+<rect x="386" y="258" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="275" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> integer                            1789909200000                                                         </text>
+<rect x="1446" y="258" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="275" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="280" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="297" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="280" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="280" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="297" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">key                               </text>
+<rect x="386" y="280" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="297" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> bytes                              order-1042                                                            </text>
+<rect x="1446" y="280" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="297" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="302" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="319" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="302" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="302" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="319" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value                             </text>
+<rect x="386" y="302" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="319" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> bytes                              \u{0}\u{0}\u{0}\u{0}\u{15}\u{0}                                       </text>
+<rect x="1446" y="302" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="319" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="324" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="341" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="324" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="324" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="324" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="341" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                    \u{6}P-2048                                                           </text>
+<rect x="1446" y="324" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="341" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="346" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="363" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="346" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="346" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="363" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">headers                           </text>
+<rect x="386" y="346" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="363" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> JSON (ordered header names and nul [                                                                     </text>
+<rect x="1446" y="346" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="363" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="368" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="385" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="368" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="368" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="368" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="385" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                      {                                                                   </text>
+<rect x="1446" y="368" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="385" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="390" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="407" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="390" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="390" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="390" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="407" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        "name": "content-type",…                                          </text>
+<rect x="1446" y="390" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="407" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="412" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="429" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="412" width="1420" height="22" fill="#b4befe"/>
+<text x="26" y="429" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&gt; value_decoded                      JSON projection (not wire bytes)   {                                                                     </text>
+<rect x="1446" y="412" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="429" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="434" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="451" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="434" width="1420" height="22" fill="#b4befe"/>
+<text x="26" y="451" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                          "orderId": "P-2048"                                                 </text>
+<rect x="1446" y="434" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="451" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="456" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="473" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="456" width="1420" height="22" fill="#b4befe"/>
+<text x="26" y="473" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                        }                                                                     </text>
+<rect x="1446" y="456" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="473" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="478" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="495" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="478" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="478" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="495" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_schema                      </text>
+<rect x="386" y="478" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="495" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> schema identity                    confluent:https://registry.local#id=21&amp;message=demo.Order             </text>
+<rect x="1446" y="478" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="495" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="500" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="517" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="500" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="500" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="517" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_decode_error                </text>
+<rect x="386" y="500" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="517" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> text                               NULL                                                                  </text>
+<rect x="1446" y="500" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="517" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="522" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="539" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="522" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="522" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="539" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_native                      </text>
+<rect x="386" y="522" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="539" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> JSON typed inspection (not wire by {                                                                     </text>
+<rect x="1446" y="522" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="539" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="544" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="561" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="544" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="544" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="544" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="561" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                      "fields": [                                                         </text>
+<rect x="1446" y="544" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="561" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="566" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="583" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="566" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="566" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="566" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="583" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        {…                                                                </text>
+<rect x="1446" y="566" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="583" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="588" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="605" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="588" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="588" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="605" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_native_error                </text>
+<rect x="386" y="588" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="605" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> text                               NULL                                                                  </text>
+<rect x="1446" y="588" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="605" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="610" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="627" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="610" width="1420" height="22" fill="#1e1e2e"/>
+<rect x="1446" y="610" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="627" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="632" width="10" height="22" fill="#1e1e2e"/>
+<text x="16" y="649" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="26" y="632" width="1420" height="22" fill="#1e1e2e"/>
+<rect x="1446" y="632" width="10" height="22" fill="#1e1e2e"/>
+<text x="1446" y="649" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<rect x="16" y="654" width="1440" height="22" fill="#1e1e2e"/>
+<text x="16" y="671" fill="#b4befe" font-weight="normal" textLength="1440" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+<rect x="16" y="676" width="50" height="22" fill="#1e1e2e"/>
+<text x="16" y="693" fill="#a6e3a1" font-weight="normal" textLength="50" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Ready</text>
+<rect x="66" y="676" width="1320" height="22" fill="#1e1e2e"/>
+<rect x="1386" y="676" width="70" height="22" fill="#1e1e2e"/>
+<rect x="16" y="698" width="1440" height="22" fill="#1e1e2e"/>
+<text x="16" y="715" fill="#a6adc8" font-weight="normal" textLength="1440" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Page 1 | 1 items | next: false | Synthetic demo data                                                                                      v0.1.0</text>
+</g>
+</svg>
