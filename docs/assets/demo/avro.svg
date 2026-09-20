@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1472" height="736" viewBox="0 0 1472 736" role="img" aria-label="OneTUI inspecting decoded Avro">
-<title>Inspect decoded Avro and its schema in OneTUI</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1472" height="736" viewBox="0 0 1472 736" role="img" aria-label="OneTUI inspecting an Avro-decoded Kafka key">
+<title>Inspect an Avro-decoded Kafka key and its schema in OneTUI</title>
 <rect width="100%" height="100%" fill="#1e1e2e"/>
 <g font-family="'DejaVu Sans Mono',Consolas,monospace" font-size="16">
 <rect x="16" y="16" width="10" height="22" fill="#1e1e2e"/>
@@ -192,7 +192,7 @@
 <rect x="46" y="280" width="340" height="22" fill="#1e1e2e"/>
 <text x="46" y="297" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">key                               </text>
 <rect x="386" y="280" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="297" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> bytes                              order-1042                                                            </text>
+<text x="386" y="297" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> bytes                              \u{0}\u{0}\u{0}\u{0}\u{e}\u{c}A-1042                                  </text>
 <rect x="1446" y="280" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="297" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="302" width="10" height="22" fill="#1e1e2e"/>
@@ -201,16 +201,15 @@
 <rect x="46" y="302" width="340" height="22" fill="#1e1e2e"/>
 <text x="46" y="319" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value                             </text>
 <rect x="386" y="302" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="319" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> bytes                              \u{0}\u{0}\u{0}\u{0}\u{e}\u{c}A-1042                                  </text>
+<text x="386" y="319" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> bytes                              {                                                                     </text>
 <rect x="1446" y="302" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="319" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="324" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="341" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="324" width="20" height="22" fill="#1e1e2e"/>
 <rect x="46" y="324" width="340" height="22" fill="#1e1e2e"/>
-<text x="46" y="341" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">headers                           </text>
 <rect x="386" y="324" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="341" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> JSON (ordered header names and nul [                                                                     </text>
+<text x="386" y="341" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                      "event": "created"                                                  </text>
 <rect x="1446" y="324" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="341" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="346" width="10" height="22" fill="#1e1e2e"/>
@@ -218,95 +217,102 @@
 <rect x="26" y="346" width="20" height="22" fill="#1e1e2e"/>
 <rect x="46" y="346" width="340" height="22" fill="#1e1e2e"/>
 <rect x="386" y="346" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="363" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                      {                                                                   </text>
+<text x="386" y="363" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                    }                                                                     </text>
 <rect x="1446" y="346" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="363" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="368" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="385" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="368" width="20" height="22" fill="#1e1e2e"/>
 <rect x="46" y="368" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="385" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">headers                           </text>
 <rect x="386" y="368" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="385" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        "name": "content-type",…                                          </text>
+<text x="386" y="385" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> JSON (ordered header names and nul [                                                                     </text>
 <rect x="1446" y="368" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="385" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="390" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="407" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="390" width="1420" height="22" fill="#b4befe"/>
-<text x="26" y="407" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&gt; value_decoded                      JSON projection (not wire bytes)   {                                                                     </text>
+<rect x="26" y="390" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="390" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="390" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="407" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                      {                                                                   </text>
 <rect x="1446" y="390" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="407" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="412" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="429" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="412" width="1420" height="22" fill="#b4befe"/>
-<text x="26" y="429" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                          "order_id": "A-1042"                                                </text>
+<rect x="26" y="412" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="412" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="412" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="429" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        "name": "content-type",…                                          </text>
 <rect x="1446" y="412" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="429" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="434" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="451" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="434" width="1420" height="22" fill="#b4befe"/>
-<text x="26" y="451" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                        }                                                                     </text>
+<text x="26" y="451" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&gt; key_decoded                        JSON projection (not wire bytes)   {                                                                     </text>
 <rect x="1446" y="434" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="451" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="456" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="473" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="456" width="20" height="22" fill="#1e1e2e"/>
-<rect x="46" y="456" width="340" height="22" fill="#1e1e2e"/>
-<text x="46" y="473" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_schema                      </text>
-<rect x="386" y="456" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="473" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> schema identity                    confluent:https://registry.local#id=14                                </text>
+<rect x="26" y="456" width="1420" height="22" fill="#b4befe"/>
+<text x="26" y="473" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                          "order_id": "A-1042"                                                </text>
 <rect x="1446" y="456" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="473" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="478" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="495" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="478" width="20" height="22" fill="#1e1e2e"/>
-<rect x="46" y="478" width="340" height="22" fill="#1e1e2e"/>
-<text x="46" y="495" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_decode_error                </text>
-<rect x="386" y="478" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="495" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> text                               NULL                                                                  </text>
+<rect x="26" y="478" width="1420" height="22" fill="#b4befe"/>
+<text x="26" y="495" fill="#1e1e2e" font-weight="bold" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                        }                                                                     </text>
 <rect x="1446" y="478" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="495" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="500" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="517" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="500" width="20" height="22" fill="#1e1e2e"/>
 <rect x="46" y="500" width="340" height="22" fill="#1e1e2e"/>
-<text x="46" y="517" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_native                      </text>
+<text x="46" y="517" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">key_schema                        </text>
 <rect x="386" y="500" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="517" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> JSON typed inspection (not wire by {                                                                     </text>
+<text x="386" y="517" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> schema identity                    confluent:https://registry.local#id=14                                </text>
 <rect x="1446" y="500" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="517" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="522" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="539" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="522" width="20" height="22" fill="#1e1e2e"/>
 <rect x="46" y="522" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="539" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">key_decode_error                  </text>
 <rect x="386" y="522" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="539" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                      "fields": [                                                         </text>
+<text x="386" y="539" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> text                               NULL                                                                  </text>
 <rect x="1446" y="522" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="539" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="544" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="561" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="544" width="20" height="22" fill="#1e1e2e"/>
 <rect x="46" y="544" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="561" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">key_native                        </text>
 <rect x="386" y="544" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="561" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        […                                                                </text>
+<text x="386" y="561" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> JSON typed inspection (not wire by {                                                                     </text>
 <rect x="1446" y="544" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="561" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="566" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="583" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="566" width="20" height="22" fill="#1e1e2e"/>
 <rect x="46" y="566" width="340" height="22" fill="#1e1e2e"/>
-<text x="46" y="583" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">value_native_error                </text>
 <rect x="386" y="566" width="1060" height="22" fill="#1e1e2e"/>
-<text x="386" y="583" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> text                               NULL                                                                  </text>
+<text x="386" y="583" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                      "fields": [                                                         </text>
 <rect x="1446" y="566" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="583" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="588" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="605" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="588" width="1420" height="22" fill="#1e1e2e"/>
+<rect x="26" y="588" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="588" width="340" height="22" fill="#1e1e2e"/>
+<rect x="386" y="588" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="605" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        […                                                                </text>
 <rect x="1446" y="588" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="605" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="610" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="627" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="610" width="1420" height="22" fill="#1e1e2e"/>
+<rect x="26" y="610" width="20" height="22" fill="#1e1e2e"/>
+<rect x="46" y="610" width="340" height="22" fill="#1e1e2e"/>
+<text x="46" y="627" fill="#89b4fa" font-weight="normal" textLength="340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">key_native_error                  </text>
+<rect x="386" y="610" width="1060" height="22" fill="#1e1e2e"/>
+<text x="386" y="627" fill="#cdd6f4" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> text                               NULL                                                                  </text>
 <rect x="1446" y="610" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="627" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="632" width="10" height="22" fill="#1e1e2e"/>

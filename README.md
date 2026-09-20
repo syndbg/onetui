@@ -28,6 +28,8 @@ The project is working toward **v0.1.0**. This version is **read-only**.
 
 ## Demo
 
+### Data and queries
+
 Browse rows:
 
 [![Browse PostgreSQL rows in OneTUI](docs/assets/demo/browse.svg)](docs/assets/demo/browse.svg)
@@ -40,17 +42,41 @@ Run a native query:
 
 [![Edit a native PostgreSQL query above its results](docs/assets/demo/query.svg)](docs/assets/demo/query.svg)
 
-Inspect decoded Avro beside the original value and schema:
+Browse typed DynamoDB items:
 
-[![Inspect decoded Avro and its schema](docs/assets/demo/avro.svg)](docs/assets/demo/avro.svg)
+[![Browse typed DynamoDB items](docs/assets/demo/dynamodb-items.svg)](docs/assets/demo/dynamodb-items.svg)
 
-Inspect decoded Protobuf beside the original value and schema:
+Kafka schema bindings work independently for keys and values.
 
-[![Inspect decoded Protobuf and its schema](docs/assets/demo/protobuf.svg)](docs/assets/demo/protobuf.svg)
+Inspect an Avro-decoded key beside its original bytes and schema:
+
+[![Inspect an Avro-decoded Kafka key and its schema](docs/assets/demo/avro.svg)](docs/assets/demo/avro.svg)
+
+Inspect a Protobuf-decoded value beside its original bytes and schema:
+
+[![Inspect a Protobuf-decoded Kafka value and its schema](docs/assets/demo/protobuf.svg)](docs/assets/demo/protobuf.svg)
+
+### Operational views
+
+Inspect connected PostgreSQL WAL senders:
+
+[![Inspect PostgreSQL replication state](docs/assets/demo/postgres-replication.svg)](docs/assets/demo/postgres-replication.svg)
+
+Inspect Kafka consumer groups:
+
+[![Inspect Kafka consumer groups](docs/assets/demo/kafka-groups.svg)](docs/assets/demo/kafka-groups.svg)
 
 Inspect Qdrant consensus state:
 
 [![Inspect Qdrant consensus state](docs/assets/demo/qdrant-consensus.svg)](docs/assets/demo/qdrant-consensus.svg)
+
+Inspect DynamoDB stream shards:
+
+[![Inspect DynamoDB stream shards](docs/assets/demo/dynamodb-stream-shards.svg)](docs/assets/demo/dynamodb-stream-shards.svg)
+
+Inspect RabbitMQ queue metrics:
+
+[![Inspect RabbitMQ queue metrics](docs/assets/demo/rabbitmq-queues.svg)](docs/assets/demo/rabbitmq-queues.svg)
 
 Try the disposable demos from a source checkout:
 
