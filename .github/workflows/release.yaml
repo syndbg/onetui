@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Native Kafka build tools
         run: |
           sudo apt update
@@ -67,6 +68,7 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs -o /tmp/onetui-rustup.sh
           sh /tmp/onetui-rustup.sh -y --profile minimal --default-toolchain none
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build and test rpm
         shell: bash
         run: |
@@ -103,6 +105,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Native build tools
         run: brew list cmake > /dev/null 2>&1 || brew install cmake
       - name: Build native archive
