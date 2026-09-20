@@ -2,7 +2,7 @@
 
 Raw Avro decoding with an explicit writer schema, using `apache-avro` 0.22. The library performs no file or network access and has no Protobuf, datasource SDK or terminal dependency. `Decoder` returns original bytes, a schema identity and an `apache_avro::types::Value`. JSON is a separate, fallible presentation.
 
-The Kafka browser supports explicit [raw bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) and [Confluent Avro registry bindings](../../docs/kafka.md#confluent-avro-registry) in `onetui.toml`; `onetui schema --datasource kafka` lists their settings. Unbound fields and NATS retain Auto/text/hex behavior.
+The [Kafka](../../docs/kafka.md#schema-bound-key-and-value-previews) and [NATS](../../docs/nats.md#payload-decoding) browsers support explicit decoder bindings. Use `onetui schema --datasource kafka` or `onetui schema --datasource nats` for settings.
 
 ## Try a raw message
 

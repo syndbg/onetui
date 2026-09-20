@@ -40,7 +40,13 @@ Keep one selected-session executor and reuse its native client under [ADR-0001](
 
 Reuse the 100-item and 1 MiB page limits. Bound native prefetch separately; Kafka fetch limits can be exceeded by a record batch, so neither limit is an RSS guarantee. Reject oversized data without advancing its bookmark. Preserve native errors, with the existing credential redaction and terminal-control escaping.
 
-Metadata calls and native destruction can block. Keep them off the UI and Tokio async worker threads, with finite native timeouts and bounded ownership of blocking work. Cancelling `StreamConsumer::recv` is safe, but does not establish that the native client has stopped. Do not accumulate detached cleanup jobs on repeated connection switches.
+Metadata calls and native destruction can block. Keep them off the UI and Tokio async worker threads, with finite native timeouts and bounded ownership of blocking work. Cancelling `StreamConsumer::recv` is safe, but does not establish that the native client has stopped. Use one process-wide native owner slot, including destruction, so repeated connection switches cannot accumulate blocked workers. A replacement waits within its request deadline.
+
+## Authentication ownership
+
+Keep GSSAPI ticket acquisition and renewal outside the application. Use the system ticket cache instead of invoking `kinit` or changing process-wide credentials per alias. This preserves the native authentication boundary and avoids another subprocess lifecycle.
+
+OAuth uses explicit client-credentials endpoints and independently configured trust. Refresh through librdkafka during active work; idle sessions make no token requests. After idle expiry, reconnect on the next read while preserving logical page bookmarks. The broker validates token signatures and authorization. See [the connector implementation](../../crates/kafka/src/) and its package-owned authentication tests.
 
 ## Rejected alternatives
 

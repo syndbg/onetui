@@ -2,7 +2,7 @@
 
 Raw Protobuf decoding with an explicit descriptor set and message name, using `prost-reflect` 0.16; `protox` compiles supplied registry sources in memory. The library performs no file or network access and has no Avro, datasource SDK or terminal dependency. `Decoder` returns original bytes, a schema identity and a `prost_reflect::DynamicMessage`. JSON is a separate, fallible presentation.
 
-The Kafka browser supports explicit [raw bindings](../../docs/kafka.md#schema-bound-key-and-value-previews) in `onetui.toml`; `onetui schema --datasource kafka` lists their settings. Unbound fields and NATS retain Auto/text/hex behavior. Kafka also supports Confluent registry bindings.
+The [Kafka](../../docs/kafka.md#schema-bound-key-and-value-previews) and [NATS](../../docs/nats.md#payload-decoding) browsers support explicit decoder bindings. Use `onetui schema --datasource kafka` or `onetui schema --datasource nats` for settings.
 
 ## Try a raw message
 

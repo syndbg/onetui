@@ -33,3 +33,7 @@ Replay uses explicit subject and sequence bounds. Timestamp filtering scans boun
 Use native NKEY nonce signing, standard JWT credentials, verified mTLS and domain routing. Keep authentication modes mutually exclusive. Credentials come from explicit environment references; TLS files load only on connection. Authentication rotation requires reselecting the connection.
 
 Bind payload decoders to exact subjects with explicit framing. Reuse `onetui-avro` and `onetui-protobuf` for JSON/native inspection, preserve original bytes and report errors per message. Cache schemas for the selected connection and bound parsing outside the TUI. Share file, directory, registry and Buf loading through `onetui-schema-source`, not a dependency on Kafka. [ADR-0008](0008-detect-readable-bytes-and-decode-messages-with-schemas.md) records the format boundary.
+
+## System discovery
+
+Make system-account discovery explicit and disabled by default. Publish only the read request to `$SYS.REQ.SERVER.PING.STATSZ` and collect bounded private replies. Do not contact returned hostnames or treat responders as independently verified membership or health. Keeping discovery out of `check` avoids requiring system-account access for ordinary browsing. The [NATS connector](../../crates/nats/src/) owns this operation and its tests.

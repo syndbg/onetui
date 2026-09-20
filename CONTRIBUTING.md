@@ -12,7 +12,9 @@ Use `make run` to open the app. For demos, use `make dev-up`, then `make dev-run
 
 ## Changes and pull requests
 
-Keep changes focused and tests in their owning package. Do not combine datasource suites in shared backend loops. Add regression coverage for bugs; update affected usage docs and config examples. Use `onetui schema` for exhaustive settings reference.
+Keep changes focused and tests in their owning package. Do not combine datasource suites in shared backend loops. Add regression coverage for bugs.
+
+Keep user docs limited to setup, functionality and necessary caveats. Let contextual help and `onetui schema` cover discoverable actions and exhaustive settings. Keep lasting design choices in ADRs, and avoid duplicating implementation details or test reports in user guides.
 
 Before submitting:
 
@@ -24,7 +26,7 @@ make workflow-lint
 
 Integration tests require fresh disposable fixtures and refuse an existing development setup. Use `make dev-down` first only when its data can be deleted. Never run write-dependent tests against real datasources.
 
-PRs should state the problem, changes, checks and any compatibility risks. Report unrun checks; do not weaken tests to pass. Docs-only changes need content/link checks and `git diff --check`.
+PRs should state the problem, changes, checks and any compatibility risks. Report unrun checks; do not weaken tests to pass. Docs-only changes need content/link checks and `git diff --check`. See [performance checks](hack/performance.md) when investigating latency. Use `make theme-gallery` after UI or palette changes to regenerate the theme previews.
 
 ## Releases
 

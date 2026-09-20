@@ -45,7 +45,7 @@ AWS Glue supports Avro and Protobuf but needs its own identity, framing and auth
 
 ## Resolution and failure behavior
 
-Directory catalogs use filename stems as IDs in a flat inventory. Avro bindings list dependencies explicitly; Protobuf artifacts include their imports. Files open relative to a pinned directory descriptor without following symlinks. Each binding snapshots its schema until the connection is reopened; no watcher or refresh-time reload. See [catalog settings](../kafka.md#local-directory-catalogs) for bounds and usage.
+Directory catalogs use filename stems as IDs in a flat inventory. Avro bindings list dependencies explicitly; Protobuf artifacts include their imports. Files open relative to a pinned directory descriptor without following symlinks. Each binding snapshots its schema until the connection is reopened; no watcher or refresh-time reload. See [catalog usage](../kafka.md#local-directory-catalogs); `onetui schema` lists current bounds.
 
 Resolve outside rendering, with deadlines, cancellation and stale-result rejection. Bound schema bytes, dependency depth/count, compilation work, concurrent requests and cache bytes/entries. Reuse schema results across records with the same identity. Cache keys include the configured source, authentication context and immutable schema identity; moving labels resolve to a pinned revision. Refreshes must not replace the schema attached to an already decoded value.
 
