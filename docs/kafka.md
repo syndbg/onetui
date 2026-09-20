@@ -66,7 +66,7 @@ Browsing depends on retention. Refresh to include newer records or after a parti
 
 ## Permissions
 
-Record browsing needs topic `Read` and `Describe`, plus `Describe` on private groups prefixed `onetui-`. It does not need group `Read`. Inspecting other groups requires `Describe` on those groups.
+Record browsing needs topic `Read` and `Describe`. It also needs group `Describe` for OneTUI's internal consumer group ID, `onetui-<process-id>-<session-id>`. Kafka's consumer client requires this ID, but OneTUI does not join the group or commit offsets. Group `Read` is not required. Inspecting consumer groups requires `Describe` for those groups.
 
 Configuration reads need `DescribeConfigs` on the topic, or on the cluster for broker settings. `--check` validates metadata and configured schema sources, not record-reading access.
 
