@@ -11,6 +11,36 @@ fn tls_file(name: &str) -> tempfile::NamedTempFile {
     file
 }
 
+async fn wait_for_subscription(subject: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let output = docker(&[
+            "exec",
+            "-T",
+            "nats-jwt",
+            "wget",
+            "-qO-",
+            "http://127.0.0.1:8222/connz?subs=1",
+        ]);
+        let connections: Json = serde_json::from_slice(&output.stdout).unwrap();
+        let found = connections["connections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|connection| connection["subscriptions_list"].as_array())
+            .flatten()
+            .any(|subscription| subscription.as_str() == Some(subject));
+        if found {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "NATS server did not register subscription {subject}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires disposable NATS mTLS/NKEY/domain listener"]
 async fn nkey_mtls_domain_reads_trust_errors_and_reopen() {
@@ -137,6 +167,7 @@ async fn jwt_credentials_native_nonce_signing_subscriptions_and_rejection() {
     let initial = read(&executor, "nats.core_messages", &["demo.jwt"], None, true)
         .await
         .unwrap();
+    wait_for_subscription("demo.jwt").await;
     admin.publish("demo.jwt", "JWT data".into()).await.unwrap();
     admin.flush().await.unwrap();
     let mut continuation = initial.continuation;

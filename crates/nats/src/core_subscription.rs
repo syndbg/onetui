@@ -51,7 +51,7 @@ impl Subscription {
     ) -> Result<Self> {
         validate_subject(&subject)?;
         let subscriber = client.subscribe(subject.clone()).await?;
-        // PONG confirms that the server processed SUB before we expose the live cursor.
+        // Send SUB before exposing the live cursor. NATS does not acknowledge subscriptions.
         client.flush().await?;
         Ok(Self {
             subscriber,
