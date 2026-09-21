@@ -24,7 +24,7 @@ help:
 	  'dev-traffic-nats       Produce one NATS demo.live message every 15 seconds; Ctrl-C stops' \
 	  'check-local            Check all local fixtures, including Redpanda Schema Registry' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
-	  'test-integration       Start fresh fixtures, test, then clean up (refuses existing fixtures)' \
+	  'test-integration       Test all fixtures, or one with DATASOURCE=postgres|qdrant|kafka|nats|dynamodb|rabbitmq|tui' \
 	  'test-buf-live          Verify public Buf label/commit discovery and decoding (Internet)' \
 	  'release-check TAG=v...  Verify the release tag matches Cargo version' \
 	  'package TAG=v...        Build a native archive and SHA-256 file under dist/' \
@@ -92,7 +92,7 @@ check-local: build
 	bash hack/dev.sh check
 
 test-integration: build
-	bash hack/dev.sh test
+	bash hack/dev.sh test "$${DATASOURCE:-all}"
 
 test-buf-live:
 	cargo test -p onetui-kafka --lib hosted_buf_label_and_pinned_commit_decode_the_same_message --locked -- --ignored --nocapture

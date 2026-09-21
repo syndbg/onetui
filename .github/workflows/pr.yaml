@@ -28,8 +28,26 @@ jobs:
       - run: make verify
       - name: Validate workflow definitions
         run: make workflow-lint
-      - name: Disposable datasource integration tests
-        run: make test-integration
+
+  integration:
+    name: Integration (${{ matrix.datasource }})
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        datasource: [postgres, qdrant, kafka, nats, dynamodb, rabbitmq, tui]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Native Kafka build tools
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake perl pkg-config libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit
+      - run: make test-integration DATASOURCE=${{ matrix.datasource }}
       - name: Fixture cleanup fallback
         if: always()
         run: make dev-down

@@ -32,6 +32,41 @@ wait_for_connection() {
     printf 'Ready: %s\n' "$alias"
 }
 
+seed_postgres() {
+    "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
+}
+
+seed_qdrant() {
+    cargo run -p onetui-qdrant --example seed_demo --locked
+}
+
+seed_kafka() {
+    "${compose[@]}" exec -T kafka sh /onetui-kafka-security.sh
+    cargo run -p onetui-kafka --example seed_demo --locked
+    cargo run -p onetui-kafka --example seed_redpanda --locked
+}
+
+seed_nats() {
+    cargo run -p onetui-nats --example seed_nats --locked
+}
+
+seed_dynamodb() {
+    cargo run -p onetui-dynamodb --example seed_dynamodb --locked
+}
+
+seed_rabbitmq() {
+    sh hack/fixtures/rabbitmq-seed.sh
+}
+
+seed() {
+    seed_postgres
+    seed_qdrant
+    seed_kafka
+    seed_nats
+    seed_dynamodb
+    seed_rabbitmq
+}
+
 up() {
     "${compose[@]}" up -d --wait --wait-timeout 60
     wait_for_connection local_pg
@@ -46,15 +81,57 @@ up() {
     wait_for_connection local_rabbitmq
 }
 
-seed() {
-    "${compose[@]}" exec -T kafka sh /onetui-kafka-security.sh
-    "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
-    cargo run -p onetui-qdrant --example seed_demo --locked
-    cargo run -p onetui-kafka --example seed_demo --locked
-    cargo run -p onetui-kafka --example seed_redpanda --locked
-    cargo run -p onetui-nats --example seed_nats --locked
-    cargo run -p onetui-dynamodb --example seed_dynamodb --locked
-    sh hack/fixtures/rabbitmq-seed.sh
+up_test_suite() {
+    local suite=$1
+    local services=()
+
+    case "$suite" in
+        postgres) services=(postgres postgres-replica) ;;
+        qdrant) services=(qdrant qdrant-peer qdrant-tls) ;;
+        kafka) services=(kafka redpanda) ;;
+        nats) services=(nats nats-tls nats-secure nats-jwt nats-system nats-system-peer redpanda) ;;
+        dynamodb) services=(dynamodb) ;;
+        rabbitmq) services=(rabbitmq rabbitmq-traffic) ;;
+        tui) services=(postgres qdrant) ;;
+    esac
+
+    "${compose[@]}" up -d --wait --wait-timeout 60 "${services[@]}"
+    case "$suite" in
+        postgres)
+            wait_for_connection local_pg
+            wait_for_connection local_pg_replica
+            seed_postgres
+            ;;
+        qdrant)
+            wait_for_connection local_qdrant
+            seed_qdrant
+            ;;
+        kafka)
+            wait_for_connection local_kafka
+            wait_for_connection local_redpanda
+            seed_kafka
+            ;;
+        nats)
+            wait_for_connection local_redpanda
+            wait_for_connection local_nats
+            wait_for_connection local_nats_system
+            seed_nats
+            ;;
+        dynamodb)
+            wait_for_connection local_dynamodb
+            seed_dynamodb
+            ;;
+        rabbitmq)
+            seed_rabbitmq
+            wait_for_connection local_rabbitmq
+            ;;
+        tui)
+            wait_for_connection local_pg
+            wait_for_connection local_qdrant
+            seed_postgres
+            seed_qdrant
+            ;;
+    esac
 }
 
 cleanup() {
@@ -110,22 +187,34 @@ traffic() {
     done
 }
 
-case "${1:-}" in
+command=${1:-}
+test_suite=${2:-all}
+
+if [[ "$command" == test ]]; then
+    case "$test_suite" in
+        all|postgres|qdrant|kafka|nats|dynamodb|rabbitmq|tui) ;;
+        *) printf 'Unknown integration test suite: %s\n' "$test_suite" >&2; exit 2 ;;
+    esac
+fi
+
+case "$command" in
     up|check|test|run|seed|traffic|traffic-kafka|traffic-nats)
         if [[ ! -x target/debug/onetui ]]; then
             printf 'Build first with make build.\n' >&2
             exit 1
         fi
-        if [[ "$1" != run ]]; then
+        if [[ "$command" != run ]]; then
             cargo run -p onetui-kafka --example seed_redpanda --locked -- --prepare
-            cargo run -p onetui-nats --example seed_nats --locked -- --prepare
+            if [[ "$command" != test || "$test_suite" == all || "$test_suite" == nats ]]; then
+                cargo run -p onetui-nats --example seed_nats --locked -- --prepare
+            fi
         fi
         ;;
     down|logs) ;;
     *) printf 'Usage: bash hack/dev.sh {up|check|test|run|seed|traffic|traffic-kafka|traffic-nats|down|logs}\n' >&2; exit 2 ;;
 esac
 
-if [[ "$1" == run ]]; then
+if [[ "$command" == run ]]; then
     if [[ ! -f target/demo-onetui.toml ]]; then
         printf 'Prepare demos with make dev-up (or make dev-seed for running fixtures).\n' >&2
         exit 1
@@ -145,7 +234,7 @@ if [[ "$docker_host" != unix://* ]]; then
 fi
 docker info >/dev/null
 "${compose[@]}" version >/dev/null
-case "$1" in
+case "$command" in
     up) up ;;
     seed) seed ;;
     traffic) traffic ;;
@@ -168,9 +257,18 @@ case "$1" in
         trap cleanup EXIT
         trap 'exit 130' INT
         trap 'exit 143' TERM
-        up
-        cargo build -p onetui-kafka --example produce_demo --locked
-        cargo build -p onetui-nats --example produce_nats --locked
-        cargo test --workspace --locked --test fixtures -- --ignored --test-threads=1
+        if [[ "$test_suite" == all ]]; then
+            up
+            cargo build -p onetui-kafka --example produce_demo --locked
+            cargo build -p onetui-nats --example produce_nats --locked
+            cargo test --workspace --locked --test fixtures -- --ignored --test-threads=1
+        else
+            up_test_suite "$test_suite"
+            case "$test_suite" in
+                kafka) cargo build -p onetui-kafka --example produce_demo --locked ;;
+                nats) cargo build -p onetui-nats --example produce_nats --locked ;;
+            esac
+            cargo test -p "onetui-$test_suite" --locked --test fixtures -- --ignored --test-threads=1
+        fi
         ;;
 esac
