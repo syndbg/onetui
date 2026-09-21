@@ -32,6 +32,22 @@ wait_for_connection() {
     printf 'Ready: %s\n' "$alias"
 }
 
+start_fixtures() {
+    local attempt status=0
+    for attempt in 1 2 3; do
+        if "${compose[@]}" up -d --wait --wait-timeout 60 "$@"; then
+            return
+        else
+            status=$?
+        fi
+        if (( attempt == 3 )); then
+            return "$status"
+        fi
+        printf 'Fixture startup failed; retrying (%s/3).\n' "$attempt" >&2
+        sleep $((attempt * 5))
+    done
+}
+
 seed_postgres() {
     "${compose[@]}" exec -T postgres psql -U onetui_fixture_admin -d onetui_fixture -v ON_ERROR_STOP=1 < hack/fixtures/postgres-demo.sql
 }
@@ -68,7 +84,7 @@ seed() {
 }
 
 up() {
-    "${compose[@]}" up -d --wait --wait-timeout 60
+    start_fixtures
     wait_for_connection local_pg
     wait_for_connection local_pg_replica
     wait_for_connection local_qdrant
@@ -95,7 +111,7 @@ up_test_suite() {
         tui) services=(postgres qdrant) ;;
     esac
 
-    "${compose[@]}" up -d --wait --wait-timeout 60 "${services[@]}"
+    start_fixtures "${services[@]}"
     case "$suite" in
         postgres)
             wait_for_connection local_pg
