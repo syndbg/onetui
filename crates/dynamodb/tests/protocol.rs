@@ -580,6 +580,7 @@ async fn oversized_http_response_fails_without_a_partial_page() {
 #[tokio::test]
 async fn native_transient_retries_remain_enabled() {
     let server = Server::start(vec![
+        (200, json!({"TableNames":[]}).to_string()),
         (
             500,
             json!({"__type":"InternalServerError","message":"transient fixture failure"})
@@ -588,11 +589,15 @@ async fn native_transient_retries_remain_enabled() {
         (200, json!({"TableNames":[]}).to_string()),
     ]);
     let executor = server.executor();
+    // Initialize the client separately so this request measures native retry behavior.
+    fetch(&executor, request("dynamodb.tables", &[], None))
+        .await
+        .unwrap();
     let page = fetch(&executor, request("dynamodb.tables", &[], None))
         .await
         .unwrap();
     assert!(page.rows.is_empty());
-    assert_eq!(server.finish().len(), 2);
+    assert_eq!(server.finish().len(), 3);
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ static TRUST_LOAD: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1)
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn load_http(
+async fn load_tls_capable_http_client(
     build: impl FnOnce() -> SharedHttpClient + Send + 'static,
 ) -> Result<SharedHttpClient> {
     let permit = TRUST_LOAD
@@ -158,23 +158,41 @@ impl Config {
         use aws_smithy_runtime_api::client::http::{
             HttpConnectorSettings, SharedHttpConnector, http_client_fn,
         };
-        let http = load_http(|| {
-            // Build eagerly here: the SDK's lazy HTTP builder loads native roots during send.
+        let settings = || {
+            HttpConnectorSettings::builder()
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(READ_TIMEOUT)
+                .build()
+        };
+        let plain_http_only = self.endpoint_url.as_deref().is_some_and(|endpoint| {
+            url::Url::parse(endpoint).is_ok_and(|url| url.scheme() == "http")
+        }) && self.streams_endpoint_url.as_deref().is_none_or(|endpoint| {
+            url::Url::parse(endpoint).is_ok_and(|url| url.scheme() == "http")
+        });
+        let http_client = if plain_http_only {
+            // Plain HTTP is allowed only for validated loopback endpoints and needs no TLS roots.
             let connector = SharedHttpConnector::new(
                 Connector::builder()
-                    .tls_provider(Provider::Rustls(CryptoMode::Ring))
                     .sleep_impl(aws_smithy_async::rt::sleep::TokioSleep::new())
-                    .connector_settings(
-                        HttpConnectorSettings::builder()
-                            .connect_timeout(CONNECT_TIMEOUT)
-                            .read_timeout(READ_TIMEOUT)
-                            .build(),
-                    )
-                    .build(),
+                    .connector_settings(settings())
+                    .build_http(),
             );
             http_client_fn(move |_, _| connector.clone())
-        })
-        .await?;
+        } else {
+            load_tls_capable_http_client(move || {
+                // HTTPS, including over loopback, needs TLS and native roots. This connector
+                // also supports plain HTTP when the two configured endpoints use mixed schemes.
+                let connector = SharedHttpConnector::new(
+                    Connector::builder()
+                        .tls_provider(Provider::Rustls(CryptoMode::Ring))
+                        .sleep_impl(aws_smithy_async::rt::sleep::TokioSleep::new())
+                        .connector_settings(settings())
+                        .build(),
+                );
+                http_client_fn(move |_, _| connector.clone())
+            })
+            .await?
+        };
         let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(Region::new(self.region.clone()))
             .retry_config(
@@ -187,7 +205,7 @@ impl Config {
                     .operation_timeout(Duration::from_secs(10))
                     .build(),
             )
-            .http_client(http);
+            .http_client(http_client);
         if let Some(profile) = &self.profile {
             loader = loader.profile_name(profile);
         }
@@ -210,7 +228,7 @@ mod tests {
             atomic::{AtomicBool, Ordering},
         };
 
-        fn unused_http() -> SharedHttpClient {
+        fn unused_tls_http_client() -> SharedHttpClient {
             aws_smithy_http_client::Builder::new()
                 .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
                     aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
@@ -223,10 +241,10 @@ mod tests {
         let (cancel, mut context) = RequestContext::new(Duration::from_secs(3));
         let first = tokio::spawn(async move {
             context
-                .run(load_http(move || {
+                .run(load_tls_capable_http_client(move || {
                     let _ = started.send(());
                     let _ = blocked.recv();
-                    unused_http()
+                    unused_tls_http_client()
                 }))
                 .await
         });
@@ -242,9 +260,9 @@ mod tests {
         let (_cancel, mut context) = RequestContext::new(Duration::from_millis(30));
         assert!(
             context
-                .run(load_http(move || {
+                .run(load_tls_capable_http_client(move || {
                     marker.store(true, Ordering::SeqCst);
-                    unused_http()
+                    unused_tls_http_client()
                 }))
                 .await
                 .is_err()
@@ -253,7 +271,11 @@ mod tests {
 
         release.send(()).unwrap();
         let (_cancel, mut context) = RequestContext::new(Duration::from_secs(1));
-        context.run(load_http(unused_http)).await.unwrap().unwrap();
+        context
+            .run(load_tls_capable_http_client(unused_tls_http_client))
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[test]
@@ -284,5 +306,9 @@ mod tests {
         let (credentials, secrets) = config.credentials(&|name| Some(name.into())).unwrap();
         assert_eq!(credentials.unwrap().access_key_id(), "KEY");
         assert_eq!(secrets, ["KEY", "SECRET"]);
+        Config::parse(
+            &toml::from_str("region='us-east-1'\nendpoint_url='https://127.0.0.1:8000'").unwrap(),
+        )
+        .unwrap();
     }
 }
