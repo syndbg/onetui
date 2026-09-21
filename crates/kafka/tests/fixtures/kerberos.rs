@@ -40,7 +40,7 @@ fn ticket_cache_authentication_and_failures() {
             ""
         };
         // MIT and macOS Heimdal use different names for the TCP threshold.
-        write!(profile, "[libdefaults]\n default_realm = ONETUI.TEST\n dns_lookup_kdc = false\n dns_lookup_realm = false\n rdns = false\n dns_canonicalize_hostname = false\n udp_preference_limit = 1\n[realms]\n ONETUI.TEST = {{\n  kdc = {transport}127.0.0.1:{port}\n }}\n").unwrap();
+        write!(profile, "[libdefaults]\n default_realm = ONETUI.TEST\n dns_lookup_kdc = false\n dns_lookup_realm = false\n rdns = false\n dns_canonicalize_hostname = false\n qualify_shortname = \"\"\n udp_preference_limit = 1\n[realms]\n ONETUI.TEST = {{\n  kdc = {transport}127.0.0.1:{port}\n }}\n").unwrap();
         let cache = match case {
             "missing" => tempfile::NamedTempFile::new().unwrap(),
             "denied" => mtls::fixture_file("krb5/denied.ccache"),
