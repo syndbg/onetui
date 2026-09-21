@@ -96,15 +96,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        datasource: [postgres, qdrant, kafka, nats, dynamodb, rabbitmq, tui]
+        include:
+          - datasource: postgres
+            images: postgres:16.13
+          - datasource: qdrant
+            images: qdrant/qdrant:v1.18.2
+          - datasource: kafka
+            images: apache/kafka:4.2.0 docker.redpanda.com/redpandadata/redpanda:v26.2.2
+          - datasource: nats
+            images: nats:2.12.15-alpine docker.redpanda.com/redpandadata/redpanda:v26.2.2
+          - datasource: dynamodb
+            images: amazon/dynamodb-local:3.3.1
+          - datasource: rabbitmq
+            images: rabbitmq:4.3.5-management
+          - datasource: tui
+            images: postgres:16.13 qdrant/qdrant:v1.18.2
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Cache Docker images
-        uses: ScribeMD/docker-cache@fb28c93772363301b8d0a6072ce850224b73f74e # v0.5.0
+      - name: Restore Docker image cache
+        id: docker-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          key: docker-${{ runner.os }}-${{ matrix.datasource }}-${{ hashFiles('hack/compose.yaml', 'hack/fixtures/*.Dockerfile') }}
+          path: /tmp/onetui-docker-${{ matrix.datasource }}.tar
+          key: docker-v1-${{ runner.os }}-${{ matrix.datasource }}-${{ hashFiles('hack/compose.yaml', 'hack/fixtures/*.Dockerfile') }}
+      - name: Load Docker images
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: docker load --input /tmp/onetui-docker-${{ matrix.datasource }}.tar
+      - name: Pull Docker images
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          for image in ${{ matrix.images }}; do
+            docker pull "$image"
+          done
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Native Kafka build tools
         run: |
@@ -114,3 +139,12 @@ jobs:
       - name: Fixture cleanup fallback
         if: always()
         run: make dev-down
+      - name: Save Docker images
+        if: success() && steps.docker-cache.outputs.cache-hit != 'true'
+        run: docker save --output /tmp/onetui-docker-${{ matrix.datasource }}.tar ${{ matrix.images }}
+      - name: Store Docker image cache
+        if: success() && steps.docker-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/onetui-docker-${{ matrix.datasource }}.tar
+          key: ${{ steps.docker-cache.outputs.cache-primary-key }}
