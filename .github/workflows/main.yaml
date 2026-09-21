@@ -101,6 +101,10 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Cache Docker images
+        uses: ScribeMD/docker-cache@fb28c93772363301b8d0a6072ce850224b73f74e # v0.5.0
+        with:
+          key: docker-${{ runner.os }}-${{ matrix.datasource }}-${{ hashFiles('hack/compose.yaml', 'hack/fixtures/*.Dockerfile') }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Native Kafka build tools
         run: |
