@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: Validate (ubuntu-24.04)
+  build:
+    name: Build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -26,13 +26,71 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y build-essential cmake perl pkg-config libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit
-      - run: make verify build-release
-      - name: Validate workflow definitions
-        run: make workflow-lint
+      - run: make build
+
+  format:
+    name: Format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: make format-check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Native Kafka build tools
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake perl pkg-config libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit
+      - run: make clippy
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Native Kafka build tools
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake perl pkg-config libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit
+      - run: make test
+
+  shell:
+    name: Shell syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: make shell-check
+
+  workflow:
+    name: Workflow definitions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: make workflow-lint
 
   integration:
     name: Integration (${{ matrix.datasource }})
-    needs: validate
+    needs: [build, format, clippy, unit, shell, workflow]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:

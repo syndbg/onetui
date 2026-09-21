@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt lint test verify workflow-lint theme-gallery dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package package-deb package-rpm
+.PHONY: help build build-release run fmt format-check clippy shell-check lint test verify workflow-lint theme-gallery dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package package-deb package-rpm
 
 help:
 	@printf '%s\n' \
@@ -43,11 +43,17 @@ run: build
 fmt:
 	cargo fmt --all
 
-lint:
+format-check:
 	cargo fmt --all -- --check
+
+clippy:
 	cargo clippy --workspace --all-targets --locked -- -D warnings
+
+shell-check:
 	for script in hack/dev.sh scripts/release.sh; do bash -n "$$script" || exit; done
 	for script in hack/fixtures/*.sh; do sh -n "$$script" || exit; done
+
+lint: format-check clippy shell-check
 
 test:
 	cargo test --workspace --locked
