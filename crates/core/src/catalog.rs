@@ -6,6 +6,7 @@ pub enum Action {
     Add,
     Follow,
     Query,
+    History,
     Up,
     Down,
     Open,
@@ -54,6 +55,11 @@ pub const ACTIONS: &[ActionDescriptor] = &[
         id: Action::Query,
         keys: &["e"],
         description: "Edit a native read-only query above retained rows; Enter/F5 executes, Shift-Enter inserts a line, Esc returns",
+    },
+    ActionDescriptor {
+        id: Action::History,
+        keys: &["H"],
+        description: "Browse queries submitted on this connection during the current session; Enter opens one for editing",
     },
     ActionDescriptor {
         id: Action::Themes,

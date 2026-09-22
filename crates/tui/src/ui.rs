@@ -185,8 +185,21 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
                 ("Shift-Enter", "new line"),
                 ("Esc", "return / cancel request"),
                 ("Ctrl-u", "clear draft"),
-                ("arrows", "move cursor"),
+                ("Ctrl-p/n", "previous/next query"),
                 ("", "16 KiB; draft kept in memory"),
+            ],
+            &[],
+        );
+        return;
+    } else if app.history_menu.is_some() {
+        key_hints(
+            frame,
+            keys,
+            p,
+            &[
+                ("j/k", "choose query"),
+                ("Enter", "open for editing"),
+                ("Esc", "close history"),
             ],
             &[],
         );
@@ -748,7 +761,8 @@ fn query_panels(body: Rect, app: &App) -> [Rect; 2] {
             && !app.detail
             && !app.row_detail
             && app.theme_menu.is_none()
-            && app.display_menu.is_none());
+            && app.display_menu.is_none()
+            && app.history_menu.is_none());
     let height = if !visible || body.height < 4 {
         0
     } else if body.height < 7 {
@@ -1046,6 +1060,24 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     if app.connection_form.is_some() {
         connection_form(frame, body, app);
+    } else if app.history_menu.is_some() {
+        let entries = app
+            .history_entries()
+            .map(|query| Row::new([display(query.trim().lines().next().unwrap_or(""))]));
+        let table = Table::new(entries, [Constraint::Fill(1)])
+            .block(panel(p, " Query history | newest first "))
+            .row_highlight_style(
+                Style::new()
+                    .fg(color(p.selection_fg))
+                    .bg(color(p.selection_bg))
+                    .bold(),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(
+            table,
+            body,
+            &mut TableState::default().with_selected(app.history_menu),
+        );
     } else if app.view.alias.is_none()
         && app.view.page.rows.is_empty()
         && !app.help

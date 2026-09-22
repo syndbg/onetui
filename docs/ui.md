@@ -10,13 +10,14 @@ The header shows your current connection, resource and available actions. Press 
 | --- | --- |
 | `j/k`, arrows | Move between rows |
 | Enter / Esc | Open an item / go back |
-| `h/l` | Select a field |
+| lowercase `h/l` | Select a field |
 | `n/p` | Next / previous data page or value chunk |
 | PageUp / PageDown | Scroll within loaded data |
 | Ctrl-U / Ctrl-D | Scroll half a screen outside text entry |
 | `/` | Filter rows |
 | `s` | Cycle column sort |
 | `e` | Open a [native query](queries.md), where supported |
+| Shift+H | Open [query history](queries.md), where supported |
 | `f` | Start or stop following, where supported |
 | `c/r` | Choose a connection / refresh |
 | Ctrl-C | Cancel active work, or quit when idle |
@@ -26,7 +27,7 @@ The header shows your current connection, resource and available actions. Press 
 
 Enter on a row opens its fields. Select a field and press Enter again to inspect its full value. Use `v` to choose text, JSON, hex or binary, and adjust pretty printing, highlighting, wrapping or Unicode display.
 
-Auto shows readable text or JSON and falls back to hex for other bytes. With wrapping disabled, use `H/L` to scroll horizontally.
+Auto shows readable text or JSON and falls back to hex for other bytes. With wrapping disabled, use `H/L` to scroll horizontally. Shift+H opens query history on supported resources.
 
 Display changes last for the session. Use `onetui schema` for persistent `[display]` settings. Press `T` to preview [themes](themes.md).
 
