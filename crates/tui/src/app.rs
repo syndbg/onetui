@@ -10,6 +10,7 @@ use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
 use onetui_theme::Theme;
 
 const BOOKMARK_LIMIT: usize = 4096;
+const QUERY_HISTORY_LIMIT: usize = 100;
 mod follow;
 
 struct PageBookmark {
@@ -193,6 +194,10 @@ pub struct App {
     pub following: bool,
     pub(crate) follow_due: Option<tokio::time::Instant>,
     pub query_editor: Option<crate::query::Editor>,
+    query_history: VecDeque<(String, String)>,
+    pub(crate) history_menu: Option<usize>,
+    history_position: Option<usize>,
+    history_current: Option<String>,
     pub config: Config,
     pub view: View,
     parents: Vec<View>,
@@ -235,6 +240,10 @@ impl App {
             following: false,
             follow_due: None,
             query_editor: None,
+            query_history: VecDeque::new(),
+            history_menu: None,
+            history_position: None,
+            history_current: None,
             config,
             view: View::new(None, Resource::new("connections", vec![])),
             parents: Vec::new(),
@@ -507,6 +516,12 @@ impl App {
         if self.query_editor.is_some() {
             return matches!(action, Action::Back | Action::Cancel);
         }
+        if self.history_menu.is_some() {
+            return matches!(
+                action,
+                Action::Up | Action::Down | Action::Open | Action::Back | Action::Cancel
+            );
+        }
         if self.display_menu.is_some() {
             return matches!(
                 action,
@@ -549,6 +564,13 @@ impl App {
                         })
             }
             Action::Query => !loading && self.query_target().is_some(),
+            Action::History => {
+                !loading
+                    && !self.help
+                    && !self.detail
+                    && !self.row_detail
+                    && self.query_target().is_some()
+            }
             Action::ScrollLeft | Action::ScrollRight => !self.config.display.word_wrap,
             Action::Filter => !self.detail && !self.row_detail,
             Action::Sort => !self.detail && !self.row_detail && self.column_count() > 0,
@@ -643,7 +665,54 @@ impl App {
         if let Some(editor) = self.query_editor.take() {
             self.view.query_draft = Some(editor.text);
         }
+        self.history_position = None;
+        self.history_current = None;
         self.invalidate();
+    }
+
+    pub(crate) fn history_entries(&self) -> impl Iterator<Item = &str> {
+        let alias = self.view.alias.as_deref();
+        self.query_history
+            .iter()
+            .rev()
+            .filter(move |(connection, _)| Some(connection.as_str()) == alias)
+            .map(|(_, text)| text.as_str())
+    }
+
+    fn browse_query_history(&mut self, previous: bool) {
+        let alias = self.view.alias.as_deref().expect("query connection");
+        let position = if previous {
+            let end = self.history_position.unwrap_or(self.query_history.len());
+            self.query_history
+                .iter()
+                .take(end)
+                .rposition(|(connection, _)| connection == alias)
+        } else {
+            self.history_position.and_then(|current| {
+                self.query_history
+                    .iter()
+                    .enumerate()
+                    .skip(current + 1)
+                    .find(|(_, (connection, _))| connection == alias)
+                    .map(|(index, _)| index)
+            })
+        };
+        if position.is_none() && (previous || self.history_position.is_none()) {
+            return;
+        }
+        let editor = self.query_editor.as_mut().expect("query editor");
+        if self.history_position.is_none() && position.is_some() {
+            self.history_current = Some(editor.text.clone());
+        }
+        let text = position
+            .map(|index| self.query_history[index].1.clone())
+            .unwrap_or_else(|| {
+                self.history_current
+                    .take()
+                    .unwrap_or_else(|| editor.text.clone())
+            });
+        *editor = crate::query::Editor::new(text);
+        self.history_position = position;
     }
 
     fn execute_query(&mut self) {
@@ -658,6 +727,19 @@ impl App {
             return;
         }
         let resource = self.query_target().expect("query scope");
+        let alias = self.view.alias.as_ref().expect("query connection");
+        if self
+            .query_history
+            .back()
+            .is_none_or(|entry| entry.0 != *alias || entry.1 != text)
+        {
+            if self.query_history.len() == QUERY_HISTORY_LIMIT {
+                self.query_history.pop_front();
+            }
+            self.query_history.push_back((alias.clone(), text.clone()));
+        }
+        self.history_position = None;
+        self.history_current = None;
         self.view.query_draft = Some(text.clone());
         self.load(0, true);
         let request = self.request.as_mut().expect("queued query");
@@ -793,10 +875,13 @@ impl App {
     }
 
     pub fn context_actions(&self) -> impl Iterator<Item = &'static ActionDescriptor> + '_ {
-        ACTIONS.iter().filter(|entry| {
-            matches!(entry.id, Action::Next | Action::Previous)
-                || self.available_while_loading(entry.id, false)
-        })
+        ACTIONS
+            .iter()
+            .filter(|entry| {
+                matches!(entry.id, Action::Next | Action::Previous)
+                    || self.available_while_loading(entry.id, false)
+            })
+            .filter(|entry| entry.id != Action::History)
     }
 
     pub fn act(&mut self, action: Action) {
@@ -812,6 +897,28 @@ impl App {
             return;
         }
         if !self.available(action) {
+            return;
+        }
+        if let Some(index) = self.history_menu {
+            match action {
+                Action::Up => self.history_menu = Some(index.saturating_sub(1)),
+                Action::Down => {
+                    self.history_menu =
+                        Some((index + 1).min(self.history_entries().count().saturating_sub(1)))
+                }
+                Action::Open => {
+                    let text = self
+                        .history_entries()
+                        .nth(index)
+                        .expect("history entry")
+                        .to_owned();
+                    self.history_menu = None;
+                    self.act(Action::Query);
+                    self.query_editor = Some(crate::query::Editor::new(text));
+                }
+                Action::Back | Action::Cancel => self.history_menu = None,
+                _ => {}
+            }
             return;
         }
         if self.following {
@@ -951,6 +1058,8 @@ impl App {
                         )
                     });
                 self.query_editor = Some(crate::query::Editor::new(text));
+                self.history_position = None;
+                self.history_current = None;
                 self.help = false;
                 self.detail = false;
                 if self.row_detail {
@@ -959,6 +1068,13 @@ impl App {
                 self.row_detail = false;
                 self.row_value = None;
                 self.row_scroll = 0;
+            }
+            Action::History => {
+                if self.history_entries().next().is_some() {
+                    self.history_menu = Some(0);
+                } else {
+                    self.error = Some("No queries in this session".into());
+                }
             }
             Action::Display => {
                 self.help = false;
@@ -1232,6 +1348,16 @@ impl App {
                 {
                     self.execute_query()
                 }
+                KeyCode::Char('p')
+                    if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    self.browse_query_history(true)
+                }
+                KeyCode::Char('n')
+                    if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    self.browse_query_history(false)
+                }
                 _ if self.loading => {}
                 _ => {
                     if let Err(error) = self.query_editor.as_mut().unwrap().key(key) {
@@ -1322,6 +1448,7 @@ impl App {
             && !key.modifiers.contains(KeyModifiers::CONTROL)
             && self.theme_menu.is_none()
             && self.display_menu.is_none()
+            && self.history_menu.is_none()
         {
             if self.following {
                 self.invalidate();
@@ -1347,7 +1474,7 @@ impl App {
         };
         if let Some(action) = ACTIONS
             .iter()
-            .find(|entry| entry.keys.contains(&name.as_str()))
+            .find(|entry| entry.keys.contains(&name.as_str()) && self.available(entry.id))
             .map(|entry| entry.id)
         {
             self.act(action);
@@ -1525,6 +1652,52 @@ mod tests {
         app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
         let retry = app.request.take().expect("F5 executes");
         assert_eq!(retry.query, request.query);
+    }
+
+    #[test]
+    fn query_history_recalls_submissions_for_the_current_connection() {
+        let mut app = app();
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        app.act(Action::Query);
+        for text in ["SELECT 1", "SELECT 2"] {
+            app.query_editor = Some(crate::query::Editor::new(text.into()));
+            app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+            let request = app.request.take().unwrap();
+            app.complete(&request, Err(anyhow::anyhow!("query failed")));
+        }
+        assert_eq!(app.query_history.len(), 2);
+        app.query_editor = Some(crate::query::Editor::new("current input".into()));
+        let previous = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        let next = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+        app.key(previous);
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 2");
+        app.key(previous);
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1");
+        app.key(previous);
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1");
+        app.key(next);
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 2");
+        app.key(next);
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "current input");
+
+        app.view.alias = Some("q".into());
+        app.key(previous);
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "current input");
+
+        app.view.alias = Some("pg".into());
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT));
+        assert_eq!(app.history_menu, Some(0));
+        app.key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.history_menu, Some(1));
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.history_menu.is_none());
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1");
+        assert!(app.request.is_none());
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        command(&mut app, "history");
+        assert_eq!(app.history_menu, Some(0));
     }
 
     #[test]
@@ -1750,6 +1923,8 @@ mod tests {
         command(&mut app, "display word-wrap off");
         command(&mut app, "scroll_right");
         assert_eq!(app.horizontal_scroll, 8);
+        app.key(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT));
+        assert_eq!(app.horizontal_scroll, 0);
         command(&mut app, "display format text");
         assert!(app.detail_notice.contains("Invalid UTF-8"));
         app.act(Action::Display);

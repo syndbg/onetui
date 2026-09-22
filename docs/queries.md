@@ -3,6 +3,8 @@
 Press `e` or enter `:query` on a supported resource. Enter, F5 or Ctrl-R executes the draft; Shift+Enter inserts a newline. Ctrl-U clears it. Esc returns to browsing, and Ctrl-C cancels active work.
 
 Press `e` to edit again, `n/p` to page through results, or `r` to rerun.
+In the query editor, Ctrl-P and Ctrl-N browse queries submitted on this connection during the current session.
+Press Shift+H or enter `:history` while browsing to choose one from a list. Enter opens it for editing; Esc closes the list.
 
 | Datasource | Query |
 | --- | --- |
