@@ -19,7 +19,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -50,7 +50,7 @@ jobs:
     steps:
       - name: Native build tools
         run: dnf install -y git gcc gcc-c++ cmake make perl perl-Digest-SHA pkgconf-pkg-config libcurl-devel cyrus-sasl-devel cyrus-sasl-gssapi krb5-devel golang tar gzip
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Trust checkout ownership
@@ -89,7 +89,7 @@ jobs:
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       MACOSX_DEPLOYMENT_TARGET: '15.0'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
