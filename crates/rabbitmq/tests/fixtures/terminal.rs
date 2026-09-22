@@ -144,6 +144,8 @@ fn actual_cli_metadata_details_paging_and_terminal_restore() {
     terminal.wait("Row data");
     terminal.wait("messages_ready");
     terminal.send(b"q");
+    terminal.wait("Quit OneTUI?");
+    terminal.send(b"y");
     terminal.wait("ONETUI_DONE");
     let after = tcgetattr(&slave).unwrap();
     assert_eq!(

@@ -229,6 +229,7 @@ pub struct App {
     detail_prepared: String,
     detail_ranges: Vec<std::ops::Range<usize>>,
     pub detail_notice: &'static str,
+    pub confirm_quit: bool,
     pub quit: bool,
 }
 
@@ -275,6 +276,7 @@ impl App {
             detail_prepared: String::new(),
             detail_ranges: Vec::new(),
             detail_notice: "",
+            confirm_quit: false,
             quit: false,
         };
         app.connections();
@@ -365,6 +367,9 @@ impl App {
     }
 
     pub(crate) fn paste(&mut self, text: &str) {
+        if self.confirm_quit {
+            return;
+        }
         if let Some(form) = &mut self.connection_form {
             self.error = form.insert(text).err().map(|error| error.to_string());
         } else if !self.loading
@@ -510,6 +515,9 @@ impl App {
     }
 
     fn available_while_loading(&self, action: Action, loading: bool) -> bool {
+        if self.confirm_quit {
+            return matches!(action, Action::Open | Action::Back | Action::Cancel);
+        }
         if self.connection_form.is_some() {
             return matches!(action, Action::Back | Action::Cancel);
         }
@@ -885,6 +893,17 @@ impl App {
     }
 
     pub fn act(&mut self, action: Action) {
+        if self.confirm_quit {
+            match action {
+                Action::Open => {
+                    self.invalidate();
+                    self.quit = true;
+                }
+                Action::Back | Action::Cancel => self.confirm_quit = false,
+                _ => {}
+            }
+            return;
+        }
         if self.connection_form.is_some() {
             if matches!(action, Action::Back | Action::Cancel) {
                 self.connection_form = None;
@@ -921,7 +940,7 @@ impl App {
             }
             return;
         }
-        if self.following {
+        if self.following && action != Action::Quit {
             self.invalidate();
             if matches!(action, Action::Follow | Action::Cancel) {
                 return;
@@ -1305,8 +1324,7 @@ impl App {
                 self.horizontal_scroll = 0;
             }
             Action::Quit => {
-                self.invalidate();
-                self.quit = true;
+                self.confirm_quit = true;
             }
             Action::Cancel => {
                 if self.loading {
@@ -1321,6 +1339,17 @@ impl App {
 
     pub fn key(&mut self, key: KeyEvent) {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return;
+        }
+        if self.confirm_quit {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.act(Action::Open),
+                KeyCode::Esc | KeyCode::Char('n' | 'N') => self.act(Action::Back),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.act(Action::Cancel)
+                }
+                _ => {}
+            }
             return;
         }
         if let Some(form) = &mut self.connection_form {
@@ -2591,6 +2620,41 @@ mod tests {
         app.act(Action::Back);
         assert_eq!(app.view.resource.id, "fake.rows");
         assert_eq!(app.view.column, 3);
+    }
+
+    #[test]
+    fn quit_requires_confirmation_and_keeps_work_until_confirmed() {
+        let mut active = app();
+        let request_id = active.request.as_ref().unwrap().id;
+        active.key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(active.confirm_quit);
+        assert!(!active.quit);
+        assert_eq!(active.request.as_ref().unwrap().id, request_id);
+        active.key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(active.confirm_quit);
+        active.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!active.confirm_quit);
+        assert!(!active.quit);
+        assert_eq!(active.request.as_ref().unwrap().id, request_id);
+
+        command(&mut active, "quit");
+        assert!(active.confirm_quit);
+        active.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert!(!active.confirm_quit);
+        active.act(Action::Cancel);
+        assert!(!active.confirm_quit);
+        assert!(!active.quit);
+        active.key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        active.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(active.quit);
+        assert!(active.request.is_none());
+
+        let mut idle = app();
+        idle.request = None;
+        idle.loading = false;
+        idle.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(!idle.confirm_quit);
+        assert!(idle.quit);
     }
 
     #[test]
