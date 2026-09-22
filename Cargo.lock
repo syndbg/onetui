@@ -2395,7 +2395,7 @@ dependencies = [
  "aws-smithy-http-client",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
- "base64 0.22.1",
+ "base64 0.23.1",
  "http-body-util",
  "nix",
  "onetui-core",
@@ -2413,7 +2413,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apache-avro",
- "base64 0.22.1",
+ "base64 0.23.1",
  "nix",
  "onetui-avro",
  "onetui-core",
@@ -2440,7 +2440,7 @@ dependencies = [
  "anyhow",
  "apache-avro",
  "async-nats",
- "base64 0.22.1",
+ "base64 0.23.1",
  "futures-util",
  "nix",
  "onetui-avro",
@@ -2519,7 +2519,7 @@ name = "onetui-rabbitmq"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "nix",
  "onetui-core",
  "reqwest",
@@ -2538,7 +2538,7 @@ name = "onetui-schema-source"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "nix",
  "onetui-avro",
  "onetui-core",
