@@ -144,7 +144,7 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Quit,
         keys: &["q"],
-        description: "Quit and restore the terminal",
+        description: "Ask before quitting and restoring the terminal",
     },
     ActionDescriptor {
         id: Action::Cancel,

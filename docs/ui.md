@@ -21,7 +21,7 @@ The header shows your current connection, resource and available actions. Press 
 | `f` | Start or stop following, where supported |
 | `c/r` | Choose a connection / refresh |
 | Ctrl-C | Cancel active work, or quit when idle |
-| `q` | Quit |
+| `q` | Open quit confirmation |
 
 ## Value display controls
 

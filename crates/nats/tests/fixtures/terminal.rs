@@ -203,6 +203,8 @@ fn actual_cli_system_discovery_and_details() {
     pty.send(b"jjjjjjj\r");
     pty.wait(&["statsz"]);
     pty.send(b"q");
+    pty.wait(&["QuitOneTUI?"]);
+    pty.send(b"y");
     pty.wait_token("ONETUI_DONE", Duration::from_secs(4));
     assert!(
         tcgetattr(&slave)
@@ -285,6 +287,8 @@ fn actual_cli_nats_browsing_and_following() {
         pty.send(b"c");
         pty.wait(&["connections"]);
         pty.send(b"q");
+        pty.wait(&["QuitOneTUI?"]);
+        pty.send(b"y");
         pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
         pty.wait_token("ONETUI_DONE", Duration::from_secs(3));
     }));
@@ -348,6 +352,8 @@ async fn actual_cli_core_subscription_stops_when_inspecting() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     pty.send(b"q");
+    pty.wait(&["QuitOneTUI?"]);
+    pty.send(b"y");
     pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
     pty.wait_token("ONETUI_DONE", Duration::from_secs(3));
     assert!(

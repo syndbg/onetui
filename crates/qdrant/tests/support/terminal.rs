@@ -232,6 +232,8 @@ pub fn journey(collection: &str) {
     pty.open_filtered("shards");
     pty.wait(&["qdrant.shards", "shard_id", "peer_id"]);
     pty.send(b"q");
+    pty.wait(&["QuitOneTUI?"]);
+    pty.send(b"y");
     let until = Instant::now() + Duration::from_secs(3);
     loop {
         pty.read();

@@ -220,6 +220,9 @@ async fn keyboard_to_postgres_rows_detail_paging_metadata_and_failure() {
     assert!(app.view.page.rows.is_empty());
     assert!(app.error.is_none());
     key(&mut app, KeyCode::Char('q'));
+    assert!(app.confirm_quit);
+    assert!(!app.quit);
+    key(&mut app, KeyCode::Enter);
     assert!(app.quit);
     executor
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))
@@ -457,6 +460,8 @@ mod terminal {
                 );
             } else if mode == "quit_read" {
                 pty.send(b"q");
+                pty.wait(&["QuitOneTUI?"]);
+                pty.send(b"y");
             } else {
                 pty.send(b"c");
             }
@@ -755,6 +760,8 @@ mod terminal {
         pty.send(b"\x1b");
         pty.wait(&["postgres.schemas", "public"]);
         pty.send(b"q");
+        pty.wait(&["QuitOneTUI?"]);
+        pty.send(b"y");
         let until = Instant::now() + Duration::from_secs(3);
         loop {
             pty.read();
@@ -1016,6 +1023,8 @@ mod terminal {
         assert!(!String::from_utf8_lossy(&pty.output).contains("onetui-tui-point-1"));
         pty.output.clear();
         pty.master.as_mut().unwrap().write_all(b"q").unwrap();
+        pty.wait(&["QuitOneTUI?"]);
+        pty.send(b"y");
         let until = Instant::now() + Duration::from_secs(3);
         loop {
             pty.read();

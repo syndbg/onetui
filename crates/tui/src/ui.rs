@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::App;
@@ -1440,10 +1440,55 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .style(Style::new().fg(color(p.muted))),
         status,
     );
+    if app.confirm_quit && area.width > 0 && area.height > 0 {
+        let width = area.width.min(38);
+        let height = area.height.min(5);
+        let popup = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::raw("Enter or y: quit"),
+                Line::raw("Esc or n: stay"),
+            ])
+            .centered()
+            .block(panel(p, " Quit OneTUI? ").style(Style::new().bg(color(p.background)))),
+            popup,
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quit_confirmation_is_centered_over_the_current_view() {
+        use super::*;
+        use ratatui::{Terminal, backend::TestBackend};
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, None);
+        app.confirm_quit = true;
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let line = (0..80)
+            .map(|x| terminal.backend().buffer()[(x, 9)].symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(line.contains("Quit OneTUI?"));
+        let prompt = (0..80)
+            .map(|x| terminal.backend().buffer()[(x, 10)].symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(prompt.contains("Enter or y: quit"));
+    }
+
     #[test]
     fn truncated_previews_keep_the_marker_inside_the_column() {
         use super::*;
@@ -2881,6 +2926,7 @@ mod tests {
             let start = std::time::Instant::now();
             let mut output = Vec::new();
             let mut sent_quit = false;
+            let mut sent_confirmation = false;
             let mut restored_modes = None;
             let status = loop {
                 let mut buffer = [0; 16384];
@@ -2905,6 +2951,10 @@ mod tests {
                     );
                     master.write_all(b"q").unwrap();
                     sent_quit = true;
+                }
+                if sent_quit && !sent_confirmation && text.contains("Quit OneTUI?") {
+                    master.write_all(b"y").unwrap();
+                    sent_confirmation = true;
                 }
                 if text.contains("ONETUI_TERMINAL_RESTORED") && restored_modes.is_none() {
                     restored_modes = Some(tcgetattr(&slave).unwrap());

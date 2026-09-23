@@ -82,10 +82,13 @@ fn first_run_opens_empty_picker_and_saves_without_connecting() {
         } else if stage == 3 && path.exists() {
             master.write_all(b"q").unwrap();
             stage = 4;
+        } else if stage == 4 && text.contains("Quit OneTUI?") {
+            master.write_all(b"y").unwrap();
+            stage = 5;
         }
         if let Some(status) = child.0.try_wait().unwrap() {
             assert!(status.success(), "{text}");
-            assert_eq!(stage, 4, "{text}");
+            assert_eq!(stage, 5, "{text}");
             assert!(
                 !text.contains("referenced environment variable"),
                 "must not connect: {text}"

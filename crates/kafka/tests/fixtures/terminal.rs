@@ -237,6 +237,8 @@ pub(super) fn assert_avro_projection(mut options: toml::Table, topic: &str) {
     pty.send(b":display format hex\r");
     pty.wait(&["00000000:0e"]);
     pty.send(b"q");
+    pty.wait(&["QuitOneTUI?"]);
+    pty.send(b"y");
     pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
     assert!(pty.child.wait().unwrap().success());
 }
@@ -310,6 +312,8 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
         pty.send(b"c");
         pty.wait(&["connections", "kafka"]);
         pty.send(b"q");
+        pty.wait(&["QuitOneTUI?"]);
+        pty.send(b"y");
         pty.wait_token("\x1b[?1049l", Duration::from_secs(3));
     }));
     if result.is_err() {
@@ -436,6 +440,8 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
         pty.wait(&["connections", "second"]);
     }
     pty.send(b"q");
+    pty.wait(&["QuitOneTUI?"]);
+    pty.send(b"y");
     let until = Instant::now() + Duration::from_secs(3);
     loop {
         pty.read();
