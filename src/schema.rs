@@ -23,7 +23,7 @@ pub fn dump<P: Provider>(catalog: &[P], datasource: Option<&str>) -> Result<Stri
             "data_navigation": "Enter on a data row lists every field/type/value preview across the panel width (25%/25%/50%); Enter on a field opens its full cached value. Complete single-value results open directly. Esc returns one level. PageUp/PageDown scrolls one screen; Ctrl-u/Ctrl-d scrolls half a screen within loaded data or detail. These keys do not fetch data or change value chunks; n/p handles paging/chunks. Filter input updates cached matches on every character/Backspace; Enter keeps, Esc restores the previous filter and selection. No new configuration settings.",
             "action_context": "Help shows currently available actions. Navigation keys do not apply inside the ':' command prompt. T or :themes opens the theme menu: j/k or arrows preview, Enter keeps for this session, Esc or Ctrl-C restores the previous theme without cancelling requests."},
         "configuration": {
-            "format": "TOML; optional theme string, persist_query_history boolean, display table and connections table. Missing connections means an empty picker. Every entry is validated, including unselected aliases; unknown themes/kinds/fields, invalid reference names, relative PostgreSQL CA paths and invalid Qdrant URLs are rejected.",
+            "format": "TOML",
             "persist_query_history": {"type": "boolean", "default": false, "purpose": "Save submitted query text across restarts; query text may contain secrets"},
             "display": {"type": "table", "required": false, "defaults": DisplayOptions::default(), "formats": FORMATS,
                 "fields": {
