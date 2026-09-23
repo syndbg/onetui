@@ -1,5 +1,6 @@
 mod app;
 mod connection;
+mod history;
 mod query;
 mod row_value;
 #[cfg(test)]
