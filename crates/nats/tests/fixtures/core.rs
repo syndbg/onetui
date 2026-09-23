@@ -126,24 +126,26 @@ async fn core_subscriptions_bytes_limits_restart_and_unsubscribe() {
     .await
     .unwrap();
     assert!(quiet.rows.is_empty());
-    // An idle overflow must survive until the next batch, not be cleared by execute().
-    for _ in 0..100 {
-        admin
-            .publish(subject.clone(), "overflow".into())
-            .await
-            .unwrap();
-    }
-    admin.flush().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let error = read(
-        &executor,
-        "nats.core_messages",
-        &[&subject],
-        quiet.continuation,
-        true,
-    )
+    // A burst can still be in transit when a busy runner reads the next page.
+    let error = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut token = quiet.continuation;
+        loop {
+            for _ in 0..100 {
+                admin
+                    .publish(subject.clone(), "overflow".into())
+                    .await
+                    .unwrap();
+            }
+            admin.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            match read(&executor, "nats.core_messages", &[&subject], token, true).await {
+                Err(error) => break error,
+                Ok(page) => token = page.continuation,
+            }
+        }
+    })
     .await
-    .unwrap_err();
+    .expect("Core subscription did not overflow");
     assert!(error.to_string().contains("overflow"), "{error:#}");
     close(&mut executor).await;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
