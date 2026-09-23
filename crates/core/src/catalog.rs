@@ -59,7 +59,7 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::History,
         keys: &["H"],
-        description: "Browse queries submitted on this connection during the current session; Enter opens one for editing",
+        description: "Browse recent queries submitted on this connection; Enter opens one for editing",
     },
     ActionDescriptor {
         id: Action::Themes,

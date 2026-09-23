@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -10,7 +11,6 @@ use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
 use onetui_theme::Theme;
 
 const BOOKMARK_LIMIT: usize = 4096;
-const QUERY_HISTORY_LIMIT: usize = 100;
 mod follow;
 
 struct PageBookmark {
@@ -195,6 +195,7 @@ pub struct App {
     pub(crate) follow_due: Option<tokio::time::Instant>,
     pub query_editor: Option<crate::query::Editor>,
     query_history: VecDeque<(String, String)>,
+    history_path: Option<PathBuf>,
     pub(crate) history_menu: Option<usize>,
     history_position: Option<usize>,
     history_current: Option<String>,
@@ -235,13 +236,28 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config, alias: Option<&str>) -> Self {
+        let (history_path, query_history, history_error) = match crate::history::path(&config) {
+            Some(path) => match crate::history::load(&path) {
+                Ok(entries) => (Some(path), entries, None),
+                Err(error) => (
+                    None,
+                    VecDeque::new(),
+                    Some(format!(
+                        "Could not load query history: {}",
+                        display(&error.to_string())
+                    )),
+                ),
+            },
+            None => (None, VecDeque::new(), None),
+        };
         let mut app = Self {
             connection_form: None,
             providers: Vec::new(),
             following: false,
             follow_due: None,
             query_editor: None,
-            query_history: VecDeque::new(),
+            query_history,
+            history_path,
             history_menu: None,
             history_position: None,
             history_current: None,
@@ -292,6 +308,9 @@ impl App {
             } else {
                 app.error = Some("Unknown connection alias; select a configured connection".into());
             }
+        }
+        if app.error.is_none() {
+            app.error = history_error;
         }
         app
     }
@@ -736,16 +755,23 @@ impl App {
         }
         let resource = self.query_target().expect("query scope");
         let alias = self.view.alias.as_ref().expect("query connection");
-        if self
+        let recorded = self
             .query_history
             .back()
-            .is_none_or(|entry| entry.0 != *alias || entry.1 != text)
-        {
-            if self.query_history.len() == QUERY_HISTORY_LIMIT {
+            .is_none_or(|entry| entry.0 != *alias || entry.1 != text);
+        if recorded {
+            if self.query_history.len() == crate::history::LIMIT {
                 self.query_history.pop_front();
             }
             self.query_history.push_back((alias.clone(), text.clone()));
         }
+        let history_error = if recorded {
+            self.history_path
+                .as_deref()
+                .and_then(|path| crate::history::save(path, &self.query_history).err())
+        } else {
+            None
+        };
         self.history_position = None;
         self.history_current = None;
         self.view.query_draft = Some(text.clone());
@@ -753,6 +779,12 @@ impl App {
         let request = self.request.as_mut().expect("queued query");
         request.query = Some(text);
         request.resource = resource;
+        if let Some(error) = history_error {
+            self.error = Some(format!(
+                "Could not save query history: {}",
+                display(&error.to_string())
+            ));
+        }
     }
 
     pub fn column_count(&self) -> usize {
@@ -1681,6 +1713,82 @@ mod tests {
         app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
         let retry = app.request.take().expect("F5 executes");
         assert_eq!(retry.query, request.query);
+    }
+
+    #[test]
+    fn query_history_does_not_touch_disk_without_opt_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let history_path = config_path.with_extension("history.json");
+        std::fs::write(&config_path, "[connections.pg]\nkind='fake'").unwrap();
+        let open = || {
+            App::new(
+                Config::load(&config_path, crate::test_provider::CATALOG).unwrap(),
+                Some("pg"),
+            )
+        };
+        let mut app = open();
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new("SELECT 'secret'".into()));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        assert_eq!(
+            app.history_entries().collect::<Vec<_>>(),
+            ["SELECT 'secret'"]
+        );
+        drop(app);
+        assert!(!history_path.exists());
+
+        let old_history = serde_json::to_vec(&[("pg", "SELECT 'old secret'")]).unwrap();
+        std::fs::write(&history_path, &old_history).unwrap();
+        let reopened = open();
+        assert_eq!(reopened.history_entries().count(), 0);
+        assert_eq!(std::fs::read(&history_path).unwrap(), old_history);
+    }
+
+    #[test]
+    fn query_history_survives_restart_and_stays_scoped_to_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "persist_query_history = true\n[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'",
+        )
+        .unwrap();
+        let open = || {
+            App::new(
+                Config::load(&config_path, crate::test_provider::CATALOG).unwrap(),
+                Some("pg"),
+            )
+        };
+        let mut app = open();
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        app.act(Action::Query);
+        for text in ["SELECT 1", "SELECT 2"] {
+            app.query_editor = Some(crate::query::Editor::new(text.into()));
+            app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+            let request = app.request.take().unwrap();
+            app.complete(&request, Err(anyhow::anyhow!("query failed")));
+        }
+        drop(app);
+        assert!(config_path.with_extension("history.json").is_file());
+
+        let mut reopened = open();
+        assert_eq!(
+            reopened.history_entries().collect::<Vec<_>>(),
+            ["SELECT 2", "SELECT 1"]
+        );
+        reopened.view.alias = Some("q".into());
+        assert_eq!(reopened.history_entries().count(), 0);
+        reopened.view.alias = Some("pg".into());
+        let browse = reopened.request.take().unwrap();
+        reopened.complete(&browse, Ok(page(false)));
+        reopened.act(Action::Query);
+        reopened.query_editor = Some(crate::query::Editor::new("SELECT 2".into()));
+        reopened.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        assert_eq!(reopened.query_history.len(), 2);
     }
 
     #[test]
