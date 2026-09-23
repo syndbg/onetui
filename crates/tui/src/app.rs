@@ -1687,12 +1687,44 @@ mod tests {
     }
 
     #[test]
+    fn query_history_does_not_touch_disk_without_opt_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let history_path = config_path.with_extension("history.json");
+        std::fs::write(&config_path, "[connections.pg]\nkind='fake'").unwrap();
+        let open = || {
+            App::new(
+                Config::load(&config_path, crate::test_provider::CATALOG).unwrap(),
+                Some("pg"),
+            )
+        };
+        let mut app = open();
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new("SELECT 'secret'".into()));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        assert_eq!(
+            app.history_entries().collect::<Vec<_>>(),
+            ["SELECT 'secret'"]
+        );
+        drop(app);
+        assert!(!history_path.exists());
+
+        let old_history = serde_json::to_vec(&[("pg", "SELECT 'old secret'")]).unwrap();
+        std::fs::write(&history_path, &old_history).unwrap();
+        let reopened = open();
+        assert_eq!(reopened.history_entries().count(), 0);
+        assert_eq!(std::fs::read(&history_path).unwrap(), old_history);
+    }
+
+    #[test]
     fn query_history_survives_restart_and_stays_scoped_to_connection() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
         std::fs::write(
             &config_path,
-            "[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'",
+            "persist_query_history = true\n[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'",
         )
         .unwrap();
         let open = || {

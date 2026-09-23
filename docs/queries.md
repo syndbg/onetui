@@ -5,7 +5,7 @@ Press `e` or enter `:query` on a supported resource. Enter, F5 or Ctrl-R execute
 Press `e` to edit again, `n/p` to page through results, or `r` to rerun.
 In the query editor, Ctrl-P and Ctrl-N browse recent queries submitted on this connection.
 Press Shift+H or enter `:history` while browsing to choose one from a list. Enter opens it for editing; Esc closes the list.
-OneTUI keeps the last 100 submissions across restarts in a private file beside your config. Query text can contain sensitive data.
+History stays in memory for the current session by default. To keep the last 100 submissions across restarts, add `persist_query_history = true` at the top of your config. The unencrypted file beside it (`config.history.json` for `config.toml`) contains full query text, including any passwords or tokens. Turning the setting off does not delete that file.
 
 | Datasource | Query |
 | --- | --- |

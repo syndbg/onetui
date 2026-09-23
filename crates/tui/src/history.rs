@@ -12,6 +12,9 @@ const MAX_BYTES: u64 = 12 * 1024 * 1024;
 pub(crate) type Entries = VecDeque<(String, String)>;
 
 pub(crate) fn path(config: &Config) -> Option<PathBuf> {
+    if !config.persist_query_history {
+        return None;
+    }
     config
         .path()
         .filter(|path| path.is_file())

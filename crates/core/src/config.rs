@@ -10,6 +10,7 @@ use serde::Deserialize;
 pub struct Config {
     pub theme: Theme,
     pub display: crate::value::DisplayOptions,
+    pub persist_query_history: bool,
     connections: BTreeMap<String, Connection>,
     source: Option<(PathBuf, Option<String>)>,
 }
@@ -26,6 +27,8 @@ struct RawConfig {
     theme: Theme,
     #[serde(default)]
     display: crate::value::DisplayOptions,
+    #[serde(default)]
+    persist_query_history: bool,
     #[serde(default)]
     connections: BTreeMap<String, toml::Table>,
 }
@@ -169,6 +172,7 @@ impl Config {
         Ok(Self {
             theme: raw.theme,
             display: raw.display,
+            persist_query_history: raw.persist_query_history,
             connections,
             source: None,
         })
@@ -273,6 +277,17 @@ mod tests {
         std::fs::write(&path, "invalid = [").unwrap();
         assert!(Config::load_for_startup(&path, CATALOG, true).is_err());
         assert!(Config::load_for_startup(dir.path(), CATALOG, true).is_err());
+    }
+
+    #[test]
+    fn query_history_persistence_requires_explicit_opt_in() {
+        assert!(!Config::parse("", CATALOG).unwrap().persist_query_history);
+        assert!(
+            Config::parse("persist_query_history = true", CATALOG)
+                .unwrap()
+                .persist_query_history
+        );
+        assert!(Config::parse("persist_query_history = 'true'", CATALOG).is_err());
     }
 
     #[test]
