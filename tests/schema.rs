@@ -80,6 +80,10 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(schema["schema_format_version"], 1);
     assert_eq!(
+        schema["configuration"]["ask_for_query_confirm"]["default"],
+        true
+    );
+    assert_eq!(
         schema["configuration"]["display"]["defaults"],
         serde_json::to_value(onetui_core::value::DisplayOptions::default()).unwrap()
     );

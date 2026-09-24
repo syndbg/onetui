@@ -54,7 +54,7 @@ pub const ACTIONS: &[ActionDescriptor] = &[
     ActionDescriptor {
         id: Action::Query,
         keys: &["e"],
-        description: "Edit a native query above retained rows; Enter/F5 executes, Shift-Enter inserts a line, Esc returns",
+        description: "Edit a native query above retained rows; Enter/F5 submits, Shift-Enter inserts a line, Esc returns",
     },
     ActionDescriptor {
         id: Action::History,

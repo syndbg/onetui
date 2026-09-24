@@ -33,6 +33,13 @@ pub struct Request {
     reset: bool,
 }
 
+pub(crate) struct QueryConfirmation {
+    pub(crate) alias: String,
+    pub(crate) resource: Resource,
+    text: String,
+    rerun: bool,
+}
+
 pub struct View {
     pub live: bool,
     pub live_evicted: usize,
@@ -207,6 +214,7 @@ pub struct App {
     pub connection_status: Option<onetui_core::provider::ConnectionStatus>,
     pub request: Option<Request>,
     pub loading: bool,
+    pub(crate) confirm_query: Option<QueryConfirmation>,
     pub error: Option<String>,
     pub help: bool,
     pub detail: bool,
@@ -269,6 +277,7 @@ impl App {
             connection_status: None,
             request: None,
             loading: false,
+            confirm_query: None,
             error: None,
             help: false,
             detail: false,
@@ -321,6 +330,7 @@ impl App {
         self.generation += 1;
         self.request = None;
         self.loading = false;
+        self.confirm_query = None;
         self.error = None;
     }
 
@@ -386,7 +396,7 @@ impl App {
     }
 
     pub(crate) fn paste(&mut self, text: &str) {
-        if self.confirm_quit {
+        if self.confirm_quit || self.confirm_query.is_some() {
             return;
         }
         if let Some(form) = &mut self.connection_form {
@@ -535,6 +545,9 @@ impl App {
 
     fn available_while_loading(&self, action: Action, loading: bool) -> bool {
         if self.confirm_quit {
+            return matches!(action, Action::Open | Action::Back | Action::Cancel);
+        }
+        if self.confirm_query.is_some() {
             return matches!(action, Action::Open | Action::Back | Action::Cancel);
         }
         if self.connection_form.is_some() {
@@ -754,16 +767,40 @@ impl App {
             return;
         }
         let resource = self.query_target().expect("query scope");
-        let alias = self.view.alias.as_ref().expect("query connection");
+        let pending = QueryConfirmation {
+            alias: self.view.alias.as_ref().expect("query connection").clone(),
+            resource,
+            text,
+            rerun: false,
+        };
+        if self.config.ask_for_query_confirm {
+            self.confirm_query = Some(pending);
+            self.error = None;
+        } else {
+            self.submit_query(pending);
+        }
+    }
+
+    fn submit_query(&mut self, pending: QueryConfirmation) {
+        if pending.rerun {
+            self.load(0, true);
+            return;
+        }
+        let QueryConfirmation {
+            alias,
+            resource,
+            text,
+            ..
+        } = pending;
         let recorded = self
             .query_history
             .back()
-            .is_none_or(|entry| entry.0 != *alias || entry.1 != text);
+            .is_none_or(|entry| entry.0 != alias || entry.1 != text);
         if recorded {
             if self.query_history.len() == crate::history::LIMIT {
                 self.query_history.pop_front();
             }
-            self.query_history.push_back((alias.clone(), text.clone()));
+            self.query_history.push_back((alias, text.clone()));
         }
         let history_error = if recorded {
             self.history_path
@@ -932,6 +969,17 @@ impl App {
                     self.quit = true;
                 }
                 Action::Back | Action::Cancel => self.confirm_quit = false,
+                _ => {}
+            }
+            return;
+        }
+        if self.confirm_query.is_some() {
+            match action {
+                Action::Open => {
+                    let pending = self.confirm_query.take().expect("pending query");
+                    self.submit_query(pending);
+                }
+                Action::Back | Action::Cancel => self.confirm_query = None,
                 _ => {}
             }
             return;
@@ -1346,6 +1394,15 @@ impl App {
                     self.view.filter = filter;
                     self.view.sort = sort;
                     self.view.rebuild(None, self.config.display);
+                } else if self.config.ask_for_query_confirm
+                    && let (Some(alias), Some(text)) = (&self.view.alias, &self.view.query)
+                {
+                    self.confirm_query = Some(QueryConfirmation {
+                        alias: alias.clone(),
+                        resource: self.view.resource.clone(),
+                        text: text.clone(),
+                        rerun: true,
+                    });
                 } else {
                     self.load(0, true);
                 }
@@ -1374,6 +1431,17 @@ impl App {
             return;
         }
         if self.confirm_quit {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.act(Action::Open),
+                KeyCode::Esc | KeyCode::Char('n' | 'N') => self.act(Action::Back),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.act(Action::Cancel)
+                }
+                _ => {}
+            }
+            return;
+        }
+        if self.confirm_query.is_some() {
             match key.code {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.act(Action::Open),
                 KeyCode::Esc | KeyCode::Char('n' | 'N') => self.act(Action::Back),
@@ -1716,11 +1784,55 @@ mod tests {
     }
 
     #[test]
+    fn query_confirmation_keeps_the_draft_until_accepted() {
+        let mut app = app();
+        app.config.ask_for_query_confirm = true;
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new("SELECT 1".into()));
+
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.confirm_query.is_some());
+        assert!(app.request.is_none());
+        assert_eq!(app.history_entries().count(), 0);
+
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.confirm_query.is_none());
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1");
+        assert!(app.request.is_none());
+
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        let request = app.request.take().expect("confirmed query queued");
+        assert_eq!(request.query.as_deref(), Some("SELECT 1"));
+        assert_eq!(app.history_entries().collect::<Vec<_>>(), ["SELECT 1"]);
+
+        app.complete(&request, Ok(page(false)));
+        app.act(Action::Refresh);
+        assert!(app.confirm_query.is_some());
+        assert!(app.request.is_none());
+        app.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert!(app.request.is_none());
+        app.act(Action::Refresh);
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.request.as_ref().unwrap().query.as_deref(),
+            Some("SELECT 1")
+        );
+        assert_eq!(app.history_entries().collect::<Vec<_>>(), ["SELECT 1"]);
+    }
+
+    #[test]
     fn query_history_does_not_touch_disk_without_opt_in() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
         let history_path = config_path.with_extension("history.json");
-        std::fs::write(&config_path, "[connections.pg]\nkind='fake'").unwrap();
+        std::fs::write(
+            &config_path,
+            "ask_for_query_confirm = false\n[connections.pg]\nkind='fake'",
+        )
+        .unwrap();
         let open = || {
             App::new(
                 Config::load(&config_path, crate::test_provider::CATALOG).unwrap(),
@@ -1753,7 +1865,7 @@ mod tests {
         let config_path = dir.path().join("config.toml");
         std::fs::write(
             &config_path,
-            "persist_query_history = true\n[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'",
+            "persist_query_history = true\nask_for_query_confirm = false\n[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'",
         )
         .unwrap();
         let open = || {
@@ -2160,7 +2272,7 @@ mod tests {
 
     fn app() -> App {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write!(file, "[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'").unwrap();
+        write!(file, "ask_for_query_confirm = false\n[connections.pg]\nkind='fake'\nurl_env='NEVER_RESOLVE_THIS'\n[connections.q]\nkind='checkonly'\nurl='http://localhost:6334'").unwrap();
         App::new(
             Config::load(file.path(), crate::test_provider::CATALOG).unwrap(),
             Some("pg"),
