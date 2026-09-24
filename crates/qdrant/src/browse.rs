@@ -140,9 +140,7 @@ pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Of
         ("qdrant.shards" | "qdrant.transfers" | "qdrant.collection_cluster", [name]) => {
             !name.is_empty() && !matches!(name.as_str(), "." | "..")
         }
-        ("qdrant.collection" | "qdrant.metadata" | "qdrant.points" | "qdrant.query", [name]) => {
-            !name.is_empty()
-        }
+        ("qdrant.collection" | "qdrant.metadata" | "qdrant.points", [name]) => !name.is_empty(),
         ("qdrant.point" | "qdrant.payload" | "qdrant.vectors", [name, id]) => {
             !name.is_empty() && Id::parse(id).is_ok()
         }
@@ -169,7 +167,7 @@ pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Of
         matches!(
             (&position.offset, request.resource.id),
             (Offset::Collections(_), "qdrant.collections")
-                | (Offset::Point(_), "qdrant.points" | "qdrant.query")
+                | (Offset::Point(_), "qdrant.points")
                 | (
                     Offset::Topology(_),
                     "qdrant.peers" | "qdrant.shards" | "qdrant.transfers"

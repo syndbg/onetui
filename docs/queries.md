@@ -12,7 +12,7 @@ History stays in memory for the current session by default. To keep the last 100
 | Datasource | Query |
 | --- | --- |
 | [PostgreSQL](#postgresql) | SQL row queries |
-| [Qdrant](#qdrant) | Filtered Scroll JSON |
+| [Qdrant](#qdrant) | HTTP requests |
 | [Kafka](kafka.md#replay-from-an-offset-or-timestamp) | Partition offset or timestamp replay |
 | [NATS](nats.md#replay) | Stream subject, sequence or time replay |
 | [DynamoDB](dynamodb.md#queries) | Native reads and PartiQL SELECT |
@@ -32,23 +32,15 @@ Use least-privilege credentials. Queries consume database resources and may be l
 
 ## Qdrant
 
-Select a collection and enter Scroll JSON:
+Configure `rest_url`, then put `METHOD /path` on the first line. Leave a blank line before an optional body:
 
-```json
-{
-  "filter": {
-    "must": [
-      {"key": "active", "match": {"value": true}},
-      {"key": "price", "range": {"gte": 1, "lt": 10}}
-    ]
-  },
-  "limit": 100
-}
+```http
+POST /collections/demo_products/points/scroll
+
+{"limit": 10}
 ```
 
-Use `must`, `should` and `must_not` with exact-value matches or numeric ranges. `{}` browses unfiltered point IDs. Open a point for payloads or vectors. Advanced filters, custom ordering and similarity queries are unsupported.
-
-Use `onetui schema --datasource qdrant` for the accepted fields and limits.
+OneTUI sends the body unchanged and shows the HTTP status and response body, including Qdrant errors. Requests can write data. If a write times out, inspect the target before retrying.
 
 ## Terminal input
 

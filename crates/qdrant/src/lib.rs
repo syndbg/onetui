@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 mod browse;
 mod config;
+mod http;
 mod provider;
 mod query;
 mod topology;
@@ -57,13 +58,8 @@ fn rpc_error(status: tonic::Status) -> anyhow::Error {
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "id": "qdrant", "operations": ["check", "fetch_page", "query_page"],
-        "query_syntax": {
-            "operation": "Filtered Scroll on the current or selected collection; IDs only, payload and vectors fetched on demand",
-            "fields": {"filter": "optional object: must, should, must_not arrays of field conditions", "limit": "optional integer 1..100; default 100"},
-            "condition": "Nonempty key plus exactly one of match: {value: string|boolean|i64} or range: {gt?, gte?, lt?, lte?}; range requires a numeric bound",
-            "unsupported": "Unknown fields, nested conditions, match any/except/text, geo/datetime filters, order_by, user offsets, payload/vector selectors and similarity queries are rejected"
-        },
+        "id": "qdrant", "operations": ["check", "fetch_page", "query_page", "execute_query"],
+        "query_syntax": {"format": "METHOD /path, blank line, optional body", "endpoint": "configured rest_url", "body": "sent unchanged as application/json", "response": "HTTP status and raw body"},
         "session": "Lazy reusable size-capped gRPC channel and optional REST client; failed/cancelled operations discard the affected client. Shutdown drops both. REST client/trust setup runs off async workers with one process-wide job slot. No periodic metadata checks or heartbeat TOML setting. HTTP/2 keepalive interval unset; idle pings disabled.",
         "limits": {"page_rows": 100, "rpc_bytes": 1048576, "rest_bytes": 1048576, "display_page_bytes": 1048576, "retained_pages_per_view": 3},
         "navigation": "Enter: resources -> collections, cluster or peers. Collection -> points, metadata, shards, transfers or cluster details. Point -> payload or vectors. Enter on a data row inspects cached fields.",
@@ -73,7 +69,7 @@ pub(crate) fn capabilities() -> serde_json::Value {
         "configuration": {
             "kind": {"required": true, "values": ["qdrant"], "purpose": "Select the Qdrant connector"},
             "url": {"required": true, "type": "HTTP(S) gRPC URL", "purpose": "Explicit endpoint; plaintext only on loopback; no URL credentials, path prefix, query or fragment", "example": "http://127.0.0.1:6334"},
-            "rest_url": {"required": false, "type": "HTTP(S) REST URL", "default": "unset; topology reads unavailable", "purpose": "REST endpoint for cluster topology, using the same api_key_env and verified platform TLS trust. Configure the same Qdrant node as url for consistent local/remote labels. Plaintext only on loopback; no credentials, path prefix, query or fragment. Ports are never inferred", "example": "http://127.0.0.1:6333"},
+            "rest_url": {"required": false, "type": "HTTP(S) REST URL", "default": "unset; topology and HTTP requests unavailable", "purpose": "REST endpoint for topology and HTTP requests, using the same api_key_env and verified platform TLS trust. Configure the same Qdrant node as url for consistent local/remote labels. Plaintext only on loopback; no credentials, path prefix, query or fragment. Ports are never inferred", "example": "http://127.0.0.1:6333"},
             "api_key_env": {"required": false, "type": "string", "default": "no API key", "purpose": "Environment variable containing the API key", "values": "Nonempty ASCII letters, digits, underscores or hyphens", "example": "ONETUI_QDRANT_API_KEY"}
         }
     })

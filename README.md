@@ -132,7 +132,7 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 | Datasource | Functionality |
 | --- | --- |
 | [PostgreSQL](docs/postgres.md) | Tables, views, typed values, SQL and replication statistics |
-| [Qdrant](docs/qdrant.md) | Collections, points, payloads, vectors, filtered Scroll and topology |
+| [Qdrant](docs/qdrant.md) | Collections, points, payloads, vectors, HTTP requests and topology |
 | [Kafka](docs/kafka.md) | Metadata, configuration, groups, lag, record browsing, replay and following |
 | [NATS](docs/nats.md) | Core subscriptions, JetStream messages, replay, consumers, KV and objects |
 | [DynamoDB](docs/dynamodb.md) | Metadata, typed items, native reads, PartiQL, vector search and Streams |
