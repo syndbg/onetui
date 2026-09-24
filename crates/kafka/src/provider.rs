@@ -44,8 +44,8 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     query: Some(QueryDescriptor {
         resource: "kafka.query",
         language: "Kafka replay JSON",
-        contextual_example: None,
-        example: "{}",
+        contextual_watermark: None,
+        watermark: "{}",
         path_depth: 2,
         scope_resources: &[],
     }),

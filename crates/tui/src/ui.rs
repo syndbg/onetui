@@ -1031,18 +1031,37 @@ pub fn draw(frame: &mut Frame, app: &App) {
             frame.render_widget(block, query);
         }
         if let Some(editor) = &app.query_editor {
-            let (lines, row, column) =
-                editor.lines(inner.width as usize, app.config.display.word_wrap);
-            let top = row.saturating_sub(inner.height.saturating_sub(1) as usize);
-            let left = if app.config.display.word_wrap {
-                0
+            if editor.text.is_empty() {
+                if let Some(descriptor) = app.query_descriptor() {
+                    let watermark = descriptor.watermark(
+                        &app.view.resource,
+                        app.view
+                            .selected_index()
+                            .and_then(|index| app.view.page.rows.get(index)),
+                    );
+                    let lines = watermark
+                        .lines()
+                        .map(|line| Line::raw(display(line)))
+                        .collect::<Vec<_>>();
+                    frame.render_widget(
+                        wrapping(Paragraph::new(lines), app).style(Style::new().fg(color(p.muted))),
+                        inner,
+                    );
+                }
             } else {
-                column.saturating_sub(inner.width.saturating_sub(1) as usize)
-            };
-            frame.render_widget(
-                Paragraph::new(lines).scroll((top as u16, left as u16)),
-                inner,
-            );
+                let (lines, row, column) =
+                    editor.lines(inner.width as usize, app.config.display.word_wrap);
+                let top = row.saturating_sub(inner.height.saturating_sub(1) as usize);
+                let left = if app.config.display.word_wrap {
+                    0
+                } else {
+                    column.saturating_sub(inner.width.saturating_sub(1) as usize)
+                };
+                frame.render_widget(
+                    Paragraph::new(lines).scroll((top as u16, left as u16)),
+                    inner,
+                );
+            }
         } else if let Some(text) = &app.view.query {
             let lines = text
                 .split('\n')
@@ -2061,6 +2080,47 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use std::io::Write;
+
+    #[test]
+    fn query_watermark_disappears_on_input_and_returns_when_cleared() {
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, Some("sample"));
+        let request = app.request.take().unwrap();
+        app.complete(&request, Ok(Page::default()));
+        app.act(Action::Query);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let rendered = |terminal: &Terminal<TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "");
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(rendered(&terminal).contains("select 1"));
+
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "x");
+        assert!(!rendered(&terminal).contains("select 1"));
+
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('u'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(rendered(&terminal).contains("select 1"));
+    }
 
     #[test]
     fn query_draft_and_results_remain_visible_through_execution_and_errors() {

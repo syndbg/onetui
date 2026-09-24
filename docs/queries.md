@@ -1,6 +1,7 @@
 # Native queries
 
 Press `e` or enter `:query` on a supported resource. Enter, F5 or Ctrl-R submits the draft; Shift+Enter inserts a newline. Ctrl-U clears it. Esc returns to browsing, and Ctrl-C cancels active work.
+A new query starts empty. Its watermark is a hint that disappears when you type.
 OneTUI asks before running a query by default. Set `ask_for_query_confirm = false` in your config to skip the prompt.
 
 Press `e` to edit again, `n/p` to page through results, or `r` to rerun.
