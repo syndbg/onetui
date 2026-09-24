@@ -219,7 +219,7 @@ async fn shard_details_preserve_full_metadata_and_page_bookmarks() {
         .query
         .as_ref()
         .unwrap()
-        .initial_text(
+        .watermark(
             &Resource::new("dynamodb.shard_details", vec![ARN.into()]),
             first.rows.first(),
         );

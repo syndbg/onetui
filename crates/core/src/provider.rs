@@ -157,9 +157,9 @@ pub const QUERY_BYTES: usize = 16 * 1024;
 pub struct QueryDescriptor {
     pub resource: &'static str,
     pub language: &'static str,
-    pub example: &'static str,
+    pub watermark: &'static str,
     #[serde(skip)]
-    pub contextual_example: Option<fn(&Resource, Option<&crate::Row>) -> String>,
+    pub contextual_watermark: Option<fn(&Resource, Option<&crate::Row>) -> String>,
     /// Number of current resource path components needed to scope a query.
     pub path_depth: usize,
     /// Resource paths that can supply this query's scope; empty permits every resource.
@@ -167,9 +167,11 @@ pub struct QueryDescriptor {
 }
 
 impl QueryDescriptor {
-    pub fn initial_text(&self, resource: &Resource, row: Option<&crate::Row>) -> String {
-        self.contextual_example
-            .map_or_else(|| self.example.into(), |example| example(resource, row))
+    pub fn watermark(&self, resource: &Resource, row: Option<&crate::Row>) -> String {
+        self.contextual_watermark.map_or_else(
+            || self.watermark.into(),
+            |watermark| watermark(resource, row),
+        )
     }
     pub fn accepts(&self, resource: &Resource) -> bool {
         resource.path.len() >= self.path_depth
@@ -300,8 +302,6 @@ pub fn validate_catalog<P: Provider>(catalog: &[P]) -> Result<()> {
             descriptor.query.is_none_or(|q| descriptor
                 .resource(q.resource)
                 .is_some_and(|r| r.paging)
-                && !q.example.is_empty()
-                && q.example.len() <= QUERY_BYTES
                 && q.scope_resources
                     .iter()
                     .all(|id| descriptor.resource(id).is_some())),
@@ -321,8 +321,8 @@ mod tests {
         let scoped = QueryDescriptor {
             resource: "query",
             language: "JSON",
-            example: "{}",
-            contextual_example: None,
+            watermark: "{}",
+            contextual_watermark: None,
             path_depth: 1,
             scope_resources: &["messages"],
         };
@@ -330,21 +330,21 @@ mod tests {
         assert!(!scoped.accepts(&Resource::new("messages", vec![])));
         assert!(!scoped.accepts(&Resource::new("objects", vec!["bucket".into()])));
         assert_eq!(
-            scoped.initial_text(&Resource::new("messages", vec!["stream".into()]), None),
+            scoped.watermark(&Resource::new("messages", vec!["stream".into()]), None),
             "{}"
         );
         let contextual = QueryDescriptor {
-            contextual_example: Some(|resource, _| resource.path[0].clone()),
+            contextual_watermark: Some(|resource, _| resource.path[0].clone()),
             ..scoped
         };
         assert_eq!(
-            contextual.initial_text(&Resource::new("messages", vec!["stream".into()]), None),
+            contextual.watermark(&Resource::new("messages", vec!["stream".into()]), None),
             "stream"
         );
         assert!(
             serde_json::to_value(contextual)
                 .unwrap()
-                .get("contextual_example")
+                .get("contextual_watermark")
                 .is_none()
         );
         assert!(

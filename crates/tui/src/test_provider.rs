@@ -49,8 +49,8 @@ static BROWSE: ProviderDescriptor = ProviderDescriptor {
     query: Some(QueryDescriptor {
         resource: "fake.rows",
         language: "Test query",
-        contextual_example: None,
-        example: "select 1",
+        contextual_watermark: None,
+        watermark: "select 1",
         path_depth: 0,
         scope_resources: &[],
     }),

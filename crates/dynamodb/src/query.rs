@@ -110,7 +110,10 @@ fn forward() -> bool {
     true
 }
 
-pub(crate) fn example(resource: &onetui_core::Resource, row: Option<&onetui_core::Row>) -> String {
+pub(crate) fn watermark(
+    resource: &onetui_core::Resource,
+    row: Option<&onetui_core::Row>,
+) -> String {
     let first = row
         .and_then(|row| row.cells.first())
         .and_then(Option::as_ref)
@@ -128,7 +131,7 @@ pub(crate) fn example(resource: &onetui_core::Resource, row: Option<&onetui_core
     } else {
         serde_json::json!({"operation":"Scan", "limit":100})
     };
-    serde_json::to_string_pretty(&value).expect("JSON query example")
+    serde_json::to_string_pretty(&value).expect("JSON query watermark")
 }
 
 impl Read {
@@ -357,13 +360,13 @@ mod tests {
     }
 
     #[test]
-    fn stream_examples_use_selected_shards_and_preserve_decimal_sequences() {
+    fn stream_watermarks_use_selected_shards_and_preserve_decimal_sequences() {
         use onetui_core::{Resource, Row};
         let row = Row {
             cells: vec![Some("000123456789012345678901234567890".into())],
             target: None,
         };
-        let text = example(
+        let text = watermark(
             &Resource::new("dynamodb.records", vec!["arn".into(), "shard-1".into()]),
             Some(&row),
         );
@@ -374,7 +377,7 @@ mod tests {
             cells: vec![Some("shard-2".into()), None, Some("000456".into()), None],
             target: None,
         };
-        let text = example(
+        let text = watermark(
             &Resource::new("dynamodb.shards", vec!["arn".into()]),
             Some(&row),
         );
@@ -382,7 +385,7 @@ mod tests {
             matches!(Read::parse(&text).unwrap(), Read::GetRecords { shard_id, sequence_number, .. } if shard_id == "shard-2" && sequence_number == "000456")
         );
         assert!(matches!(
-            Read::parse(&example(
+            Read::parse(&watermark(
                 &Resource::new("dynamodb.table", vec!["demo".into()]),
                 None
             ))

@@ -26,8 +26,8 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     query: Some(QueryDescriptor {
         resource: "postgres.query",
         language: "SQL",
-        example: "SELECT 1 AS value",
-        contextual_example: None,
+        watermark: "SELECT 1 AS value",
+        contextual_watermark: None,
         path_depth: 0,
         scope_resources: &[],
     }),

@@ -29,8 +29,8 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     query: Some(QueryDescriptor {
         resource: "dynamodb.query",
         language: "DynamoDB read JSON",
-        example: "{\n  \"operation\": \"Scan\",\n  \"limit\": 100\n}",
-        contextual_example: Some(crate::query::example),
+        watermark: "{\n  \"operation\": \"Scan\",\n  \"limit\": 100\n}",
+        contextual_watermark: Some(crate::query::watermark),
         path_depth: 1,
         scope_resources: &[
             "dynamodb.table",
