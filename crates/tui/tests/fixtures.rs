@@ -47,7 +47,7 @@ fn select(app: &mut App, name: &str) {
 }
 
 #[tokio::test]
-#[ignore = "requires the PostgreSQL fixture; read-only"]
+#[ignore = "requires the PostgreSQL fixture; does not modify it"]
 async fn keyboard_sql_editor_results_and_browsing_return() {
     let catalog = &[onetui_postgres::PostgresProvider];
     let config = Config::parse(
@@ -682,7 +682,7 @@ mod terminal {
     }
 
     #[tokio::test]
-    #[ignore = "requires PostgreSQL and the built CLI; read-only, child-owned PTY"]
+    #[ignore = "requires PostgreSQL and the built CLI; child-owned PTY"]
     async fn actual_cli_sql_editor_paste_execute_and_restore() {
         let mut config = tempfile::NamedTempFile::new().unwrap();
         write!(
@@ -718,7 +718,7 @@ mod terminal {
             "SQLquery",
             "Enter/F5",
             "Shift-Enter",
-            "executeread-onlyquery",
+            "executequery",
             "postgres.schemas",
             "public",
         ]);
@@ -956,13 +956,13 @@ mod terminal {
         pty.open_filtered("qd");
         pty.wait(&["qdrant.resources", "collections"]);
         pty.send(b"\r");
-        pty.wait(&["Connectionqdequery", "read-only", "qdrant.collections", "Connected"]);
+        pty.wait(&["Connectionqdequery", "qdrant.collections", "Connected"]);
         observer.wait_gone(old_pid).await;
         observer.wait_count(0).await;
         // Allow cancelled PostgreSQL completion to reach the worker before another draw.
         tokio::time::sleep(Duration::from_millis(250)).await;
         pty.send(b"r");
-        pty.wait(&["Connectionqdequery", "read-only", "qdrant.collections", "Connected"]);
+        pty.wait(&["Connectionqdequery", "qdrant.collections", "Connected"]);
         assert!(!String::from_utf8_lossy(&pty.output).contains("9007199254740993"));
         assert!(!String::from_utf8_lossy(&pty.output).contains("Request cancelled"));
         pty.open_filtered(&collection);

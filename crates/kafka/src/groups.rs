@@ -60,7 +60,7 @@ impl Groups {
             named.sort_by_key(|(name, _)| *name);
             let mut page = crate::browse::page(
                 resource,
-                "Read-only group metadata; no membership changes or offset commits. Assignments remain protocol bytes.",
+                "Group metadata; assignments remain protocol bytes.",
             );
             let offset = usize::try_from(offset)?;
             let total;

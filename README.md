@@ -24,8 +24,6 @@
 
 OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect data, run native queries and follow live messages without switching tools.
 
-OneTUI is mostly focused read-only in its initial version. Write support requires a few more features that will be work-in-progress soon.
-
 ## Demo
 
 ### Data and queries
@@ -70,7 +68,7 @@ Inspect Kafka consumer groups:
 
 [![Inspect Kafka consumer groups](docs/assets/demo/kafka-groups.svg)](docs/assets/demo/kafka-groups.svg)
 
-Inspect read-only Kafka broker configuration, with sensitive values withheld:
+Inspect Kafka broker configuration, with sensitive values withheld:
 
 [![Inspect Kafka broker configuration](docs/assets/demo/kafka-broker-config.svg)](docs/assets/demo/kafka-broker-config.svg)
 
@@ -142,7 +140,7 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 
 Kafka and NATS can decode Avro and Protobuf using files, directory catalogs, Confluent registries or Buf.
 
-Use read-only credentials. Reads still consume server resources. Connector guides explain their distinctive limits.
+Use least-privilege credentials. Queries still consume server resources.
 
 ## Themes
 

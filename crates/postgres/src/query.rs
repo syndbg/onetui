@@ -8,7 +8,7 @@ use crate::browse::pg_error;
 
 pub(crate) const RESOURCE: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.query",
-    description: "Read-only SQL results; dynamic columns, independent OFFSET pages",
+    description: "SQL results; dynamic columns, independent OFFSET pages",
     columns: &[],
     paging: true,
     actions: &[],

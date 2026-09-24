@@ -164,7 +164,7 @@ unsafe fn configs(
         let total = entries.len();
         let mut page = crate::browse::page(
             resource,
-            "Read-only configuration; sensitive values withheld. Re-read per page, no snapshot.",
+            "Configuration; sensitive values withheld. Re-read per page, no snapshot.",
         );
         for (name, entry) in entries
             .into_iter()

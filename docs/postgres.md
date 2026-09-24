@@ -1,6 +1,6 @@
 # PostgreSQL
 
-Browse schemas, tables, views and column metadata, inspect typed values, and run read-only SQL.
+Browse schemas, tables, views and column metadata, inspect typed values, and query rows with SQL.
 
 ## Configuration
 

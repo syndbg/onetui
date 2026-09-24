@@ -36,7 +36,7 @@ pub const COLUMNS: ResourceDescriptor = ResourceDescriptor {
 
 pub const ROWS: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.rows",
-    description: "Read-only rows; column names and PostgreSQL types discovered at runtime",
+    description: "Rows; column names and PostgreSQL types discovered at runtime",
     columns: &[],
     paging: true,
     actions: &[ResourceAction {

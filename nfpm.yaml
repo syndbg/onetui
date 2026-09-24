@@ -3,7 +3,7 @@ arch: amd64
 platform: linux
 version: ${ONETUI_PACKAGE_VERSION}
 maintainer: syndbg <syndbg@users.noreply.github.com>
-description: A read-only terminal browser for databases and streams
+description: A terminal browser for databases and streams
 homepage: https://github.com/syndbg/onetui
 license: Apache-2.0
 contents:

@@ -67,7 +67,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
     if area.height < 8 {
         frame.render_widget(
             Paragraph::new(format!(
-                "read-only | {} | {}",
+                "{} | {}",
                 display(app.view.alias.as_deref().unwrap_or("choose connection")),
                 app.view.resource.breadcrumb()
             ))
@@ -76,14 +76,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
-    let block = panel(
-        p,
-        Line::from(vec![
-            Span::raw(" Context | "),
-            Span::styled("read-only", Style::new().fg(color(p.error))),
-            Span::raw(" "),
-        ]),
-    );
+    let block = panel(p, Line::raw(" Context "));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [details, keys] = Layout::horizontal([
@@ -181,7 +174,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             keys,
             p,
             &[
-                ("Enter/F5", "execute read-only query"),
+                ("Enter/F5", "execute query"),
                 ("Shift-Enter", "new line"),
                 ("Esc", "return / cancel request"),
                 ("Ctrl-u", "clear draft"),
@@ -2152,7 +2145,7 @@ mod tests {
                 .collect::<String>();
             assert!(!text.contains("Filter displayed page"));
             if width == 120 {
-                assert!(text.contains("F5") && text.contains("execute read-only query"));
+                assert!(text.contains("F5") && text.contains("execute query"));
                 assert!(text.contains("last_line_София"));
             }
         }
@@ -2480,7 +2473,8 @@ mod tests {
         };
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = contents(&terminal);
-        assert!(text.lines().next().unwrap().contains("Context | read-only"));
+        assert!(text.lines().next().unwrap().contains("Context"));
+        assert!(!text.contains("read-only"));
         assert!(!text.contains("OneTUI"));
         assert!(
             text.lines()

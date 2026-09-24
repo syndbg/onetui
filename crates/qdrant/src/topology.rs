@@ -5,7 +5,7 @@ use serde_json::{Value as Json, json};
 
 pub(crate) const ROOT: ResourceDescriptor = ResourceDescriptor {
     id: "qdrant.resources",
-    description: "Collections and read-only cluster topology",
+    description: "Collections and cluster topology",
     columns: &["resource", "description"],
     paging: true,
     actions: &[],

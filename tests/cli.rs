@@ -31,7 +31,7 @@ fn help_version_and_nonterminal_error_work_without_configuration() {
                 )
             );
         } else {
-            assert!(text.contains("Read-only terminal browser"), "{text}");
+            assert!(text.contains("Terminal browser for databases"), "{text}");
             assert!(
                 text.contains("schema to list supported datasources, settings and actions"),
                 "{text}"

@@ -305,10 +305,7 @@ pub(crate) fn local_page(
                     ("Objects", "nats.object_buckets"),
                 ] {
                     page.rows.push(Row {
-                        cells: vec![
-                            Some(name.into()),
-                            Some("Read-only JetStream inspection".into()),
-                        ],
+                        cells: vec![Some(name.into()), Some("JetStream inspection".into())],
                         target: Some(Resource::new(target, vec![])),
                     });
                 }

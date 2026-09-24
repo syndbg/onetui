@@ -30,7 +30,7 @@ pub fn dump<P: Provider>(catalog: &[P], datasource: Option<&str>) -> Result<Stri
                     "format": {"type": "string", "enum": FORMATS.iter().map(|f| f.id).collect::<Vec<_>>(), "purpose": "Startup detail format; table previews use auto"},
                     "pretty_print": {"type": "boolean", "purpose": "Two-space JSON indentation in row/detail views; off preserves retained whitespace. Record tables always use compact JSON"},
                     "highlight": {"type": "boolean", "purpose": "Data colors; selection, errors and UI key hints remain visible when off"},
-                    "word_wrap": {"type": "boolean", "purpose": "App-wide read-only text wrapping; H/L scroll content when off. Single-line editors and structural labels remain clipped"},
+                    "word_wrap": {"type": "boolean", "purpose": "Wrap displayed text; H/L scroll content when off. Single-line editors and structural labels remain clipped"},
                     "unicode": {"type": "string", "enum": ["literal", "escaped"], "purpose": "Keep printable Unicode or show ASCII escapes; terminal controls always escaped"}
                 },
                 "behavior": "Omitted fields use defaults. Names are case-sensitive; unknown fields, empty/unknown names and wrong types fail validation, including --check. No environment expansion, extra file, CLI flags or file watching. v or :display opens the menu. Format overrides last until detail closes; other switches last for the session, across connections. No config writes.",

@@ -4,13 +4,10 @@
 <g font-family="'DejaVu Sans Mono',Consolas,monospace" font-size="16">
 <rect x="16" y="16" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="33" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭</text>
-<rect x="26" y="16" width="110" height="22" fill="#1e1e2e"/>
-<text x="26" y="33" fill="#89dceb" font-weight="bold" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Context | </text>
-<rect x="136" y="16" width="90" height="22" fill="#1e1e2e"/>
-<text x="136" y="33" fill="#f38ba8" font-weight="bold" textLength="90" lengthAdjust="spacingAndGlyphs" xml:space="preserve">read-only</text>
-<rect x="226" y="16" width="10" height="22" fill="#1e1e2e"/>
-<rect x="236" y="16" width="1220" height="22" fill="#1e1e2e"/>
-<text x="236" y="33" fill="#b4befe" font-weight="normal" textLength="1220" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
+<rect x="26" y="16" width="90" height="22" fill="#1e1e2e"/>
+<text x="26" y="33" fill="#89dceb" font-weight="bold" textLength="90" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Context </text>
+<rect x="116" y="16" width="1340" height="22" fill="#1e1e2e"/>
+<text x="116" y="33" fill="#b4befe" font-weight="normal" textLength="1340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
 <rect x="16" y="38" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="55" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="38" width="110" height="22" fill="#1e1e2e"/>
@@ -287,6 +284,6 @@
 <rect x="66" y="676" width="1320" height="22" fill="#1e1e2e"/>
 <rect x="1386" y="676" width="70" height="22" fill="#1e1e2e"/>
 <rect x="16" y="698" width="1440" height="22" fill="#1e1e2e"/>
-<text x="16" y="715" fill="#a6adc8" font-weight="normal" textLength="1440" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Page 1 | 3 items | next: false | Read-only group metadata; no membership changes or offset commits. Assignments remain protocol bytes.    v0.1.0</text>
+<text x="16" y="715" fill="#a6adc8" font-weight="normal" textLength="1440" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Page 1 | 3 items | next: false | Group metadata; assignments remain protocol bytes.                                                       v0.1.0</text>
 </g>
 </svg>
