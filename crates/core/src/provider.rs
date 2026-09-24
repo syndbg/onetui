@@ -111,6 +111,17 @@ pub trait Executor: Send + Sync {
     ) -> impl Future<Output = Result<Page>> + Send {
         async { anyhow::bail!("Queries are unavailable for this provider") }
     }
+    fn execute_query(
+        &self,
+        request: QueryRequest,
+        context: RequestContext,
+    ) -> impl Future<Output = Result<QueryExecution>> + Send {
+        async {
+            self.query_page(request, context)
+                .await
+                .map(QueryExecution::Page)
+        }
+    }
     fn status(&self) -> watch::Receiver<ConnectionStatus>;
     fn check(&self, context: RequestContext) -> impl Future<Output = Result<CheckResult>> + Send;
     fn fetch_page(
@@ -177,6 +188,24 @@ impl QueryRequest {
         ensure!(self.text.len() <= QUERY_BYTES, "Query exceeds 16 KiB");
         Ok(())
     }
+}
+
+pub enum QueryExecution {
+    Page(Page),
+    Write(WriteResult),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteOutcome {
+    Applied,
+    Rejected,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WriteResult {
+    pub outcome: WriteOutcome,
+    pub summary: String,
 }
 
 pub struct RequestContext {
