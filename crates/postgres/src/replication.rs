@@ -4,7 +4,7 @@ use onetui_core::{Column, Page, Resource, Row};
 
 pub(crate) const ROOT: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.resources",
-    description: "Schemas and read-only replication state",
+    description: "Schemas and replication state",
     columns: &["resource", "description"],
     paging: true,
     actions: &[],

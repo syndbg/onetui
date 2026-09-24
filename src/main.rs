@@ -23,12 +23,12 @@ const VERSION: &str = concat!(
 #[command(
     version = VERSION,
     about,
-    long_about = "Read-only terminal browser for databases and message systems. Browse resources, inspect values, and filter or sort the displayed page. Check connectivity without a terminal, or use schema to list supported datasources, settings and actions."
+    long_about = "Terminal browser for databases and message systems. Browse resources, inspect values, run queries, and filter or sort the displayed page. Check connectivity without a terminal, or use schema to list supported datasources, settings and actions."
 )]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
-    /// Perform a read-only metadata check without opening a terminal UI
+    /// Check connection metadata without opening a terminal UI
     #[arg(long, requires = "connection")]
     check: bool,
     /// Alias from the configuration's connections table

@@ -59,7 +59,7 @@ const KAFKA_GROUP: ResourceDescriptor = ResourceDescriptor {
 };
 const KAFKA_BROKER_CONFIG: ResourceDescriptor = ResourceDescriptor {
     id: "kafka.broker_config",
-    description: "Read-only broker settings; sensitive values are withheld",
+    description: "Broker settings; sensitive values are withheld",
     columns: &[
         "name",
         "value",
@@ -635,7 +635,7 @@ fn kafka_groups() -> crate::App {
             })
             .collect(),
     );
-    app.view.page.notice = "Read-only group metadata; no membership changes or offset commits. Assignments remain protocol bytes.".into();
+    app.view.page.notice = "Group metadata; assignments remain protocol bytes.".into();
     app
 }
 
@@ -734,8 +734,7 @@ fn kafka_broker_config() -> crate::App {
             ),
         ],
     );
-    app.view.page.notice =
-        "Read-only configuration; sensitive values withheld. Re-read per page, no snapshot.".into();
+    app.view.page.notice = "Sensitive values withheld.".into();
     app.view.selected = 5;
     app
 }
@@ -1102,7 +1101,7 @@ fn demos() -> [(String, &'static str); 13] {
             render_app(
                 &broker_config,
                 "OneTUI showing Kafka broker configuration",
-                "Inspect read-only Kafka broker configuration in OneTUI",
+                "Inspect Kafka broker configuration in OneTUI",
             ),
             "kafka-broker-config.svg",
         ),

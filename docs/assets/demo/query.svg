@@ -4,13 +4,10 @@
 <g font-family="'DejaVu Sans Mono',Consolas,monospace" font-size="16">
 <rect x="16" y="16" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="33" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭</text>
-<rect x="26" y="16" width="110" height="22" fill="#1e1e2e"/>
-<text x="26" y="33" fill="#89dceb" font-weight="bold" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Context | </text>
-<rect x="136" y="16" width="90" height="22" fill="#1e1e2e"/>
-<text x="136" y="33" fill="#f38ba8" font-weight="bold" textLength="90" lengthAdjust="spacingAndGlyphs" xml:space="preserve">read-only</text>
-<rect x="226" y="16" width="10" height="22" fill="#1e1e2e"/>
-<rect x="236" y="16" width="1220" height="22" fill="#1e1e2e"/>
-<text x="236" y="33" fill="#b4befe" font-weight="normal" textLength="1220" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
+<rect x="26" y="16" width="90" height="22" fill="#1e1e2e"/>
+<text x="26" y="33" fill="#89dceb" font-weight="bold" textLength="90" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Context </text>
+<rect x="116" y="16" width="1340" height="22" fill="#1e1e2e"/>
+<text x="116" y="33" fill="#b4befe" font-weight="normal" textLength="1340" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
 <rect x="16" y="38" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="55" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="26" y="38" width="110" height="22" fill="#1e1e2e"/>
@@ -20,9 +17,9 @@
 <rect x="206" y="38" width="460" height="22" fill="#1e1e2e"/>
 <rect x="666" y="38" width="130" height="22" fill="#1e1e2e"/>
 <text x="666" y="55" fill="#89dceb" font-weight="bold" textLength="130" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Enter/F5     </text>
-<rect x="796" y="38" width="230" height="22" fill="#1e1e2e"/>
-<text x="796" y="55" fill="#a6adc8" font-weight="normal" textLength="230" lengthAdjust="spacingAndGlyphs" xml:space="preserve">execute read-only query</text>
-<rect x="1026" y="38" width="420" height="22" fill="#1e1e2e"/>
+<rect x="796" y="38" width="130" height="22" fill="#1e1e2e"/>
+<text x="796" y="55" fill="#a6adc8" font-weight="normal" textLength="130" lengthAdjust="spacingAndGlyphs" xml:space="preserve">execute query</text>
+<rect x="926" y="38" width="520" height="22" fill="#1e1e2e"/>
 <rect x="1446" y="38" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="55" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="60" width="10" height="22" fill="#1e1e2e"/>

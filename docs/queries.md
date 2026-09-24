@@ -9,11 +9,11 @@ History stays in memory for the current session by default. To keep the last 100
 
 | Datasource | Query |
 | --- | --- |
-| [PostgreSQL](#postgresql) | Read-only SQL |
+| [PostgreSQL](#postgresql) | SQL row queries |
 | [Qdrant](#qdrant) | Filtered Scroll JSON |
 | [Kafka](kafka.md#replay-from-an-offset-or-timestamp) | Partition offset or timestamp replay |
 | [NATS](nats.md#replay) | Stream subject, sequence or time replay |
-| [DynamoDB](dynamodb.md#queries) | Native read-operation JSON and read-only PartiQL |
+| [DynamoDB](dynamodb.md#queries) | Native reads and PartiQL SELECT |
 
 ## PostgreSQL
 
@@ -24,9 +24,9 @@ WHERE active AND balance > 0
 ORDER BY id
 ```
 
-Use one `SELECT`, `VALUES` or read-only `WITH` statement. Parameters, multiple statements, utility commands such as `EXPLAIN`, and writes are unsupported. Include a unique ordering when page order matters.
+Use one `SELECT`, `VALUES`, or `WITH` query that reads data. Parameters, multiple statements, and utility commands such as `EXPLAIN` are unsupported. Include a unique ordering when page order matters.
 
-Use least-privilege credentials. Read-only transactions do not sandbox functions with external effects, and queries still consume database resources. The database may log query text.
+Use least-privilege credentials. Queries consume database resources and may be logged.
 
 ## Qdrant
 

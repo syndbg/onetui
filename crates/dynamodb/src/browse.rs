@@ -39,7 +39,7 @@ resources![
     ),
     (
         "dynamodb.query",
-        "Read-only native item, batch, transaction or Streams query JSON"
+        "Native item, batch, transaction or Streams query JSON"
     ),
     ("dynamodb.table_info", "Complete DescribeTable response"),
     (

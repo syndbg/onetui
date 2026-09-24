@@ -292,9 +292,7 @@ pub(crate) async fn page(
         "nats.object_info" => json_page(object_info(api, resource).await?),
         _ => unreachable!(),
     };
-    page.notice =
-        "Read-only metadata; independent reads, no snapshot or consumer delivery/ACK changes"
-            .into();
+    page.notice = "Metadata; independent reads, no snapshot".into();
     ensure!(
         page.bytes() <= (PAGE_BYTES - 8192) / 2,
         "NATS metadata exceeds display budget"

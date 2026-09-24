@@ -1,6 +1,6 @@
 # DynamoDB
 
-Browse table and index metadata, typed items, account resources and Streams. Run bounded native reads or read-only PartiQL.
+Browse table and index metadata, typed items, account resources and Streams. Run bounded native reads and PartiQL SELECTs.
 
 ## Configuration
 
@@ -8,7 +8,6 @@ Browse table and index metadata, typed items, account resources and Streams. Run
 [connections.aws]
 kind = "dynamodb"
 region = "eu-west-1"
-profile = "readonly"
 ```
 
 Run `onetui --connection aws`. Credentials follow the AWS SDK chain, with environment credentials before the selected profile. Native profiles, SSO and roles are supported; `credential_process` is disabled. Use `onetui schema --datasource dynamodb` for settings and available operations.
@@ -34,7 +33,7 @@ Press `e` on a selected table and enter native read-operation JSON:
 }
 ```
 
-`Scan`, `GetItem`, batch and transactional reads, read-only PartiQL and vector search are also available. Use `onetui schema --datasource dynamodb` for examples and fields. Keys and expression values use tagged AttributeValue JSON.
+Available reads include Scan, GetItem, batch and transactional reads, PartiQL SELECTs, and vector search. Use `onetui schema --datasource dynamodb` for examples and fields. Keys and expression values use tagged AttributeValue JSON.
 
 PartiQL accepts one `SELECT` from the selected table per statement. Prefer typed parameters for values. A query without a key condition may scan the table.
 

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub static RESOURCES: &[&ResourceDescriptor] = &[
     &ResourceDescriptor {
         id: "kafka.topic",
-        description: "Choose all records, individual partitions or read-only topic configuration",
+        description: "Choose all records, individual partitions or topic configuration",
         columns: &["resource", "description"],
         paging: true,
         actions: &[],
@@ -24,7 +24,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
     },
     &ResourceDescriptor {
         id: "kafka.topic_config",
-        description: "Read-only topic settings; sensitive values are withheld",
+        description: "Topic settings; sensitive values are withheld",
         columns: &[
             "name",
             "value",
@@ -39,7 +39,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
     },
     &ResourceDescriptor {
         id: "kafka.broker_config",
-        description: "Read-only broker settings; sensitive values are withheld",
+        description: "Broker settings; sensitive values are withheld",
         columns: &[
             "name",
             "value",
@@ -216,14 +216,11 @@ pub(crate) fn valid_group(group: &str) -> bool {
 }
 
 pub(crate) fn resources(resource: &Resource, offset: i64, identity: u64) -> Result<Page> {
-    let mut page = page(
-        resource,
-        "Choose a Kafka resource. All operations are read-only.",
-    );
+    let mut page = page(resource, "Choose a Kafka resource.");
     let rows: &[(&str, &str)] = match resource.id {
         "kafka.topic" => &[
             ("kafka.partitions", "Partitions and record replay/following"),
-            ("kafka.topic_config", "Read-only topic configuration"),
+            ("kafka.topic_config", "Topic configuration"),
             (
                 "kafka.records",
                 "All partitions: bounded browsing and following",
