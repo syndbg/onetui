@@ -2,7 +2,7 @@ use anyhow::Result;
 use onetui_core::Page;
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    QueryRequest, RequestContext, ShutdownContext,
+    QueryExecution, QueryRequest, RequestContext, ShutdownContext,
 };
 use onetui_dynamodb::{DynamoDbExecutor, DynamoDbProvider};
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
@@ -109,6 +109,20 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.query_page(request, context).await,
             Self::DynamoDb(e) => e.query_page(request, context).await,
             Self::RabbitMq(e) => e.query_page(request, context).await,
+        }
+    }
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        context: RequestContext,
+    ) -> Result<QueryExecution> {
+        match self {
+            Self::Postgres(e) => e.execute_query(request, context).await,
+            Self::Qdrant(e) => e.execute_query(request, context).await,
+            Self::Kafka(e) => e.execute_query(request, context).await,
+            Self::Nats(e) => e.execute_query(request, context).await,
+            Self::DynamoDb(e) => e.execute_query(request, context).await,
+            Self::RabbitMq(e) => e.execute_query(request, context).await,
         }
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
