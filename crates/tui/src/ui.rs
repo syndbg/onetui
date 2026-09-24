@@ -1433,6 +1433,40 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .style(Style::new().fg(color(p.muted))),
         status,
     );
+    if let Some(confirm) = &app.confirm_query
+        && area.width > 0
+        && area.height > 0
+    {
+        let width = area.width.min(76);
+        let height = area.height.min(7);
+        let popup = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let target = if confirm.resource.path.is_empty() {
+            confirm.resource.id.to_owned()
+        } else {
+            format!(
+                "{}/{}",
+                confirm.resource.id,
+                confirm.resource.path.join("/")
+            )
+        };
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::raw(format!("Connection: {}", display(&confirm.alias))),
+                Line::raw(format!("Target: {}", display(&target))),
+                Line::raw("Enter or y: run    Esc or n: return"),
+                Line::raw("Set ask_for_query_confirm = false in config.toml to skip this prompt"),
+            ])
+            .centered()
+            .block(panel(p, " Run query? ").style(Style::new().bg(color(p.background)))),
+            popup,
+        );
+    }
     if app.confirm_quit && area.width > 0 && area.height > 0 {
         let width = area.width.min(38);
         let height = area.height.min(5);
@@ -1480,6 +1514,36 @@ mod tests {
             .collect::<Vec<_>>()
             .join("");
         assert!(prompt.contains("Enter or y: quit"));
+    }
+
+    #[test]
+    fn query_confirmation_shows_how_to_disable_it() {
+        use super::*;
+        use ratatui::{Terminal, backend::TestBackend};
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, Some("sample"));
+        let request = app.request.take().unwrap();
+        app.complete(&request, Ok(Page::default()));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new("SELECT 1".into()));
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::F(5),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let line = |y| {
+            (0..80)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        };
+        assert!(line(8).contains("Run query?"));
+        assert!(line(12).contains("ask_for_query_confirm = false"));
     }
 
     #[test]
@@ -2011,7 +2075,7 @@ mod tests {
         };
         let mut app = App::new(
             onetui_core::config::Config::parse(
-                "[connections.sample]\nkind='fake'",
+                "ask_for_query_confirm = false\n[connections.sample]\nkind='fake'",
                 crate::test_provider::CATALOG,
             )
             .unwrap(),

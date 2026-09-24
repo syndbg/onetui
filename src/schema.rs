@@ -25,6 +25,7 @@ pub fn dump<P: Provider>(catalog: &[P], datasource: Option<&str>) -> Result<Stri
         "configuration": {
             "format": "TOML",
             "persist_query_history": {"type": "boolean", "default": false, "purpose": "Save submitted query text across restarts; query text may contain secrets"},
+            "ask_for_query_confirm": {"type": "boolean", "default": true, "purpose": "Ask before submitting a query from the editor or rerunning it"},
             "display": {"type": "table", "required": false, "defaults": DisplayOptions::default(), "formats": FORMATS,
                 "fields": {
                     "format": {"type": "string", "enum": FORMATS.iter().map(|f| f.id).collect::<Vec<_>>(), "purpose": "Startup detail format; table previews use auto"},

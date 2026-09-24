@@ -11,6 +11,7 @@ pub struct Config {
     pub theme: Theme,
     pub display: crate::value::DisplayOptions,
     pub persist_query_history: bool,
+    pub ask_for_query_confirm: bool,
     connections: BTreeMap<String, Connection>,
     source: Option<(PathBuf, Option<String>)>,
 }
@@ -29,8 +30,14 @@ struct RawConfig {
     display: crate::value::DisplayOptions,
     #[serde(default)]
     persist_query_history: bool,
+    #[serde(default = "default_ask_for_query_confirm")]
+    ask_for_query_confirm: bool,
     #[serde(default)]
     connections: BTreeMap<String, toml::Table>,
+}
+
+fn default_ask_for_query_confirm() -> bool {
+    true
 }
 
 impl Config {
@@ -173,6 +180,7 @@ impl Config {
             theme: raw.theme,
             display: raw.display,
             persist_query_history: raw.persist_query_history,
+            ask_for_query_confirm: raw.ask_for_query_confirm,
             connections,
             source: None,
         })
@@ -288,6 +296,17 @@ mod tests {
                 .persist_query_history
         );
         assert!(Config::parse("persist_query_history = 'true'", CATALOG).is_err());
+    }
+
+    #[test]
+    fn query_confirmation_defaults_on_and_can_be_disabled() {
+        assert!(Config::parse("", CATALOG).unwrap().ask_for_query_confirm);
+        assert!(
+            !Config::parse("ask_for_query_confirm = false", CATALOG)
+                .unwrap()
+                .ask_for_query_confirm
+        );
+        assert!(Config::parse("ask_for_query_confirm = 'false'", CATALOG).is_err());
     }
 
     #[test]

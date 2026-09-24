@@ -66,6 +66,8 @@ async fn keyboard_sql_editor_results_and_browsing_return() {
         .insert("SELECT n, n * 2 AS doubled\nFROM generate_series(1, 350) n ORDER BY n")
         .unwrap();
     key(&mut app, KeyCode::F(5));
+    assert!(app.request.is_none());
+    key(&mut app, KeyCode::Enter);
     complete(&mut app, &executor).await;
     assert!(app.error.is_none(), "{:?}", app.error);
     assert_eq!(app.view.resource.id, "postgres.query");
@@ -725,6 +727,8 @@ mod terminal {
         pty.send(b"\x15\x1b[200~SELECT n, n * 2 AS doubled\x1b[201~\x1b[13;2u\x1b[200~FROM generate_series(1, 350) n ORDER BY n\x1b[201~");
         pty.wait(&["generate_series(1,350)"]);
         pty.send(b"\r");
+        pty.wait(&["Runquery?", "Connection:pg", "Target:postgres.query"]);
+        pty.send(b"\r");
         pty.wait(&[
             "SQLquery",
             "executed|eedit",
@@ -735,6 +739,8 @@ mod terminal {
         pty.send(b"e");
         pty.wait(&["SQLquery", "Shift-Enter", "generate_series(1,350)"]);
         pty.send(b"\x1b[15~");
+        pty.wait(&["Runquery?", "Connection:pg", "Target:postgres.query"]);
+        pty.send(b"\r");
         pty.wait(&[
             "executed|eedit",
             "postgres.query[100shown/100loaded]",
@@ -748,6 +754,8 @@ mod terminal {
         pty.send(b"e");
         pty.wait(&["SQLquery", "postgres.query[100shown/100loaded]", "doubled"]);
         pty.send(b"\x15\x1b[200~SELECT 1/0\x1b[201~\x1b[15~");
+        pty.wait(&["Runquery?", "Connection:pg", "Target:postgres.query"]);
+        pty.send(b"\r");
         pty.wait(&[
             "22012",
             "divisionbyzero",

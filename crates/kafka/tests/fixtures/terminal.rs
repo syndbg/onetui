@@ -421,12 +421,24 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
         pty.send(b"e");
         pty.wait(&["KafkareplayJSON", "retaineddata"]);
         pty.send(b"\x15{\"offset\":123,\"end_offset\":250}\r");
+        pty.wait(&[
+            "Runquery?",
+            &format!("Connection:{alias}"),
+            "Target:kafka.query/demo_events/0",
+        ]);
+        pty.send(b"\r");
         pty.wait(&["kafka.query", "executed", "100shown/100loaded", "[123,250)"]);
         pty.send(b"n");
         pty.wait(&["kafka.query", "Page2", "27shown/27loaded", "[223,250)"]);
         pty.send(b"p");
         pty.wait(&["kafka.query", "Page1", "[123,250)"]);
         pty.send(b"e\x15{\"offset\":-1}\r");
+        pty.wait(&[
+            "Runquery?",
+            &format!("Connection:{alias}"),
+            "Target:kafka.query/demo_events/0",
+        ]);
+        pty.send(b"\r");
         pty.wait(&["nonnegativesigned64-bitintegers", "retaineddata"]);
         pty.send(b"\x1b");
         pty.wait(&["kafka.query", "executed"]);
