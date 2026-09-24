@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use onetui_core::catalog::{ACTIONS, Action, ActionDescriptor, ResourceDescriptor};
 use onetui_core::config::Config;
+use onetui_core::provider::{QueryExecution, WriteOutcome, WriteResult};
 use onetui_core::value::{DisplayOptions, FORMATS, UnicodeDisplay, ValueFormat};
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
 use onetui_theme::Theme;
@@ -37,7 +38,6 @@ pub(crate) struct QueryConfirmation {
     pub(crate) alias: String,
     pub(crate) resource: Resource,
     text: String,
-    rerun: bool,
 }
 
 pub struct View {
@@ -193,6 +193,31 @@ fn projections(page: &Page) -> Result<Vec<Vec<Option<String>>>, &'static str> {
                 .collect()
         })
         .collect()
+}
+
+fn write_page(write: WriteResult) -> Page {
+    let outcome = match write.outcome {
+        WriteOutcome::Applied => "applied",
+        WriteOutcome::Rejected => "rejected",
+        WriteOutcome::Unknown => "unknown",
+    };
+    Page {
+        columns: vec![
+            onetui_core::Column {
+                name: "outcome".into(),
+                datatype: "text".into(),
+            },
+            onetui_core::Column {
+                name: "summary".into(),
+                datatype: "text".into(),
+            },
+        ],
+        rows: vec![Row {
+            cells: vec![Some(outcome.into()), Some(write.summary.into())],
+            target: None,
+        }],
+        ..Page::default()
+    }
 }
 
 pub struct App {
@@ -443,6 +468,18 @@ impl App {
     }
 
     pub fn complete(&mut self, request: &Request, result: Result<Page>) {
+        self.complete_page(request, result);
+    }
+
+    pub(crate) fn complete_execution(&mut self, request: &Request, result: Result<QueryExecution>) {
+        match result {
+            Ok(QueryExecution::Page(page)) => self.complete_page(request, Ok(page)),
+            Ok(QueryExecution::Write(write)) => self.complete_page(request, Ok(write_page(write))),
+            Err(error) => self.complete_page(request, Err(error)),
+        }
+    }
+
+    fn complete_page(&mut self, request: &Request, result: Result<Page>) {
         if request.id != self.generation {
             return;
         }
@@ -642,6 +679,7 @@ impl App {
                         && !self.view.previous.is_empty()
                 }
             }
+            Action::Refresh => self.view.query.is_none(),
             Action::Up
             | Action::Down
             | Action::PageUp
@@ -771,7 +809,6 @@ impl App {
             alias: self.view.alias.as_ref().expect("query connection").clone(),
             resource,
             text,
-            rerun: false,
         };
         if self.config.ask_for_query_confirm {
             self.confirm_query = Some(pending);
@@ -782,15 +819,10 @@ impl App {
     }
 
     fn submit_query(&mut self, pending: QueryConfirmation) {
-        if pending.rerun {
-            self.load(0, true);
-            return;
-        }
         let QueryConfirmation {
             alias,
             resource,
             text,
-            ..
         } = pending;
         let recorded = self
             .query_history
@@ -1386,15 +1418,6 @@ impl App {
                     self.view.filter = filter;
                     self.view.sort = sort;
                     self.view.rebuild(None, self.config.display);
-                } else if self.config.ask_for_query_confirm
-                    && let (Some(alias), Some(text)) = (&self.view.alias, &self.view.query)
-                {
-                    self.confirm_query = Some(QueryConfirmation {
-                        alias: alias.clone(),
-                        resource: self.view.resource.clone(),
-                        text: text.clone(),
-                        rerun: true,
-                    });
                 } else {
                     self.load(0, true);
                 }
@@ -1801,18 +1824,39 @@ mod tests {
         assert_eq!(app.history_entries().collect::<Vec<_>>(), ["SELECT 1"]);
 
         app.complete(&request, Ok(page(false)));
+        app.config.ask_for_query_confirm = false;
         app.act(Action::Refresh);
-        assert!(app.confirm_query.is_some());
+        assert!(app.confirm_query.is_none());
         assert!(app.request.is_none());
+        assert!(!app.available(Action::Refresh));
+        app.config.ask_for_query_confirm = true;
+        app.act(Action::Query);
+        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1");
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.confirm_query.is_some());
         app.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
         assert!(app.request.is_none());
-        app.act(Action::Refresh);
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(
             app.request.as_ref().unwrap().query.as_deref(),
             Some("SELECT 1")
         );
         assert_eq!(app.history_entries().collect::<Vec<_>>(), ["SELECT 1"]);
+        let request = app.request.take().unwrap();
+        app.complete_execution(
+            &request,
+            Ok(QueryExecution::Write(WriteResult {
+                outcome: WriteOutcome::Unknown,
+                summary: "inspect the target before retrying".into(),
+            })),
+        );
+        assert_eq!(app.view.page.rows[0].cells[0], Some("unknown".into()));
+        assert_eq!(
+            app.view.page.rows[0].cells[1],
+            Some("inspect the target before retrying".into())
+        );
+        assert!(!app.available(Action::Refresh));
     }
 
     #[test]
