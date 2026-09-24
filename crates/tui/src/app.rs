@@ -215,7 +215,11 @@ pub struct App {
     pub request: Option<Request>,
     pub loading: bool,
     pub(crate) confirm_query: Option<QueryConfirmation>,
+    pub(crate) query_in_flight: bool,
+    query_cancel_requested: bool,
+    query_history_error: Option<String>,
     pub error: Option<String>,
+    pub status_message: Option<String>,
     pub help: bool,
     pub detail: bool,
     pub row_detail: bool,
@@ -278,7 +282,11 @@ impl App {
             request: None,
             loading: false,
             confirm_query: None,
+            query_in_flight: false,
+            query_cancel_requested: false,
+            query_history_error: None,
             error: None,
+            status_message: None,
             help: false,
             detail: false,
             row_detail: false,
@@ -330,8 +338,11 @@ impl App {
         self.generation += 1;
         self.request = None;
         self.loading = false;
-        self.confirm_query = None;
+        self.query_in_flight = false;
+        self.query_cancel_requested = false;
         self.error = None;
+        self.status_message = None;
+        self.confirm_query = None;
     }
 
     fn connections(&mut self) {
@@ -440,13 +451,24 @@ impl App {
             reset,
             queued_at: tokio::time::Instant::now(),
         });
+        self.query_in_flight = self.view.query.is_some();
     }
 
     pub fn complete(&mut self, request: &Request, result: Result<Page>) {
         if request.id != self.generation {
+            if self.query_in_flight && self.query_cancel_requested && request.query.is_some() {
+                self.loading = false;
+                self.query_in_flight = false;
+                self.query_cancel_requested = false;
+                self.error = Some("Request cancelled; displayed data retained".into());
+            }
             return;
         }
         self.loading = false;
+        if request.query.is_some() {
+            self.query_in_flight = false;
+            self.query_cancel_requested = false;
+        }
         if request.follow {
             self.complete_follow(request, result);
             return;
@@ -549,6 +571,9 @@ impl App {
         }
         if self.confirm_query.is_some() {
             return matches!(action, Action::Open | Action::Back | Action::Cancel);
+        }
+        if self.query_in_flight {
+            return action == Action::Cancel;
         }
         if self.connection_form.is_some() {
             return matches!(action, Action::Back | Action::Cancel);
@@ -755,7 +780,38 @@ impl App {
         self.history_position = position;
     }
 
+    fn record_query(&mut self, alias: &str, text: &str) -> Option<String> {
+        let recorded = self
+            .query_history
+            .back()
+            .is_none_or(|entry| entry.0 != alias || entry.1 != text);
+        if recorded {
+            if self.query_history.len() == crate::history::LIMIT {
+                self.query_history.pop_front();
+            }
+            self.query_history
+                .push_back((alias.to_owned(), text.to_owned()));
+        }
+        self.history_position = None;
+        self.history_current = None;
+        self.view.query_draft = Some(text.to_owned());
+        if recorded {
+            self.history_path
+                .as_deref()
+                .and_then(|path| crate::history::save(path, &self.query_history).err())
+                .map(|error| {
+                    format!(
+                        "Could not save query history: {}",
+                        display(&error.to_string())
+                    )
+                })
+        } else {
+            None
+        }
+    }
+
     fn execute_query(&mut self) {
+        self.status_message = None;
         let text = self
             .query_editor
             .as_ref()
@@ -767,8 +823,9 @@ impl App {
             return;
         }
         let resource = self.query_target().expect("query scope");
+        let alias = self.view.alias.as_ref().expect("query connection").clone();
         let pending = QueryConfirmation {
-            alias: self.view.alias.as_ref().expect("query connection").clone(),
+            alias,
             resource,
             text,
             rerun: false,
@@ -786,41 +843,74 @@ impl App {
             self.load(0, true);
             return;
         }
-        let QueryConfirmation {
-            alias,
-            resource,
-            text,
-            ..
-        } = pending;
-        let recorded = self
-            .query_history
-            .back()
-            .is_none_or(|entry| entry.0 != alias || entry.1 != text);
-        if recorded {
-            if self.query_history.len() == crate::history::LIMIT {
-                self.query_history.pop_front();
-            }
-            self.query_history.push_back((alias, text.clone()));
-        }
-        let history_error = if recorded {
-            self.history_path
-                .as_deref()
-                .and_then(|path| crate::history::save(path, &self.query_history).err())
-        } else {
-            None
-        };
-        self.history_position = None;
-        self.history_current = None;
-        self.view.query_draft = Some(text.clone());
+        let history_error = self.record_query(&pending.alias, &pending.text);
         self.load(0, true);
         let request = self.request.as_mut().expect("queued query");
-        request.query = Some(text);
-        request.resource = resource;
-        if let Some(error) = history_error {
-            self.error = Some(format!(
-                "Could not save query history: {}",
-                display(&error.to_string())
-            ));
+        request.query = Some(pending.text);
+        request.resource = pending.resource;
+        self.query_in_flight = true;
+        self.query_cancel_requested = false;
+        self.query_history_error = history_error.clone();
+        self.error = history_error;
+    }
+
+    fn cancel_query(&mut self) {
+        if !self.query_in_flight || self.query_cancel_requested {
+            return;
+        }
+        self.query_cancel_requested = true;
+        self.generation += 1;
+        self.error = Some("Cancelling query; write outcome may be unknown".into());
+    }
+
+    pub fn complete_write(
+        &mut self,
+        request: &Request,
+        result: Result<onetui_core::provider::WriteResult>,
+    ) {
+        if !self.query_in_flight || self.view.alias.as_deref() != Some(request.alias.as_str()) {
+            return;
+        }
+        self.loading = false;
+        self.query_in_flight = false;
+        self.query_cancel_requested = false;
+        let history_error = self.query_history_error.take();
+        match result {
+            Ok(result) => match result.outcome {
+                onetui_core::provider::WriteOutcome::Applied => {
+                    self.error = None;
+                    self.status_message = Some(match history_error {
+                        Some(error) => format!("{}; {error}", result.summary),
+                        None => result.summary,
+                    });
+                }
+                onetui_core::provider::WriteOutcome::Rejected => {
+                    self.status_message = None;
+                    self.error = Some(match history_error {
+                        Some(error) => format!("Write rejected: {}; {error}", result.summary),
+                        None => format!("Write rejected: {}", result.summary),
+                    });
+                }
+                onetui_core::provider::WriteOutcome::Unknown => {
+                    self.status_message = None;
+                    let message = format!(
+                        "Write outcome unknown: {}. Check the collection before retrying.",
+                        result.summary
+                    );
+                    self.error = Some(match history_error {
+                        Some(error) => format!("{message}; {error}"),
+                        None => message,
+                    });
+                }
+            },
+            Err(error) => {
+                self.status_message = None;
+                let message = display(&error.to_string());
+                self.error = Some(match history_error {
+                    Some(error) => format!("{message}; {error}"),
+                    None => message,
+                });
+            }
         }
     }
 
@@ -981,6 +1071,12 @@ impl App {
                 }
                 Action::Back | Action::Cancel => self.confirm_query = None,
                 _ => {}
+            }
+            return;
+        }
+        if self.query_in_flight {
+            if action == Action::Cancel {
+                self.cancel_query();
             }
             return;
         }
@@ -1452,6 +1548,12 @@ impl App {
             }
             return;
         }
+        if self.query_in_flight {
+            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                self.act(Action::Cancel);
+            }
+            return;
+        }
         if let Some(form) = &mut self.connection_form {
             if key.code == KeyCode::Esc
                 || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
@@ -1784,43 +1886,73 @@ mod tests {
     }
 
     #[test]
-    fn query_confirmation_keeps_the_draft_until_accepted() {
+    fn query_submission_waits_for_confirmation_and_records_once() {
         let mut app = app();
         app.config.ask_for_query_confirm = true;
         let browse = app.request.take().unwrap();
         app.complete(&browse, Ok(page(false)));
         app.act(Action::Query);
-        app.query_editor = Some(crate::query::Editor::new("SELECT 1".into()));
+        app.query_editor = Some(crate::query::Editor::new("WRITE 42".into()));
 
-        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
         assert!(app.confirm_query.is_some());
         assert!(app.request.is_none());
         assert_eq!(app.history_entries().count(), 0);
 
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(app.confirm_query.is_none());
-        assert_eq!(app.query_editor.as_ref().unwrap().text, "SELECT 1");
         assert!(app.request.is_none());
+        assert_eq!(app.history_entries().count(), 0);
 
         app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
-        app.key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-        let request = app.request.take().expect("confirmed query queued");
-        assert_eq!(request.query.as_deref(), Some("SELECT 1"));
-        assert_eq!(app.history_entries().collect::<Vec<_>>(), ["SELECT 1"]);
-
-        app.complete(&request, Ok(page(false)));
-        app.act(Action::Refresh);
-        assert!(app.confirm_query.is_some());
-        assert!(app.request.is_none());
-        app.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
-        assert!(app.request.is_none());
-        app.act(Action::Refresh);
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(
-            app.request.as_ref().unwrap().query.as_deref(),
-            Some("SELECT 1")
+        let request = app.request.take().expect("confirmed query queued once");
+        assert_eq!(request.query.as_deref(), Some("WRITE 42"));
+        assert_eq!(app.history_entries().collect::<Vec<_>>(), ["WRITE 42"]);
+
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.request.is_none());
+        assert!(app.query_in_flight);
+        app.complete_write(
+            &request,
+            Ok(onetui_core::provider::WriteResult {
+                outcome: onetui_core::provider::WriteOutcome::Applied,
+                summary: "Point upsert completed".into(),
+            }),
         );
-        assert_eq!(app.history_entries().collect::<Vec<_>>(), ["SELECT 1"]);
+        assert!(!app.query_in_flight && !app.loading && !app.quit);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Point upsert completed")
+        );
+    }
+
+    #[test]
+    fn cancelling_dispatched_write_keeps_waiting_for_its_outcome() {
+        let mut app = app();
+        app.config.ask_for_query_confirm = true;
+        let browse = app.request.take().unwrap();
+        app.complete(&browse, Ok(page(false)));
+        app.act(Action::Query);
+        app.query_editor = Some(crate::query::Editor::new("WRITE 42".into()));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        let request = app.request.take().unwrap();
+        let generation = app.generation;
+
+        app.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.generation > generation);
+        assert!(app.loading && app.query_in_flight && !app.quit);
+        app.complete_write(
+            &request,
+            Ok(onetui_core::provider::WriteResult {
+                outcome: onetui_core::provider::WriteOutcome::Unknown,
+                summary: "request cancelled after dispatch".into(),
+            }),
+        );
+        assert!(!app.query_in_flight && !app.loading);
+        assert!(app.error.as_deref().unwrap().contains("outcome unknown"));
     }
 
     #[test]
@@ -1884,13 +2016,23 @@ mod tests {
             let request = app.request.take().unwrap();
             app.complete(&request, Err(anyhow::anyhow!("query failed")));
         }
+        app.query_editor = Some(crate::query::Editor::new("WRITE 42".into()));
+        app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
+        let write = app.request.take().expect("submitted query");
+        app.complete_write(
+            &write,
+            Ok(onetui_core::provider::WriteResult {
+                outcome: onetui_core::provider::WriteOutcome::Applied,
+                summary: "Point upsert completed".into(),
+            }),
+        );
         drop(app);
         assert!(config_path.with_extension("history.json").is_file());
 
         let mut reopened = open();
         assert_eq!(
             reopened.history_entries().collect::<Vec<_>>(),
-            ["SELECT 2", "SELECT 1"]
+            ["WRITE 42", "SELECT 2", "SELECT 1"]
         );
         reopened.view.alias = Some("q".into());
         assert_eq!(reopened.history_entries().count(), 0);
@@ -1900,7 +2042,7 @@ mod tests {
         reopened.act(Action::Query);
         reopened.query_editor = Some(crate::query::Editor::new("SELECT 2".into()));
         reopened.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
-        assert_eq!(reopened.query_history.len(), 2);
+        assert_eq!(reopened.query_history.len(), 4);
     }
 
     #[test]
@@ -2012,10 +2154,11 @@ mod tests {
         app.act(Action::Query);
         app.key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
         let cancelled = app.request.take().unwrap();
-        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         app.complete(&cancelled, Err(anyhow::anyhow!("late error")));
-        assert!(app.error.is_none());
+        assert!(app.error.as_deref().unwrap().contains("cancelled"));
         assert!(!app.quit);
+        app.act(Action::Back);
         app.act(Action::Back);
         assert_eq!(app.view.resource, parent_resource);
         assert!(app.view.query.is_none());

@@ -1,12 +1,14 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
+    QueryDescriptor, QueryExecution, QueryRequest, RequestContext, ShutdownContext, WriteOutcome,
+    WriteResult,
 };
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
 use qdrant_client::qdrant::{
-    GetCollectionInfoRequest, GetPointsBuilder, ListCollectionsRequest, ScrollPointsBuilder,
-    collections_client::CollectionsClient, points_client::PointsClient,
+    GetCollectionInfoRequest, GetPointsBuilder, ListCollectionsRequest, PointsOperationResponse,
+    ScrollPointsBuilder, UpdateStatus, collections_client::CollectionsClient,
+    points_client::PointsClient,
 };
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,7 +29,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "qdrant.query",
-        language: "Scroll JSON",
+        language: "Qdrant JSON",
         contextual_example: None,
         example: "{\n  \"filter\": {\"must\": []},\n  \"limit\": 100\n}",
         path_depth: 1,
@@ -89,6 +91,33 @@ pub struct QdrantExecutor {
     closed: bool,
 }
 
+fn write_result(response: PointsOperationResponse) -> WriteResult {
+    let Some(result) = response.result else {
+        return WriteResult {
+            outcome: WriteOutcome::Unknown,
+            summary: "Qdrant returned no update status".into(),
+        };
+    };
+    let status = UpdateStatus::try_from(result.status).unwrap_or(UpdateStatus::UnknownUpdateStatus);
+    match status {
+        UpdateStatus::Completed => WriteResult {
+            outcome: WriteOutcome::Applied,
+            summary: result.operation_id.map_or_else(
+                || "Point upsert completed".into(),
+                |id| format!("Point upsert completed (operation {id})"),
+            ),
+        },
+        UpdateStatus::ClockRejected => WriteResult {
+            outcome: WriteOutcome::Rejected,
+            summary: "Qdrant rejected the point update (ClockRejected)".into(),
+        },
+        _ => WriteResult {
+            outcome: WriteOutcome::Unknown,
+            summary: format!("Qdrant update status is {status:?}"),
+        },
+    }
+}
+
 struct Lease<'a, T> {
     channel: MutexGuard<'a, Option<T>>,
     status: &'a watch::Sender<ConnectionStatus>,
@@ -105,6 +134,28 @@ impl<T> Drop for Lease<'_, T> {
 }
 
 impl QdrantExecutor {
+    async fn connect_channel(
+        &self,
+        channel: &mut Option<Channel>,
+        deadline: Instant,
+    ) -> Result<Channel> {
+        if channel.is_none() {
+            self.status.send_replace(ConnectionStatus::Connecting);
+            let url = crate::qdrant_url(&self.url)?;
+            let mut endpoint = Endpoint::from_shared(url.to_string())
+                .context("Qdrant endpoint")?
+                .connect_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()))
+                .keep_alive_while_idle(false);
+            if url.scheme() == "https" {
+                endpoint = endpoint
+                    .tls_config(ClientTlsConfig::new().with_native_roots())
+                    .context("Qdrant TLS")?;
+            }
+            *channel = Some(endpoint.connect().await.context("Qdrant connection")?);
+        }
+        Ok(channel.as_ref().expect("connected channel").clone())
+    }
+
     async fn topology(
         &self,
         request: &PageRequest,
@@ -201,28 +252,8 @@ impl QdrantExecutor {
         let deadline = context.deadline;
         let result = context
             .run(async {
-                if lease.channel.is_none() {
-                    self.status.send_replace(ConnectionStatus::Connecting);
-                    let url = crate::qdrant_url(&self.url)?;
-                    let mut endpoint = Endpoint::from_shared(url.to_string())
-                        .context("Qdrant endpoint")?
-                        .connect_timeout(
-                            deadline.saturating_duration_since(tokio::time::Instant::now()),
-                        )
-                        .keep_alive_while_idle(false);
-                    if url.scheme() == "https" {
-                        endpoint = endpoint
-                            .tls_config(ClientTlsConfig::new().with_native_roots())
-                            .context("Qdrant TLS")?;
-                    }
-                    let channel = endpoint.connect().await.context("Qdrant connection")?;
-                    *lease.channel = Some(channel);
-                }
-                operation(
-                    lease.channel.as_ref().expect("connected channel").clone(),
-                    deadline,
-                )
-                .await
+                let channel = self.connect_channel(&mut lease.channel, deadline).await?;
+                operation(channel, deadline).await
             })
             .await?;
         // Formatting runs on the worker too; check cancellation/deadline again after it.
@@ -267,6 +298,72 @@ impl Executor for QdrantExecutor {
             crate::browse::bounded(page)
         })
         .await
+    }
+
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        mut context: RequestContext,
+    ) -> Result<QueryExecution> {
+        ensure!(!self.closed, "Qdrant session is closed");
+        let Some(upsert) = crate::query::prepare_upsert(&request)? else {
+            return self
+                .query_page(request, context)
+                .await
+                .map(QueryExecution::Page);
+        };
+        let key = self.api_key.as_ref().and_then(|key| key.to_str().ok());
+        let mut lease = Lease {
+            channel: context.run(self.client.lock()).await?,
+            status: &self.status,
+            clean: false,
+        };
+        let deadline = context.deadline;
+        let mut dispatched = false;
+        let attempt = context
+            .run(async {
+                let channel = self.connect_channel(&mut lease.channel, deadline).await?;
+                dispatched = true;
+                let response = PointsClient::new(channel)
+                    .upsert(self.request(upsert, deadline))
+                    .await;
+                Ok::<_, anyhow::Error>(response)
+            })
+            .await;
+        let result = match attempt {
+            Ok(Ok(Ok(response))) => {
+                let response = response.into_inner();
+                lease.clean = true;
+                self.status.send_replace(ConnectionStatus::Connected);
+                write_result(response)
+            }
+            Ok(Ok(Err(status))) => {
+                let definite = matches!(
+                    status.code(),
+                    tonic::Code::InvalidArgument
+                        | tonic::Code::Unauthenticated
+                        | tonic::Code::PermissionDenied
+                        | tonic::Code::NotFound
+                        | tonic::Code::FailedPrecondition
+                );
+                let error = crate::rpc_error(status);
+                WriteResult {
+                    outcome: if definite {
+                        WriteOutcome::Rejected
+                    } else {
+                        WriteOutcome::Unknown
+                    },
+                    summary: onetui_core::diagnostic(error, &[key.unwrap_or("")]).to_string(),
+                }
+            }
+            Ok(Err(error)) => return Err(error),
+            Err(error) if dispatched => WriteResult {
+                outcome: WriteOutcome::Unknown,
+                summary: onetui_core::diagnostic(error, &[key.unwrap_or("")]).to_string(),
+            },
+            Err(error) => return Err(error),
+        };
+        Ok(QueryExecution::Write(result))
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status.subscribe()

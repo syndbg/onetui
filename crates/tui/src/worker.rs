@@ -2,15 +2,22 @@ use crate::app::Request;
 use anyhow::{Result, anyhow};
 use onetui_core::Page;
 use onetui_core::provider::{
-    ConnectionStatus, Executor, PageRequest, QueryRequest, RequestContext, ShutdownContext,
+    ConnectionStatus, Executor, PageRequest, QueryExecution, QueryRequest, RequestContext,
+    ShutdownContext, WriteResult,
 };
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
 
 pub(crate) enum WorkerEvent {
     Page(Result<Page>),
+    Write(Result<WriteResult>),
     Status(ConnectionStatus),
     Finished(Result<()>),
+}
+
+enum WorkerResult {
+    Page(Result<Page>),
+    Write(Result<WriteResult>),
 }
 
 pub(crate) struct Worker {
@@ -18,7 +25,7 @@ pub(crate) struct Worker {
     pub session: u64,
     pub request: Option<Request>,
     pub task: tokio::task::JoinHandle<Result<()>>,
-    pub results: mpsc::Receiver<Result<Page>>,
+    results: mpsc::Receiver<WorkerResult>,
     pub status: watch::Receiver<ConnectionStatus>,
     pub status_open: bool,
     pub results_open: bool,
@@ -43,9 +50,13 @@ impl Worker {
                     return WorkerEvent::Finished(Err(anyhow!("browsing worker shutdown timed out; connections discarded")));
                 },
                 result = self.results.recv(), if self.results_open => match result {
-                    Some(page) => {
+                    Some(WorkerResult::Page(page)) => {
                         self.cancel.take();
                         return WorkerEvent::Page(page);
+                    }
+                    Some(WorkerResult::Write(result)) => {
+                        self.cancel.take();
+                        return WorkerEvent::Write(result);
                     }
                     None => self.results_open = false,
                 },
@@ -81,13 +92,18 @@ impl Worker {
                     continuation: request.continuation.clone(),
                 };
                 let result = if request.follow {
-                    executor.follow_page(page, context).await
+                    WorkerResult::Page(executor.follow_page(page, context).await)
                 } else if let Some(text) = request.query.clone() {
-                    executor
-                        .query_page(QueryRequest { page, text }, context)
+                    match executor
+                        .execute_query(QueryRequest { page, text }, context)
                         .await
+                    {
+                        Ok(QueryExecution::Page(page)) => WorkerResult::Page(Ok(page)),
+                        Ok(QueryExecution::Write(result)) => WorkerResult::Write(Ok(result)),
+                        Err(error) => WorkerResult::Page(Err(error)),
+                    }
                 } else {
-                    executor.fetch_page(page, context).await
+                    WorkerResult::Page(executor.fetch_page(page, context).await)
                 };
                 tokio::select! {
                     biased;
@@ -239,6 +255,7 @@ mod tests {
             loop {
                 match worker.event().await {
                     WorkerEvent::Page(result) => return result,
+                    WorkerEvent::Write(_) => panic!("unexpected write result"),
                     WorkerEvent::Status(_) => {}
                     WorkerEvent::Finished(result) => panic!("worker stopped: {result:?}"),
                 }

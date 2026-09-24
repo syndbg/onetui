@@ -29,6 +29,6 @@ An unavailable offset, backwards-moving log boundary, oversized record or reques
 
 - Repeated historical refresh would replay older data and reset the browsing window. A separate operation keeps historical paging unchanged.
 - An endless stream would need another event protocol, buffering and shutdown path. Finite batches fit the existing executor lifetime and cancellation model. The trade-off is polling latency and a maximum catch-up rate of one bounded batch per interval.
-- Consumer-group subscriptions would introduce group membership, rebalances and shared positions. Manual partition reads preserve the read-only browser contract.
+- Consumer-group subscriptions would introduce group membership, rebalances and shared positions. Manual partition reads preserve independent Kafka browsing.
 
 The traffic simulator is a separate fixture producer, not a write feature in OneTUI. It sends one record every 15 seconds to the fixed local `demo_live` topic.

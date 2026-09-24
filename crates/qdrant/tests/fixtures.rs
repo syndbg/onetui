@@ -1,5 +1,8 @@
 //! Connector experiments against the fixed disposable local Qdrant fixture.
-use onetui_core::provider::{Executor, PageRequest, Provider, RequestContext, ShutdownContext};
+use onetui_core::provider::{
+    Executor, PageRequest, Provider, QueryExecution, QueryRequest, RequestContext, ShutdownContext,
+    WriteOutcome,
+};
 use onetui_core::{Page, Resource};
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
@@ -639,6 +642,96 @@ async fn qdrant_scroll_and_lazy_details() {
         Ok::<_, qdrant_client::QdrantError>(())
     }
     .await;
+    client.delete_collection(&name).await.unwrap();
+    result.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "creates and removes only its own collection in the disposable Qdrant fixture"]
+async fn one_point_upsert_replaces_and_reads_back_numeric_and_uuid_points() {
+    let client = Qdrant::from_url(QDRANT)
+        .api_key("fixture-admin-only")
+        .skip_compatibility_check()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let name = format!("onetui_write_{}", std::process::id());
+    client
+        .create_collection(
+            CreateCollectionBuilder::new(&name)
+                .vectors_config(VectorParamsBuilder::new(3, Distance::Cosine)),
+        )
+        .await
+        .unwrap();
+    let mut executor = onetui_qdrant::QdrantProvider
+        .configure(
+            &toml::from_str(&format!("url='{QDRANT}'\napi_key_env='KEY'")).unwrap(),
+            &|_| Some("fixture-admin-only".into()),
+        )
+        .unwrap();
+
+    let result = async {
+        for text in [
+            r#"{"operation":"upsert","points":[{"id":42,"vector":[1,0,0],"payload":{"label":"first","old":true}}]}"#,
+            r#"{"operation":"upsert","points":[{"id":42,"vector":[0,1,0],"payload":{"label":"replacement"}}]}"#,
+            r#"{"operation":"upsert","points":[{"id":"550e8400-e29b-41d4-a716-446655440000","vector":[0,0,1],"payload":{"label":"uuid"}}]}"#,
+        ] {
+            let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+            let result = executor
+                .execute_query(
+                    QueryRequest {
+                        page: PageRequest {
+                            resource: Resource::new("qdrant.query", vec![name.clone()]),
+                            continuation: None,
+                        },
+                        text: text.into(),
+                    },
+                    context,
+                )
+                .await?;
+            let QueryExecution::Write(result) = result else {
+                panic!("expected write result");
+            };
+            assert_eq!(result.outcome, WriteOutcome::Applied, "{}", result.summary);
+        }
+
+        let numeric = client
+            .get_points(
+                GetPointsBuilder::new(&name, vec![42_u64.into()])
+                    .with_payload(true)
+                    .with_vectors(true),
+            )
+            .await?;
+        assert_eq!(numeric.result.len(), 1);
+        let payload = serde_json::to_value(&numeric.result[0].payload)?;
+        assert_eq!(payload["label"], "replacement");
+        assert!(payload.get("old").is_none(), "upsert left old payload fields");
+        assert!(numeric.result[0].vectors.is_some());
+
+        let uuid = client
+            .get_points(
+                GetPointsBuilder::new(
+                    &name,
+                    vec!["550e8400-e29b-41d4-a716-446655440000".into()],
+                )
+                .with_payload(true)
+                .with_vectors(true),
+            )
+            .await?;
+        assert_eq!(uuid.result.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&uuid.result[0].payload)?["label"],
+            "uuid"
+        );
+        assert!(uuid.result[0].vectors.is_some());
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
     client.delete_collection(&name).await.unwrap();
     result.unwrap();
 }

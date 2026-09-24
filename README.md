@@ -22,7 +22,7 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect data, run native queries and follow live messages without switching tools.
+OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect data, run native queries, write to supported data sources and follow live messages without switching tools.
 
 ## Demo
 
@@ -132,7 +132,7 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 | Datasource | Functionality |
 | --- | --- |
 | [PostgreSQL](docs/postgres.md) | Tables, views, typed values, SQL and replication statistics |
-| [Qdrant](docs/qdrant.md) | Collections, points, payloads, vectors, filtered Scroll and topology |
+| [Qdrant](docs/qdrant.md) | Collections, points, payloads, vectors, filtered Scroll, point upserts and topology |
 | [Kafka](docs/kafka.md) | Metadata, configuration, groups, lag, record browsing, replay and following |
 | [NATS](docs/nats.md) | Core subscriptions, JetStream messages, replay, consumers, KV and objects |
 | [DynamoDB](docs/dynamodb.md) | Metadata, typed items, native reads, PartiQL, vector search and Streams |
@@ -140,7 +140,7 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 
 Kafka and NATS can decode Avro and Protobuf using files, directory catalogs, Confluent registries or Buf.
 
-Use least-privilege credentials. Queries still consume server resources.
+Use credentials scoped to the operations you need. Queries still consume server resources.
 
 ## Themes
 

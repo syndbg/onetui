@@ -106,4 +106,4 @@ Count retained values and derived caches against bounded storage. Generate hex/b
 
 Always pretty-printing hides the original presentation and removes user choice. Treating every cell as JSON loses non-JSON types. Treating every cell as UTF-8 loses arbitrary bytes. Lossy decoding conceals corruption; generic debug output is not a byte viewer. Requiring a formatter trait or plugin ABI adds extensibility that built-in enum dispatch already supplies.
 
-Legacy encoding selection, automatic decompression, base64 decoding, charts, image rendering, editing and export are outside this decision. The byte view remains usable without those decoders. This decision does not change the initial read-only scope.
+Legacy encoding selection, automatic decompression, base64 decoding, charts, image rendering, editing and export are outside this decision. The byte view remains usable without those decoders. This decision does not change which datasource operations are available.

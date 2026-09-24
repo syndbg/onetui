@@ -1,8 +1,11 @@
 use anyhow::{Result, ensure};
 use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::provider::{PageRequest, QueryRequest};
-use onetui_core::{PAGE_BYTES, PAGE_SIZE};
-use qdrant_client::qdrant::{Condition, Filter, Range, ScrollPoints, ScrollPointsBuilder};
+use onetui_core::{PAGE_BYTES, PAGE_SIZE, Resource};
+use qdrant_client::qdrant::{
+    Condition, Filter, PointStruct, Range, ScrollPoints, ScrollPointsBuilder, UpsertPoints,
+    UpsertPointsBuilder,
+};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const RESOURCE: ResourceDescriptor = ResourceDescriptor {
@@ -148,6 +151,85 @@ pub(crate) fn prepare(request: &QueryRequest, executor: u64) -> Result<ScrollPoi
     Ok(scroll.build())
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Write {
+    operation: String,
+    points: Vec<WritePoint>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WritePoint {
+    id: WriteId,
+    vector: Vec<f32>,
+    payload: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WriteId {
+    Number(u64),
+    Uuid(String),
+}
+
+impl WriteId {
+    fn native(self) -> Result<crate::browse::Id> {
+        match self {
+            Self::Number(id) => Ok(crate::browse::Id::Num(id)),
+            Self::Uuid(id) => crate::browse::Id::parse(&id),
+        }
+    }
+}
+
+fn prepare_write(resource: &Resource, value: serde_json::Value) -> Result<PointStruct> {
+    ensure!(
+        resource.id == RESOURCE.id && resource.path.len() == 1 && !resource.path[0].is_empty(),
+        "Qdrant upsert requires a selected collection"
+    );
+    let write: Write = serde_json::from_value(value)?;
+    ensure!(
+        write.operation == "upsert",
+        "Unsupported Qdrant write operation"
+    );
+    ensure!(
+        write.points.len() == 1,
+        "Qdrant upsert accepts exactly one point"
+    );
+    let point = write.points.into_iter().next().expect("one point");
+    ensure!(!point.vector.is_empty(), "Point vector must not be empty");
+    ensure!(
+        point.vector.iter().all(|value| value.is_finite()),
+        "Point vector values must be finite"
+    );
+    let id = point.id.native()?;
+    let payload: qdrant_client::Payload = match point.payload {
+        Some(value @ serde_json::Value::Object(_)) => value.try_into()?,
+        Some(_) => anyhow::bail!("Point payload must be a JSON object"),
+        None => qdrant_client::Payload::default(),
+    };
+    Ok(PointStruct::new(id.native(), point.vector, payload))
+}
+
+pub(crate) fn prepare_upsert(request: &QueryRequest) -> Result<Option<UpsertPoints>> {
+    request.validate()?;
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&request.text) else {
+        return Ok(None);
+    };
+    if !value
+        .as_object()
+        .is_some_and(|object| object.contains_key("operation"))
+    {
+        return Ok(None);
+    }
+    let point = prepare_write(&request.page.resource, value)?;
+    Ok(Some(
+        UpsertPointsBuilder::new(&request.page.resource.path[0], vec![point])
+            .wait(true)
+            .into(),
+    ))
+}
+
 pub(crate) fn continuation(query: String, inner: String) -> Result<String> {
     Ok(serde_json::to_string(&Position { query, inner })?)
 }
@@ -181,5 +263,45 @@ mod tests {
             assert!(prepare(&request(text), 1).is_err(), "{text}");
         }
         assert!(prepare(&request(&" ".repeat(16385)), 1).is_err());
+    }
+
+    #[test]
+    fn point_upsert_is_strict_and_scoped_to_one_collection() {
+        let resource = Resource::new(RESOURCE.id, vec!["demo".into()]);
+        let request = |resource: Resource, text: &str| QueryRequest {
+            page: PageRequest {
+                resource,
+                continuation: None,
+            },
+            text: text.into(),
+        };
+        let text = r#"{"operation":"upsert","points":[{"id":42,"vector":[0.1,0.2],"payload":{"label":"demo"}}]}"#;
+        assert!(
+            prepare_upsert(&request(resource.clone(), text))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            prepare_upsert(&request(resource.clone(), r#"{"filter":{"must":[]}}"#))
+                .unwrap()
+                .is_none()
+        );
+
+        for invalid in [
+            r#"{"operation":"delete","points":[]}"#,
+            r#"{"operation":"upsert","collection":"other","points":[{"id":42,"vector":[1]}]}"#,
+            r#"{"operation":"upsert","points":[]}"#,
+            r#"{"operation":"upsert","points":[{"id":42,"vector":[]},{"id":43,"vector":[1]}]}"#,
+            r#"{"operation":"upsert","points":[{"id":-1,"vector":[1]}]}"#,
+            r#"{"operation":"upsert","points":[{"id":"not-a-uuid","vector":[1]}]}"#,
+            r#"{"operation":"upsert","points":[{"id":42,"vector":[1],"payload":[]}]}"#,
+        ] {
+            assert!(
+                prepare_upsert(&request(resource.clone(), invalid)).is_err(),
+                "{invalid}"
+            );
+        }
+        assert!(prepare_upsert(&request(Resource::new(RESOURCE.id, vec![]), text)).is_err());
+        assert!(prepare_upsert(&request(resource, &" ".repeat(16385))).is_err());
     }
 }

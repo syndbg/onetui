@@ -57,13 +57,14 @@ fn rpc_error(status: tonic::Status) -> anyhow::Error {
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "id": "qdrant", "operations": ["check", "fetch_page", "query_page"],
+        "id": "qdrant", "operations": ["check", "fetch_page", "query_page", "execute_query"],
         "query_syntax": {
             "operation": "Filtered Scroll on the current or selected collection; IDs only, payload and vectors fetched on demand",
             "fields": {"filter": "optional object: must, should, must_not arrays of field conditions", "limit": "optional integer 1..100; default 100"},
             "condition": "Nonempty key plus exactly one of match: {value: string|boolean|i64} or range: {gt?, gte?, lt?, lte?}; range requires a numeric bound",
             "unsupported": "Unknown fields, nested conditions, match any/except/text, geo/datetime filters, order_by, user offsets, payload/vector selectors and similarity queries are rejected"
         },
+        "write_syntax": {"operation": "upsert one point in the selected collection", "fields": {"id": "required numeric or UUID", "vector": "required unnamed dense vector", "payload": "optional JSON object"}, "existing_id": "replaces the point", "confirmation": "required before dispatch"},
         "session": "Lazy reusable size-capped gRPC channel and optional REST client; failed/cancelled operations discard the affected client. Shutdown drops both. REST client/trust setup runs off async workers with one process-wide job slot. No periodic metadata checks or heartbeat TOML setting. HTTP/2 keepalive interval unset; idle pings disabled.",
         "limits": {"page_rows": 100, "rpc_bytes": 1048576, "rest_bytes": 1048576, "display_page_bytes": 1048576, "retained_pages_per_view": 3},
         "navigation": "Enter: resources -> collections, cluster or peers. Collection -> points, metadata, shards, transfers or cluster details. Point -> payload or vectors. Enter on a data row inspects cached fields.",

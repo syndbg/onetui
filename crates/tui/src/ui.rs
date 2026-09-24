@@ -169,10 +169,9 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
     if app.query_editor.is_some() {
-        key_hints(
-            frame,
-            keys,
-            p,
+        let hints: &[(&str, &str)] = if app.query_in_flight {
+            &[("Ctrl-C", "cancel query (write outcome may be unknown)")]
+        } else {
             &[
                 ("Enter/F5", "execute query"),
                 ("Shift-Enter", "new line"),
@@ -180,9 +179,9 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
                 ("Ctrl-u", "clear draft"),
                 ("Ctrl-p/n", "previous/next query"),
                 ("", "16 KiB; draft kept in memory"),
-            ],
-            &[],
-        );
+            ]
+        };
+        key_hints(frame, keys, p, hints, &[]);
         return;
     } else if app.history_menu.is_some() {
         key_hints(
@@ -392,6 +391,12 @@ where
                             let request = worker.as_mut().expect("active worker").request.take().expect("completed request");
                             if worker.as_ref().is_some_and(|w| w.session == app.session) {
                                 app.complete(&request, result);
+                            }
+                        }
+                        WorkerEvent::Write(result) => {
+                            let request = worker.as_mut().expect("active worker").request.take().expect("completed request");
+                            if worker.as_ref().is_some_and(|w| w.session == app.session) {
+                                app.complete_write(&request, result);
                             }
                         }
                         WorkerEvent::Status(status) => {
@@ -1369,7 +1374,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else {
         "Ready"
     };
-    let error = app.error.as_deref().unwrap_or(state);
+    let message = app
+        .error
+        .as_deref()
+        .or(app.status_message.as_deref())
+        .unwrap_or(state);
     let config_path = app
         .config
         .path()
@@ -1404,7 +1413,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         wrapping(
             Paragraph::new(vec![
                 Line::styled(
-                    error,
+                    message,
                     Style::new().fg(if app.error.is_some() {
                         color(p.error)
                     } else if app.loading && !app.following {
@@ -2539,6 +2548,7 @@ mod tests {
         let text = contents(&terminal);
         assert!(text.lines().next().unwrap().contains("Context"));
         assert!(!text.contains("read-only"));
+        assert!(!text.contains("read/write"));
         assert!(!text.contains("OneTUI"));
         assert!(
             text.lines()

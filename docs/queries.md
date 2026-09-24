@@ -11,7 +11,7 @@ History stays in memory for the current session by default. To keep the last 100
 | Datasource | Query |
 | --- | --- |
 | [PostgreSQL](#postgresql) | SQL row queries |
-| [Qdrant](#qdrant) | Filtered Scroll JSON |
+| [Qdrant](#qdrant) | Filtered Scroll and point upsert JSON |
 | [Kafka](kafka.md#replay-from-an-offset-or-timestamp) | Partition offset or timestamp replay |
 | [NATS](nats.md#replay) | Stream subject, sequence or time replay |
 | [DynamoDB](dynamodb.md#queries) | Native reads and PartiQL SELECT |
@@ -46,6 +46,14 @@ Select a collection and enter Scroll JSON:
 ```
 
 Use `must`, `should` and `must_not` with exact-value matches or numeric ranges. `{}` browses unfiltered point IDs. Open a point for payloads or vectors. Advanced filters, custom ordering and similarity queries are unsupported.
+
+To insert or replace one point in the selected collection, enter an upsert:
+
+```json
+{"operation":"upsert","points":[{"id":42,"vector":[0.1,0.2,0.3],"payload":{"label":"example"}}]}
+```
+
+Upserting an existing ID replaces that point. If a request times out after sending, check the collection before retrying because the result may be unknown.
 
 Use `onetui schema --datasource qdrant` for the accepted fields and limits.
 

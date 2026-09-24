@@ -99,7 +99,7 @@ impl Id {
         }
     }
 
-    fn parse(value: &str) -> Result<Self> {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
         if let Ok(n) = value.parse::<u64>() {
             return Ok(Self::Num(n));
         }

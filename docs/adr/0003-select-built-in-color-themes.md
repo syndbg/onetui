@@ -86,4 +86,4 @@ A trait-based strategy would add an interface where the only difference is data.
 
 Explicit selection avoids terminal-background detection and its startup queries. Users choose the theme that fits their terminal. Supporting terminal-default colors or custom palettes would require a later extension, not unused variants now.
 
-Every palette must keep selection, labels and status readable. Color supplements text and markers: errors, read-only mode, loading and the selected row remain identifiable without distinguishing hues. Theme selection must not change navigation, cached data, connection lifetime or terminal restoration.
+Every palette must keep selection, labels and status readable. Color supplements text and markers: errors, loading, access labels and the selected row remain identifiable without distinguishing hues. Theme selection must not change navigation, cached data, connection lifetime or terminal restoration.
