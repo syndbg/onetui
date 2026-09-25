@@ -7,7 +7,7 @@ date: 2026-09-09
 
 ## Decision
 
-Use one query editor and result-viewing flow, with each provider owning its query syntax, validation, execution and continuation. PostgreSQL accepts read-only SQL; Qdrant accepts filtered Scroll JSON scoped to a collection. Do not translate between them or introduce a universal query language.
+Use one query editor and result-viewing flow, with each provider owning its query syntax, execution and continuation. PostgreSQL accepts SQL row queries; Qdrant accepts HTTP requests against its configured REST endpoint. Do not translate between them or introduce a universal query language.
 
 `e` and `:query` open a compact editor above the retained rows, so editing or a failed request does not hide the data. Enter or F5 explicitly executes a draft; Shift+Enter inserts a newline. Ctrl-R also executes. Successful execution focuses the result table and keeps the executed query visible above it. Context hints follow the active editor or results. The command bar remains for `:` commands and `/` page-local filtering. Editing text never sends a datasource request until an execution key is pressed.
 
@@ -15,7 +15,7 @@ Use one query editor and result-viewing flow, with each provider owning its quer
 
 ## Provider and UI boundary
 
-The [core contract](../../crates/core/src/provider.rs) exposes an optional `QueryDescriptor` with the language, example, result resource and required resource-path depth. The same descriptor supplies the UI and offline `onetui schema` catalog. A provider without this capability does not expose the query action.
+The [core contract](../../crates/core/src/provider.rs) exposes an optional `QueryDescriptor` with the language, display-only watermark, result resource and required resource-path depth. The same descriptor supplies the UI and offline `onetui schema` catalog. A provider without this capability does not expose the query action.
 
 The worker submits the draft and its paging request through `Executor::query_page`:
 
@@ -40,11 +40,11 @@ The [PostgreSQL connector](../../crates/postgres/src/query.rs) prepares one stat
 
 SQL pages use independent LIMIT/OFFSET reads. An explicit unique ordering makes traversal more predictable, but there is no cross-page snapshot and deep offsets can repeat expensive work. No transaction or cursor stays open while the user reads the screen, preserving [ADR-0001's lifecycle](0001-register-providers-and-own-session-lifecycles.md).
 
-The [Qdrant connector](../../crates/qdrant/src/query.rs) converts a strict JSON subset into native Scroll requests: `must`, `should` and `must_not` field conditions with exact matches or numeric ranges. Unsupported fields are errors rather than silently omitted predicates. Results contain point IDs; payloads and vectors remain lazy reads. OneTUI owns the native offset, so editing a draft cannot silently resume an older query.
+The [Qdrant connector](../../crates/qdrant/src/http.rs) sends a method, path and optional body through the existing REST client. It does not validate Qdrant's request schema. The path must stay on the configured endpoint; redirects, proxies and automatic retries remain disabled. Responses retain the HTTP status and bounded raw body, including server errors. A timed-out write may have reached Qdrant, so the UI reports an unknown outcome rather than encouraging a retry.
 
 Query text is bounded to 16 KiB. Pages retain the existing 100-item ceiling and 1 MiB value budget; Qdrant also caps RPC decoding at 1 MiB. The existing request timeout applies. These are work and retained-data limits, not an RSS guarantee or a bound on database computation before cancellation.
 
-Drafts and query tokens stay in memory, outside configuration and application logs. Database-side query logging remains possible. Each token is bound to its executor, resource and exact draft text. Successful execution of changed text starts fresh results and bookmarks; failed execution preserves the draft and prior data. Returning to browsing restores its retained view. Evicted result pages may be refetched from bookmarks, so revisiting them can show changed data.
+Drafts and query tokens stay in memory by default. Query history can be persisted only by explicit opt-in and may contain secrets. Database-side query logging remains possible. Successful execution of changed text starts fresh results and bookmarks; failed execution preserves the draft and prior data. Returning to browsing restores its retained view.
 
 ## Alternatives and scope
 
@@ -53,4 +53,4 @@ Drafts and query tokens stay in memory, outside configuration and application lo
 - A long-lived SQL cursor would retain transaction or materialization state while the user is idle. Independent pages accept weaker consistency to avoid that lifetime.
 - A second query worker or runtime plugin layer would duplicate the existing session, cancellation and dispatch mechanisms. Queries use the selected executor instead.
 
-The initial query operation is read-only. SQL writes, parameters and utility commands, arbitrary Qdrant endpoints, advanced filter forms and vector similarity search are outside this slice. This decision adds no configuration file or setting. Saved drafts and query history would require a separate retention and secret-handling decision.
+Each datasource remains responsible for its own query capabilities. Qdrant requests use the configured REST endpoint and can write. PostgreSQL parameters and utility commands remain outside this slice.

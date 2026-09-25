@@ -37,7 +37,7 @@ pub struct Request {
 pub(crate) struct QueryConfirmation {
     pub(crate) alias: String,
     pub(crate) resource: Resource,
-    text: String,
+    pub(crate) text: String,
 }
 
 pub struct View {

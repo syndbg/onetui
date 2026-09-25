@@ -760,6 +760,12 @@ fn query_panels(body: Rect, app: &App) -> [Rect; 2] {
         0
     } else if body.height < 7 {
         1
+    } else if app.query_editor.is_some()
+        && app
+            .query_descriptor()
+            .is_some_and(|descriptor| descriptor.language == "HTTP request")
+    {
+        body.height.min(7)
     } else {
         (body.height / 3).clamp(3, 8)
     };
@@ -1021,7 +1027,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         } else {
             "executed | e edit"
         };
-        let block = panel(p, format!(" {language} query | {hint} "));
+        let title = if language == "HTTP request" {
+            language.to_owned()
+        } else {
+            format!("{language} query")
+        };
+        let block = panel(p, format!(" {title} | {hint} "));
         let inner = if query.height > 2 {
             block.inner(query)
         } else {
@@ -1464,25 +1475,46 @@ pub fn draw(frame: &mut Frame, app: &App) {
             width,
             height,
         );
-        let target = if confirm.resource.path.is_empty() {
-            confirm.resource.id.to_owned()
+        let http_request = app
+            .query_descriptor()
+            .is_some_and(|descriptor| descriptor.language == "HTTP request");
+        let (target_label, target) = if http_request {
+            (
+                "Request",
+                confirm.text.lines().next().unwrap_or("").to_owned(),
+            )
+        } else if confirm.resource.path.is_empty() {
+            ("Target", confirm.resource.id.to_owned())
         } else {
-            format!(
-                "{}/{}",
-                confirm.resource.id,
-                confirm.resource.path.join("/")
+            (
+                "Target",
+                format!(
+                    "{}/{}",
+                    confirm.resource.id,
+                    confirm.resource.path.join("/")
+                ),
             )
         };
         frame.render_widget(Clear, popup);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::raw(format!("Connection: {}", display(&confirm.alias))),
-                Line::raw(format!("Target: {}", display(&target))),
+                Line::raw(format!("{target_label}: {}", display(&target))),
                 Line::raw("Enter or y: run    Esc or n: return"),
                 Line::raw("Set ask_for_query_confirm = false in config.toml to skip this prompt"),
             ])
             .centered()
-            .block(panel(p, " Run query? ").style(Style::new().bg(color(p.background)))),
+            .block(
+                panel(
+                    p,
+                    if http_request {
+                        " Run request? "
+                    } else {
+                        " Run query? "
+                    },
+                )
+                .style(Style::new().bg(color(p.background))),
+            ),
             popup,
         );
     }

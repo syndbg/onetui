@@ -12,13 +12,11 @@ api_key_env = "ONETUI_QDRANT_API_KEY"
 rest_url = "https://qdrant.example.com:6333"
 ```
 
-`url` must be the gRPC endpoint. Optional `rest_url` enables topology views and must address the same node. Both use the same API key. Use `onetui schema --datasource qdrant` for settings.
+`url` is the gRPC endpoint. `rest_url` enables topology views and HTTP requests. Both use the same API key. Use `onetui schema --datasource qdrant` for settings.
 
 ## Usage
 
-Open a collection, choose Points, then select a point to inspect its payload or vectors. Collection metadata includes status and approximate counts. Press `e` on a collection for [filtered Scroll queries](queries.md#qdrant).
-
-Similarity search, export and writes are not supported. See [shared controls](ui.md) for navigation and value display.
+Open a collection, choose Points, then select a point to inspect its payload or vectors. Press `e` for an [HTTP request](queries.md#qdrant). See [shared controls](ui.md) for navigation and value display.
 
 ## Cluster topology
 

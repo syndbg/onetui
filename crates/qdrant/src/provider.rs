@@ -27,10 +27,10 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "qdrant.query",
-        language: "Scroll JSON",
+        language: "HTTP request",
         contextual_watermark: None,
-        watermark: "{\n  \"filter\": {\"must\": []},\n  \"limit\": 100\n}",
-        path_depth: 1,
+        watermark: "POST /collections/{collection}/points/scroll\n\n{\n  \"limit\": 10\n}",
+        path_depth: 0,
         scope_resources: &[],
     }),
     kind: "qdrant",
@@ -105,6 +105,49 @@ impl<T> Drop for Lease<'_, T> {
 }
 
 impl QdrantExecutor {
+    async fn connect_rest(&self, client: &mut Option<reqwest::Client>, url: &str) -> Result<()> {
+        if client.is_some() {
+            return Ok(());
+        }
+        self.status.send_replace(ConnectionStatus::Connecting);
+        let permit = REST_SETUP.acquire().await?;
+        let https = crate::qdrant_url(url)?.scheme() == "https";
+        // Native trust loading can block. A cancelled setup keeps its slot until done.
+        *client = Some(
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let mut roots = rustls::RootCertStore::empty();
+                if https {
+                    for cert in rustls_native_certs::load_native_certs().certs {
+                        roots.add(cert)?;
+                    }
+                    ensure!(
+                        !roots.is_empty(),
+                        "No Qdrant REST TLS trust roots available"
+                    );
+                }
+                let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+                    rustls::crypto::ring::default_provider(),
+                ))
+                .with_safe_default_protocol_versions()?
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+                Ok::<_, anyhow::Error>(
+                    reqwest::Client::builder()
+                        .tls_backend_preconfigured(tls)
+                        .no_proxy()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .retry(reqwest::retry::never())
+                        .http1_only()
+                        .pool_max_idle_per_host(1)
+                        .build()?,
+                )
+            })
+            .await??,
+        );
+        Ok(())
+    }
+
     async fn topology(
         &self,
         request: &PageRequest,
@@ -122,44 +165,7 @@ impl QdrantExecutor {
         let key = self.api_key.as_ref().and_then(|key| key.to_str().ok());
         let result = context
             .run(async {
-                if lease.channel.is_none() {
-                    self.status.send_replace(ConnectionStatus::Connecting);
-                    let permit = REST_SETUP.acquire().await?;
-                    let https = crate::qdrant_url(url)?.scheme() == "https";
-                    // Native trust loading can block. A cancelled setup keeps its slot until done.
-                    *lease.channel = Some(
-                        tokio::task::spawn_blocking(move || {
-                            let _permit = permit;
-                            let mut roots = rustls::RootCertStore::empty();
-                            if https {
-                                for cert in rustls_native_certs::load_native_certs().certs {
-                                    roots.add(cert)?;
-                                }
-                                ensure!(
-                                    !roots.is_empty(),
-                                    "No Qdrant REST TLS trust roots available"
-                                );
-                            }
-                            let tls = rustls::ClientConfig::builder_with_provider(
-                                std::sync::Arc::new(rustls::crypto::ring::default_provider()),
-                            )
-                            .with_safe_default_protocol_versions()?
-                            .with_root_certificates(roots)
-                            .with_no_client_auth();
-                            Ok::<_, anyhow::Error>(
-                                reqwest::Client::builder()
-                                    .tls_backend_preconfigured(tls)
-                                    .no_proxy()
-                                    .redirect(reqwest::redirect::Policy::none())
-                                    .retry(reqwest::retry::never())
-                                    .http1_only()
-                                    .pool_max_idle_per_host(1)
-                                    .build()?,
-                            )
-                        })
-                        .await??,
-                    );
-                }
+                self.connect_rest(&mut lease.channel, url).await?;
                 let value = crate::topology::read(
                     lease.channel.as_ref().expect("REST client"),
                     url,
@@ -245,28 +251,60 @@ impl QdrantExecutor {
 }
 
 impl Executor for QdrantExecutor {
-    async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
-        let scroll = crate::query::prepare(&request, self.identity)?;
-        self.execute(context, |channel, deadline| async move {
-            let result = PointsClient::new(channel)
-                .max_decoding_message_size(PAGE_BYTES)
-                .scroll(self.request(scroll, deadline))
+    async fn query_page(&self, request: QueryRequest, mut context: RequestContext) -> Result<Page> {
+        ensure!(!self.closed, "Qdrant session is closed");
+        request.validate()?;
+        ensure!(
+            request.page.resource.id == "qdrant.query"
+                && request.page.resource.path.is_empty()
+                && request.page.continuation.is_none(),
+            "Invalid Qdrant query resource"
+        );
+        let input = crate::http::parse(&request.text)?;
+        let base = self.rest_url.as_deref().ok_or_else(|| {
+            anyhow!("Qdrant HTTP requests require rest_url in this connection's config")
+        })?;
+        let target = crate::http::target(base, &input)?;
+        let key = self.api_key.as_ref().and_then(|key| key.to_str().ok());
+        let mut lease = Lease {
+            channel: context.run(self.rest_client.lock()).await?,
+            status: &self.status,
+            clean: false,
+        };
+        context
+            .run(self.connect_rest(&mut lease.channel, base))
+            .await??;
+        let mut dispatched = false;
+        let attempt = context
+            .run(async {
+                dispatched = true;
+                crate::http::send(
+                    lease.channel.as_ref().expect("REST client"),
+                    target,
+                    key,
+                    &input,
+                )
                 .await
-                .map_err(crate::rpc_error)?
-                .into_inner();
-            let mut page = crate::browse::points(
-                &request.page.resource,
-                result.result,
-                result.next_page_offset,
-                self.identity,
-            )?;
-            page.continuation = page
-                .continuation
-                .map(|inner| crate::query::continuation(request.text, inner))
-                .transpose()?;
-            crate::browse::bounded(page)
-        })
-        .await
+            })
+            .await;
+        match attempt {
+            Ok(Ok(page)) => {
+                lease.clean = true;
+                self.status.send_replace(ConnectionStatus::Connected);
+                Ok(page)
+            }
+            Ok(Err(error)) | Err(error) if dispatched => {
+                let error = onetui_core::diagnostic(error, &[key.unwrap_or("")]);
+                if matches!(input.method, reqwest::Method::GET | reqwest::Method::HEAD) {
+                    Err(error)
+                } else {
+                    Err(anyhow!(
+                        "HTTP request outcome unknown: {error}. Inspect the target before retrying"
+                    ))
+                }
+            }
+            Ok(Err(error)) | Err(error) => Err(error),
+        }
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status.subscribe()
