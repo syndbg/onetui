@@ -1,14 +1,14 @@
 use crate::app::Request;
 use anyhow::{Result, anyhow};
-use onetui_core::Page;
 use onetui_core::provider::{
-    ConnectionStatus, Executor, PageRequest, QueryRequest, RequestContext, ShutdownContext,
+    ConnectionStatus, Executor, PageRequest, QueryExecution, QueryRequest, RequestContext,
+    ShutdownContext,
 };
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
 
 pub(crate) enum WorkerEvent {
-    Page(Result<Page>),
+    Execution(Result<QueryExecution>),
     Status(ConnectionStatus),
     Finished(Result<()>),
 }
@@ -18,7 +18,7 @@ pub(crate) struct Worker {
     pub session: u64,
     pub request: Option<Request>,
     pub task: tokio::task::JoinHandle<Result<()>>,
-    pub results: mpsc::Receiver<Result<Page>>,
+    pub results: mpsc::Receiver<Result<QueryExecution>>,
     pub status: watch::Receiver<ConnectionStatus>,
     pub status_open: bool,
     pub results_open: bool,
@@ -43,9 +43,9 @@ impl Worker {
                     return WorkerEvent::Finished(Err(anyhow!("browsing worker shutdown timed out; connections discarded")));
                 },
                 result = self.results.recv(), if self.results_open => match result {
-                    Some(page) => {
+                    Some(result) => {
                         self.cancel.take();
-                        return WorkerEvent::Page(page);
+                        return WorkerEvent::Execution(result);
                     }
                     None => self.results_open = false,
                 },
@@ -81,13 +81,19 @@ impl Worker {
                     continuation: request.continuation.clone(),
                 };
                 let result = if request.follow {
-                    executor.follow_page(page, context).await
+                    executor
+                        .follow_page(page, context)
+                        .await
+                        .map(QueryExecution::Page)
                 } else if let Some(text) = request.query.clone() {
                     executor
-                        .query_page(QueryRequest { page, text }, context)
+                        .execute_query(QueryRequest { page, text }, context)
                         .await
                 } else {
-                    executor.fetch_page(page, context).await
+                    executor
+                        .fetch_page(page, context)
+                        .await
+                        .map(QueryExecution::Page)
                 };
                 tokio::select! {
                     biased;
@@ -171,9 +177,10 @@ impl Drop for Worker {
 mod tests {
     use super::*;
     use crate::App;
+    use onetui_core::Page;
     use onetui_core::catalog::Action;
     use onetui_core::config::Config;
-    use onetui_core::provider::CheckResult;
+    use onetui_core::provider::{CheckResult, WriteOutcome, WriteResult};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -216,6 +223,23 @@ mod tests {
             assert_eq!(request.text, "probe query");
             self.fetch_page(request.page, context).await
         }
+        async fn execute_query(
+            &self,
+            request: QueryRequest,
+            context: RequestContext,
+        ) -> Result<QueryExecution> {
+            if request.text == "write" {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(QueryExecution::Write(WriteResult {
+                    outcome: WriteOutcome::Applied,
+                    summary: "one request".into(),
+                }))
+            } else {
+                self.query_page(request, context)
+                    .await
+                    .map(QueryExecution::Page)
+            }
+        }
         async fn shutdown(&mut self, _: ShutdownContext) -> Result<()> {
             self.stopped.store(true, Ordering::SeqCst);
             self.status.send_replace(ConnectionStatus::Closed);
@@ -238,7 +262,12 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 match worker.event().await {
-                    WorkerEvent::Page(result) => return result,
+                    WorkerEvent::Execution(result) => {
+                        return result.map(|execution| match execution {
+                            QueryExecution::Page(page) => page,
+                            _ => panic!("expected a paged result"),
+                        });
+                    }
                     WorkerEvent::Status(_) => {}
                     WorkerEvent::Finished(result) => panic!("worker stopped: {result:?}"),
                 }
@@ -246,6 +275,38 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn submitted_query_uses_execute_query_and_returns_write_receipt() {
+        let mut app = app();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut worker = Worker::new(
+            "a".into(),
+            app.session,
+            Probe {
+                calls: calls.clone(),
+                stopped: Arc::new(AtomicBool::new(false)),
+                dropped: Arc::new(AtomicBool::new(false)),
+                status: watch::channel(ConnectionStatus::Configured).0,
+            },
+        );
+        let mut request = app.request.take().unwrap();
+        request.query = Some("write".into());
+        worker.submit(request, Duration::from_secs(2)).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match worker.event().await {
+                    WorkerEvent::Execution(result) => break result.unwrap(),
+                    WorkerEvent::Status(_) => {}
+                    WorkerEvent::Finished(result) => panic!("worker stopped: {result:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(result, QueryExecution::Write(_)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

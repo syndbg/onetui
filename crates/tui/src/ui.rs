@@ -388,10 +388,10 @@ where
                 },
                 event = async { worker.as_mut().expect("guarded worker").event().await }, if worker.is_some() => {
                     match event {
-                        WorkerEvent::Page(result) => {
+                        WorkerEvent::Execution(result) => {
                             let request = worker.as_mut().expect("active worker").request.take().expect("completed request");
                             if worker.as_ref().is_some_and(|w| w.session == app.session) {
-                                app.complete(&request, result);
+                                app.complete_execution(&request, result);
                             }
                         }
                         WorkerEvent::Status(status) => {
@@ -2218,7 +2218,11 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = contents(&terminal);
         assert!(text.contains("SELECT result_value") && text.contains("retained_one"));
-        app.act(Action::Refresh);
+        app.act(Action::Query);
+        app.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
         let request = app.request.take().unwrap();
         let mut many = page();
         many.rows.resize(100, many.rows[0].clone());

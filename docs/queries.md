@@ -4,7 +4,7 @@ Press `e` or enter `:query` on a supported resource. Enter, F5 or Ctrl-R submits
 A new query starts empty. Its watermark is a hint that disappears when you type.
 OneTUI asks before running a query by default. Set `ask_for_query_confirm = false` in your config to skip the prompt.
 
-Press `e` to edit again, `n/p` to page through results, or `r` to rerun.
+Press `e` to edit and submit a query again. Use `n/p` to page through results. `r` refreshes ordinary resource views.
 In the query editor, Ctrl-P and Ctrl-N browse recent queries submitted on this connection.
 Press Shift+H or enter `:history` while browsing to choose one from a list. Enter opens it for editing; Esc closes the list.
 History stays in memory for the current session by default. To keep the last 100 submissions across restarts, add `persist_query_history = true` at the top of your config. The unencrypted file beside it (`config.history.json` for `config.toml`) contains full query text, including any passwords or tokens. Turning the setting off does not delete that file.
