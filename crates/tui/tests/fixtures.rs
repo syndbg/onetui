@@ -708,7 +708,7 @@ mod terminal {
             .args(["--connection", "pg"])
             .env("ONETUI_LIVE_PTY_DSN", PG_READER);
         let (mut pty, slave) = Pty::spawn(command);
-        pty.wait_token("\x1b[>1u", Duration::from_secs(3));
+        pty.wait_token("\x1b[>9u", Duration::from_secs(3));
         pty.wait(&["postgres.resources", "Schemas"]);
         pty.open_filtered("Schemas");
         pty.wait(&["postgres.schemas", "public"]);

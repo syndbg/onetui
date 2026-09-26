@@ -56,7 +56,7 @@ VERB topic[/partition]
 body
 ```
 
-The verb is `CONSUME` to read records or `PRODUCE` to publish them. The verb line names its own target, so a query means the same thing wherever you run it. The editor prefills the line from the view you opened. `CONSUME` states its range on that line and takes no body; only `PRODUCE` has one. Use Shift+Enter for the newlines; see [query controls](queries.md).
+The verb is `CONSUME` to read records or `PRODUCE` to publish them. The verb line names its own target, so a query means the same thing wherever you run it. The editor prefills the line from the view you opened. `CONSUME` states its range on that line and takes no body; only `PRODUCE` has one.
 
 ### CONSUME: read from an offset or timestamp
 
@@ -152,6 +152,16 @@ A publish reports one outcome for the whole submission, with the offsets it was 
 Records are sent with `acks=all`, so a reported offset is on every in-sync replica.
 
 Publishing is never retried. `applied` means every record was delivered and `rejected` that the broker refused all of them. Anything in between is `unknown`, including a batch where some records landed and others did not: resending it would duplicate the records that already arrived, so check the topic before submitting again.
+
+### Editor controls
+
+Enter, F5 or Ctrl-R submits the draft. Shift+Enter inserts a newline, and Ctrl-U clears the draft. Esc returns to browsing; Ctrl-C cancels active work. A new query starts empty, and its watermark is a hint that disappears when you type. Press `e` to edit and submit again; `r` refreshes ordinary resource views.
+
+OneTUI asks before running a query. Set `ask_for_query_confirm = false` in your config to skip the prompt.
+
+Ctrl-P and Ctrl-N browse recent queries submitted on this connection. Shift+H or `:history` while browsing opens them as a list: Enter opens one for editing, Esc closes the list. History stays in memory for the session. To keep the last 100 submissions across restarts, add `persist_query_history = true` at the top of your config. The unencrypted file beside it (`config.history.json` for `config.toml`) then holds full query text, including any passwords or tokens; turning the setting off does not delete that file.
+
+Shift+Enter needs a terminal that reports modified keys. OneTUI requests that, so it works wherever the terminal supports it. Where it does not, Shift+Enter is indistinguishable from Enter and submits instead: configure the key to send `ESC [ 13 ; 2 u` (`\x1b[13;2u`), or paste multiline text, which preserves newlines without executing. Inside tmux this also needs `set -g extended-keys on`.
 
 ## Live following
 

@@ -49,7 +49,7 @@ The range is `seq start..end` or `time start..end`. Either side may be omitted:
 | `time 2026-01-01T00:00:00Z..` | From the first message at or after that RFC3339 time. |
 | *omitted* | Everything retained. |
 
-The start is inclusive and the end exclusive. A `time` start resolves to a sequence; it is not a per-message time filter, and the end is always a sequence. See [query controls](queries.md).
+The start is inclusive and the end exclusive. A `time` start resolves to a sequence; it is not a per-message time filter, and the end is always a sequence.
 
 ## Publish
 
@@ -96,6 +96,16 @@ Onetui-Encoding: base64
 
 `Onetui-Encoding` selects the decoding and is not sent as a header. To send a literal `Content-Encoding` header, write that name instead. Without an encoding line the payload is sent as UTF-8.
 
+### Editor controls
+
+Enter, F5 or Ctrl-R submits the draft. Shift+Enter inserts a newline, and Ctrl-U clears the draft. Esc returns to browsing; Ctrl-C cancels active work. A new query starts empty, and its watermark is a hint that disappears when you type. Press `e` to edit and submit again; `r` refreshes ordinary resource views.
+
+OneTUI asks before running a query. Set `ask_for_query_confirm = false` in your config to skip the prompt.
+
+Ctrl-P and Ctrl-N browse recent queries submitted on this connection. Shift+H or `:history` while browsing opens them as a list: Enter opens one for editing, Esc closes the list. History stays in memory for the session. To keep the last 100 submissions across restarts, add `persist_query_history = true` at the top of your config. The unencrypted file beside it (`config.history.json` for `config.toml`) then holds full query text, including any passwords or tokens; turning the setting off does not delete that file.
+
+Shift+Enter needs a terminal that reports modified keys. OneTUI requests that, so it works wherever the terminal supports it. Where it does not, Shift+Enter is indistinguishable from Enter and submits instead: configure the key to send `ESC [ 13 ; 2 u` (`\x1b[13;2u`), or paste multiline text, which preserves newlines without executing. Inside tmux this also needs `set -g extended-keys on`.
+
 ## Permissions
 
 Core subscriptions require subscribe permission on the selected subject. JetStream browsing requires publish permission on these read API subjects and subscribe permission on private `_INBOX.>` replies:
@@ -129,8 +139,42 @@ format = "avro"
 schema_file = "/absolute/path/event.avsc"
 ```
 
-For raw Protobuf, use a descriptor set including imports and set `message_name`. Directory catalogs, Confluent registries and Buf are also supported. See the [schema source examples](kafka.md#schema-bound-key-and-value-previews), replacing Kafka's `topic` and `field` selectors with `subject`.
+Subjects are exact; wildcards are not accepted. Each binding uses one schema source, and the format and framing must be explicit. For raw Protobuf, set `format = "protobuf"`, use a binary descriptor set including imports, and add `message_name = "demo.Event"`. Avro accepts an optional `reader_schema_file` for reader projections.
 
-Decoded and native views appear beside the original `data`. Errors leave the original bytes available. Use `onetui schema --datasource nats` for all binding options.
+Decoded JSON, schema identity, native typed values and errors appear beside the original `data`. A decode error leaves the original bytes available. JSON is not a lossless typed export; inspect the native view or the original bytes when type details matter.
 
-Try `local_nats` in the [demo fixtures](../hack/README.md#nats-traffic).
+### Local directory catalogs
+
+Replace `schema_file` with:
+
+```toml
+catalog = { directory = "/absolute/schemas", schema = "event", references = ["customer"] }
+```
+
+Names are filename stems: Avro uses `.avsc` and explicit dependencies; Protobuf uses `.pb` descriptor sets with imports and `message_name`. Catalogs do not follow symlinks or search recursively.
+
+### Buf Protobuf descriptors
+
+For raw Protobuf, replace `schema_file` with:
+
+```toml
+buf = { url = "https://buf.build", module = "your-org/your-module", label = "main" }
+```
+
+Use `revision` instead of `label` to pin a commit. Add `token_env` inside `buf` for private modules. Keep `message_name` in the decoder binding.
+
+### Confluent registry framing
+
+For messages with Confluent payload-prefix framing:
+
+```toml
+[[connections.events.decoders]]
+subject = "registered.orders"
+format = "avro"
+framing = "confluent"
+registry = { url = "https://registry.example.com", token_env = "SCHEMA_TOKEN" }
+```
+
+Use `format = "protobuf"` for Protobuf. Omit `schema_file` and `message_name`; the message envelope identifies its schema. Registry credentials are separate from NATS credentials.
+
+Use `onetui schema --datasource nats` for all binding options. Try `local_nats` in the [demo fixtures](../hack/README.md#nats-traffic).
