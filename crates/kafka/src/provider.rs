@@ -311,7 +311,14 @@ impl KafkaExecutor {
                                 None => error,
                             }
                         });
-                        if result.is_ok() {
+                        let native_error = !job
+                            .errors
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .is_empty();
+                        if result.is_ok()
+                            || (client.is_some() && !native_error && Instant::now() < job.deadline)
+                        {
                             status.send_replace(ConnectionStatus::Connected);
                         } else {
                             status.send_replace(ConnectionStatus::Disconnected);

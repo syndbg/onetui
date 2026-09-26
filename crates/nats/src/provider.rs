@@ -220,7 +220,7 @@ impl NatsExecutor {
             let prefix = self.config.domain.as_ref().map_or_else(|| "$JS.API".into(), |domain| format!("$JS.{domain}.API"));
             let api = crate::browse::Api { client, prefix: &prefix };
             let mut errors = self.errors.subscribe();
-            let result = context.run(async {
+            let attempt = context.run(async {
                 if let Some(error) = errors.borrow().clone() { return Err(anyhow!(error)); }
                 tokio::select! {
                     biased;
@@ -251,12 +251,21 @@ impl NatsExecutor {
                         else { self.decoders.apply(page, check, deadline).await }
                     } => result,
                 }
-            }).await.and_then(|result| result);
+            }).await;
+            let completed = attempt.is_ok();
+            let result = attempt.and_then(|result| result);
             if result.is_err() {
-                // Dropping the owner also discards unanswered request-multiplexer entries.
-                self.generation.fetch_add(1, Ordering::Relaxed);
-                slot.take();
-                self.status.send_replace(ConnectionStatus::Disconnected);
+                let rejected = completed && result.as_ref().err().is_some_and(|error| {
+                    error.downcast_ref::<crate::browse::ApiError>().is_some()
+                });
+                if rejected && session.client.connection_state() == async_nats::connection::State::Connected {
+                    self.status.send_replace(ConnectionStatus::Connected);
+                } else {
+                    // Dropping the owner also discards unanswered request-multiplexer entries.
+                    self.generation.fetch_add(1, Ordering::Relaxed);
+                    slot.take();
+                    self.status.send_replace(ConnectionStatus::Disconnected);
+                }
             }
             result
         }.await;

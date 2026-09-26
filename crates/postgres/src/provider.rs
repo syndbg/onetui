@@ -205,7 +205,7 @@ impl PostgresExecutor {
             .await?;
         }
         let deadline = context.deadline;
-        let result = context.run(async {
+        let attempt = context.run(async {
             self.connect(&mut lease.session, deadline).await?;
             let client = &lease.session.as_ref().expect("connected session").client;
             let milliseconds = deadline.saturating_duration_since(tokio::time::Instant::now()).as_millis().max(1).to_string();
@@ -240,10 +240,22 @@ impl PostgresExecutor {
                     Ok(ReadResult::Page(page))
                 }
             }
-        }).await.and_then(|r| r);
+        }).await;
+        let interrupted = attempt.is_err();
+        let result = attempt.and_then(|result| result);
         if result.is_ok() {
             lease.clean = true;
-        } else {
+        } else if !interrupted && let Some(session) = lease.session.as_ref() {
+            // A failed paged read may leave its read-only transaction open.
+            lease.clean = context
+                .run(async {
+                    session.client.batch_execute("ROLLBACK").await?;
+                    session.client.batch_execute("DISCARD ALL").await
+                })
+                .await
+                .is_ok_and(|result| result.is_ok());
+        }
+        if !lease.clean {
             let _ = close(
                 lease.session.take(),
                 ShutdownContext::new(Duration::from_secs(1)),
@@ -384,12 +396,14 @@ impl Executor for PostgresExecutor {
             session: guard,
             clean: false,
         };
-        close(
-            lease.session.take(),
-            ShutdownContext::new(Duration::from_secs(1)),
-            false,
-        )
-        .await?;
+        if lease.session.as_ref().is_some_and(|s| s.client.is_closed()) {
+            close(
+                lease.session.take(),
+                ShutdownContext::new(Duration::from_secs(1)),
+                false,
+            )
+            .await?;
+        }
         let deadline = context.deadline;
         let mut dispatched = false;
         let attempt = context
@@ -408,14 +422,13 @@ impl Executor for PostgresExecutor {
                     )
                     .await
                     .map_err(crate::browse::pg_error)?;
-                client
-                    .prepare(&request.text)
-                    .await
-                    .map_err(crate::browse::pg_error)?;
+                client.prepare(&request.text).await?;
                 dispatched = true;
                 crate::query::execute_once(client, &request.text).await
             })
             .await;
+        let reusable = matches!(&attempt, Ok(Ok(_)))
+            || matches!(&attempt, Ok(Err(error)) if error.downcast_ref::<tokio_postgres::Error>().is_some_and(|error| error.as_db_error().is_some()));
         let result = match attempt {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(error)) if dispatched => {
@@ -449,15 +462,40 @@ impl Executor for PostgresExecutor {
                     self.diagnostic(error)
                 ),
             })),
-            Ok(Err(error)) | Err(error) => Err(self.diagnostic(error)),
+            Ok(Err(error)) | Err(error) => {
+                let error = match error.downcast::<tokio_postgres::Error>() {
+                    Ok(error) => crate::browse::pg_error(error),
+                    Err(error) => error,
+                };
+                Err(self.diagnostic(error))
+            }
         };
-        let _ = close(
-            lease.session.take(),
-            ShutdownContext::new(Duration::from_secs(1)),
-            false,
-        )
-        .await;
-        self.status.send_replace(ConnectionStatus::Disconnected);
+        let clean = if reusable {
+            if let Some(session) = lease.session.as_ref() {
+                // One-shot queries must not leave transaction or session state for browsing.
+                tokio::time::timeout(Duration::from_secs(1), async {
+                    session.client.batch_execute("ROLLBACK").await?;
+                    session.client.batch_execute("DISCARD ALL").await
+                })
+                .await
+                .is_ok_and(|result| result.is_ok())
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if clean {
+            lease.clean = true;
+        } else {
+            let _ = close(
+                lease.session.take(),
+                ShutdownContext::new(Duration::from_secs(1)),
+                !reusable && dispatched,
+            )
+            .await;
+            self.status.send_replace(ConnectionStatus::Disconnected);
+        }
         result
     }
 }

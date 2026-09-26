@@ -1,5 +1,6 @@
 use onetui_core::provider::{
-    Executor, PageRequest, Provider, QueryRequest, RequestContext, ShutdownContext,
+    ConnectionStatus, Executor, PageRequest, Provider, QueryRequest, RequestContext,
+    ShutdownContext,
 };
 use onetui_core::{Page, Resource, Value};
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
@@ -442,6 +443,7 @@ async fn kafka_replays_offsets_timestamps_and_exclusive_ranges() {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("available"), "{error:#}");
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Connected);
     }
     let (cancel, context) = RequestContext::new(Duration::from_secs(5));
     cancel.send(()).unwrap();

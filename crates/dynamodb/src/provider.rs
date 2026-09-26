@@ -166,12 +166,13 @@ impl DynamoDbExecutor {
                 "GetRecords requires a selected stream ARN; open Streams first"
             );
         }
+        let query_request = request.resource.id == "dynamodb.query";
         let mut lease = Lease {
             client: context.run(self.client.lock()).await?,
             status: &self.status,
             clean: false,
         };
-        let result = context
+        let attempt = context
             .run(async {
                 if lease.client.is_none() {
                     self.status.send_replace(ConnectionStatus::Connecting);
@@ -267,9 +268,10 @@ impl DynamoDbExecutor {
                 }
                 Ok::<_, anyhow::Error>(page)
             })
-            .await
-            .and_then(|r| r);
-        if result.is_ok() {
+            .await;
+        let completed = attempt.is_ok();
+        let result = attempt.and_then(|result| result);
+        if result.is_ok() || (query_request && completed && lease.client.is_some()) {
             lease.clean = true;
             self.status.send_replace(ConnectionStatus::Connected);
         }

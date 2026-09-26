@@ -66,6 +66,24 @@ async fn sql_once(
         .await
 }
 
+async fn sql_once_text(executor: &onetui_postgres::PostgresExecutor, sql: &str) -> String {
+    let QueryExecution::Page(page) = sql_once(executor, sql).await.unwrap() else {
+        panic!("SQL returned no rows");
+    };
+    page.rows[0].cells[0]
+        .as_ref()
+        .and_then(onetui_core::Value::text)
+        .unwrap()
+        .into()
+}
+
+async fn sql_once_pid(executor: &onetui_postgres::PostgresExecutor) -> i32 {
+    sql_once_text(executor, "SELECT pg_backend_pid()")
+        .await
+        .parse()
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "creates and removes a table in the disposable PostgreSQL fixture"]
 async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
@@ -76,6 +94,7 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         .unwrap();
     let table = format!("demo.onetui_write_{}", std::process::id());
     let _ = sql_once(&writer, &format!("DROP TABLE IF EXISTS {table}")).await;
+    let pid = sql_once_pid(&writer).await;
     let created = sql_once(
         &writer,
         &format!("CREATE TABLE {table} (id integer PRIMARY KEY, label text)"),
@@ -102,6 +121,11 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
     assert!(
         matches!(rejected, QueryExecution::Write(write) if write.outcome == WriteOutcome::Rejected && write.summary.contains("23505"))
     );
+    assert_eq!(
+        *writer.status().borrow(),
+        onetui_core::provider::ConnectionStatus::Connected
+    );
+    assert_eq!(sql_once_pid(&writer).await, pid);
     let updated = sql_once(
         &writer,
         &format!("UPDATE {table} SET label = 'second' WHERE id = 1"),
@@ -146,6 +170,15 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         Some("150")
     );
     assert!(sql_once(&writer, "SELECT 1; SELECT 2").await.is_err());
+    assert_eq!(sql_once_pid(&writer).await, pid);
+    let search_path = sql_once_text(&writer, "SHOW search_path").await;
+    sql_once(&writer, "SET search_path TO pg_catalog")
+        .await
+        .unwrap();
+    assert_eq!(
+        sql_once_text(&writer, "SHOW search_path").await,
+        search_path
+    );
 
     let blocker = FixturePg::plain(PG_ADMIN).await;
     blocker.client.batch_execute("BEGIN").await.unwrap();
@@ -255,6 +288,7 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
     ] {
         assert!(sql_query(&reader, text, None).await.is_err(), "{text}");
     }
+    let pid = executor_pid(&reader).await;
     let error = sql_query(&reader, "SELECT 1/0", None)
         .await
         .unwrap_err()
@@ -263,6 +297,7 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
         error.contains("22012") && error.contains("division by zero"),
         "{error}"
     );
+    assert_eq!(executor_pid(&reader).await, pid);
     let page = sql_query(
         &reader,
         "SELECT current_setting('transaction_read_only') AS mode",
@@ -773,11 +808,12 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
             .is_err()
     );
     let observer = FixturePg::plain(PG_ADMIN).await;
-    wait_for_backend(&observer.client, pid, "gone").await;
+    wait_for_backend(&observer.client, pid, "idle").await;
+    assert_eq!(executor_pid(&reader).await, pid);
     assert_eq!(
         second.rows.len(),
         100,
-        "cached data survives disconnected reading time"
+        "failed bookmarks leave the cached page intact"
     );
     let last = row_page(&reader, "browse_bigint", second.continuation)
         .await
