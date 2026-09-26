@@ -186,7 +186,6 @@ Theme and value-display changes in the TUI last for the session. Set persistent 
 ## Documentation
 
 - [Navigation and value inspection](docs/ui.md)
-- [Native queries](docs/queries.md)
 - [Theme gallery](docs/themes.md)
 - [Local demos](hack/README.md)
 

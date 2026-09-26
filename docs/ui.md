@@ -16,8 +16,8 @@ The header shows your current connection, resource and available actions. Press 
 | Ctrl-U / Ctrl-D | Scroll half a screen outside text entry |
 | `/` | Filter rows |
 | `s` | Cycle column sort |
-| `e` | Open a [native query](queries.md), where supported |
-| Shift+H | Open [query history](queries.md), where supported |
+| `e` | Open a native query, where supported; see each datasource guide |
+| Shift+H | Open query history, where supported |
 | `f` | Start or stop following, where supported |
 | `c/r` | Choose a connection / refresh |
 | Ctrl-C | Cancel active work, or quit when idle |
@@ -45,4 +45,4 @@ onetui --check --connection my_alias
 
 This verifies the connection, not access to every resource. Confirm the endpoint, secret environment variables and required permissions in the connector guide. Use `--timeout <seconds>` for slow requests.
 
-The TUI requires interactive stdin and stdout. For query keyboard issues, see [terminal input](queries.md#terminal-input). Before sharing an error, review it for server-returned data even though configured secrets are redacted.
+The TUI requires interactive stdin and stdout. Query editor keys, including Shift+Enter, are covered in each datasource guide. Before sharing an error, review it for server-returned data even though configured secrets are redacted.
