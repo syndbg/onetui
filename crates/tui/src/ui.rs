@@ -311,7 +311,13 @@ fn terminal() -> Result<(TerminalGuard, DefaultTerminal)> {
     crossterm::execute!(
         stdout(),
         crossterm::event::PushKeyboardEnhancementFlags(
+            // DISAMBIGUATE_ESCAPE_CODES alone leaves keys that have a legacy encoding
+            // reporting it, so Shift+Enter arrives as a bare Enter and submits instead
+            // of inserting a newline. REPORT_ALL_KEYS_AS_ESCAPE_CODES makes the
+            // terminal report their modifiers. It also enables key-release events,
+            // which App::key already discards.
             crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
         ),
         crossterm::event::EnableBracketedPaste
     )?;
@@ -3130,8 +3136,10 @@ mod tests {
             assert_eq!(after.control_chars, before.control_chars, "{mode}");
             let text = String::from_utf8_lossy(&output);
             assert!(text.contains("\x1b[?1049h"), "{mode}: no alternate screen");
+            // 9 = DISAMBIGUATE_ESCAPE_CODES | REPORT_ALL_KEYS_AS_ESCAPE_CODES. The
+            // second bit is what makes Shift+Enter distinguishable from Enter.
             assert!(
-                text.contains("\x1b[>1u"),
+                text.contains("\x1b[>9u"),
                 "{mode}: enhanced keys not enabled"
             );
             let pop = text.find("\x1b[<1u").expect("keyboard flags restored");

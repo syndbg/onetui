@@ -44,4 +44,6 @@ OneTUI sends the body unchanged and shows the HTTP status and response body, inc
 
 ## Terminal input
 
-Shift+Enter needs a terminal that sends a distinct modified key event. If it executes instead of inserting a newline, configure the key to send `ESC [ 13 ; 2 u` (`\x1b[13;2u`). Bracketed multiline paste also preserves newlines without executing.
+OneTUI asks the terminal to report modified keys, so Shift+Enter inserts a newline wherever that is supported. In a terminal that ignores the request, Shift+Enter is indistinguishable from Enter and submits instead. Configure the key to send `ESC [ 13 ; 2 u` (`\x1b[13;2u`) there, or paste multiline text, which preserves newlines without executing.
+
+Inside tmux this also needs `set -g extended-keys on`; without it tmux does not forward the modified key.
