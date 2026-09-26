@@ -7,7 +7,8 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
+    QueryDescriptor, QueryExecution, QueryRequest, RequestContext, ShutdownContext, WriteOutcome,
+    WriteResult,
 };
 use onetui_core::{PAGE_BYTES, Page, Resource};
 use serde::{Deserialize, Serialize};
@@ -138,6 +139,51 @@ impl PostgresExecutor {
         }
     }
 
+    async fn connect(
+        &self,
+        session: &mut Option<Session>,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        if session.is_some() {
+            return Ok(());
+        }
+        self.status.send_replace(ConnectionStatus::Connecting);
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let config = crate::check::postgres_config(&self.url, remaining)?;
+        let tls = crate::check::postgres_tls(&config, self.ca_file.as_deref()).await?;
+        let (client, connection) = config
+            .connect(tls.clone())
+            .await
+            .map_err(crate::browse::pg_error)?;
+        let status = self.status.clone();
+        let driver = Driver(tokio::spawn(async move {
+            let _ = connection.await;
+            status.send_if_modified(|state| {
+                if matches!(*state, ConnectionStatus::Closing | ConnectionStatus::Closed) {
+                    return false;
+                }
+                *state = ConnectionStatus::Disconnected;
+                true
+            });
+        }));
+        *session = Some(Session {
+            client,
+            driver,
+            tls,
+        });
+        self.status.send_replace(ConnectionStatus::Connected);
+        Ok(())
+    }
+
+    fn diagnostic(&self, error: anyhow::Error) -> anyhow::Error {
+        let config = self.url.parse::<tokio_postgres::Config>().ok();
+        let password = config
+            .as_ref()
+            .and_then(|config| config.get_password())
+            .map(String::from_utf8_lossy);
+        onetui_core::diagnostic(error, &[&self.url, password.as_deref().unwrap_or("")])
+    }
+
     async fn read(
         &self,
         request: Option<PageRequest>,
@@ -160,24 +206,7 @@ impl PostgresExecutor {
         }
         let deadline = context.deadline;
         let result = context.run(async {
-            if lease.session.is_none() {
-                self.status.send_replace(ConnectionStatus::Connecting);
-                let mut config = crate::check::postgres_config(&self.url, deadline.saturating_duration_since(tokio::time::Instant::now()))?;
-                config.application_name(if request.is_some() { "onetui-browse" } else { "onetui-check" });
-                let tls = crate::check::postgres_tls(&config, self.ca_file.as_deref()).await?;
-                let (client, connection) = config.connect(tls.clone()).await.map_err(crate::browse::pg_error)?;
-                let status = self.status.clone();
-                let driver = Driver(tokio::spawn(async move {
-                    let _ = connection.await;
-                    status.send_if_modified(|state| {
-                        if matches!(*state, ConnectionStatus::Closing | ConnectionStatus::Closed) { return false; }
-                        *state = ConnectionStatus::Disconnected;
-                        true
-                    });
-                }));
-                *lease.session = Some(Session { client, driver, tls });
-                self.status.send_replace(ConnectionStatus::Connected);
-            }
+            self.connect(&mut lease.session, deadline).await?;
             let client = &lease.session.as_ref().expect("connected session").client;
             let milliseconds = deadline.saturating_duration_since(tokio::time::Instant::now()).as_millis().max(1).to_string();
             client.query_one("SELECT pg_catalog.set_config('statement_timeout', $1, false)", &[&milliseconds]).await.map_err(crate::browse::pg_error)?;
@@ -223,14 +252,7 @@ impl PostgresExecutor {
             .await;
             self.status.send_replace(ConnectionStatus::Disconnected);
         }
-        result.map_err(|error| {
-            let config = self.url.parse::<tokio_postgres::Config>().ok();
-            let password = config
-                .as_ref()
-                .and_then(|config| config.get_password())
-                .map(String::from_utf8_lossy);
-            onetui_core::diagnostic(error, &[&self.url, password.as_deref().unwrap_or("")])
-        })
+        result.map_err(|error| self.diagnostic(error))
     }
 }
 
@@ -342,6 +364,101 @@ impl Executor for PostgresExecutor {
             ReadResult::Page(page) => Ok(page),
             ReadResult::Check(_) => unreachable!(),
         }
+    }
+
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        mut context: RequestContext,
+    ) -> Result<QueryExecution> {
+        request.validate()?;
+        ensure!(
+            request.page.resource.id == "postgres.query"
+                && request.page.resource.path.is_empty()
+                && request.page.continuation.is_none(),
+            "Invalid SQL query resource"
+        );
+        ensure!(!self.closed, "PostgreSQL session is closed");
+        let guard = context.run(self.session.lock()).await?;
+        let mut lease = Lease {
+            session: guard,
+            clean: false,
+        };
+        close(
+            lease.session.take(),
+            ShutdownContext::new(Duration::from_secs(1)),
+            false,
+        )
+        .await?;
+        let deadline = context.deadline;
+        let mut dispatched = false;
+        let attempt = context
+            .run(async {
+                self.connect(&mut lease.session, deadline).await?;
+                let client = &lease.session.as_ref().expect("connected session").client;
+                let milliseconds = deadline
+                    .saturating_duration_since(tokio::time::Instant::now())
+                    .as_millis()
+                    .max(1)
+                    .to_string();
+                client
+                    .query_one(
+                        "SELECT pg_catalog.set_config('statement_timeout', $1, false)",
+                        &[&milliseconds],
+                    )
+                    .await
+                    .map_err(crate::browse::pg_error)?;
+                client
+                    .prepare(&request.text)
+                    .await
+                    .map_err(crate::browse::pg_error)?;
+                dispatched = true;
+                crate::query::execute_once(client, &request.text).await
+            })
+            .await;
+        let result = match attempt {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) if dispatched => {
+                let rejected = error
+                    .downcast_ref::<tokio_postgres::Error>()
+                    .is_some_and(|error| error.as_db_error().is_some());
+                let outcome = if rejected {
+                    WriteOutcome::Rejected
+                } else {
+                    WriteOutcome::Unknown
+                };
+                let error = match error.downcast::<tokio_postgres::Error>() {
+                    Ok(error) => self.diagnostic(crate::browse::pg_error(error)),
+                    Err(error) => self.diagnostic(error),
+                };
+                Ok(QueryExecution::Write(WriteResult {
+                    outcome,
+                    summary: if rejected {
+                        format!("PostgreSQL rejected the statement: {error}")
+                    } else {
+                        format!(
+                            "Statement outcome unknown: {error}. Inspect the target before retrying"
+                        )
+                    },
+                }))
+            }
+            Err(error) if dispatched => Ok(QueryExecution::Write(WriteResult {
+                outcome: WriteOutcome::Unknown,
+                summary: format!(
+                    "Statement outcome unknown: {}. Inspect the target before retrying",
+                    self.diagnostic(error)
+                ),
+            })),
+            Ok(Err(error)) | Err(error) => Err(self.diagnostic(error)),
+        };
+        let _ = close(
+            lease.session.take(),
+            ShutdownContext::new(Duration::from_secs(1)),
+            false,
+        )
+        .await;
+        self.status.send_replace(ConnectionStatus::Disconnected);
+        result
     }
 }
 

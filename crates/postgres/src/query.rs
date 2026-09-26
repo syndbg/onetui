@@ -1,8 +1,9 @@
 use anyhow::{Result, ensure};
 use futures_util::TryStreamExt;
 use onetui_core::catalog::ResourceDescriptor;
+use onetui_core::provider::{QueryExecution, WriteOutcome, WriteResult};
 use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Row, Value, display};
-use tokio_postgres::Client;
+use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::browse::pg_error;
 
@@ -117,4 +118,71 @@ pub(crate) async fn fetch(client: &Client, sql: &str, offset: i64) -> Result<Pag
         .await
         .map_err(pg_error)?;
     Ok(page)
+}
+
+pub(crate) async fn execute_once(client: &Client, sql: &str) -> Result<QueryExecution> {
+    let stream = client.simple_query_raw(sql).await?;
+    tokio::pin!(stream);
+    let mut page = Page::default();
+    let mut returns_rows = false;
+    let mut truncated = false;
+    let mut affected = 0;
+    while let Some(message) = stream.try_next().await? {
+        match message {
+            SimpleQueryMessage::RowDescription(columns) => {
+                returns_rows = true;
+                ensure!(columns.len() <= 256, "SQL result has more than 256 columns");
+                page.columns = columns
+                    .iter()
+                    .map(|column| Column {
+                        name: display(column.name()),
+                        datatype: "text".into(),
+                    })
+                    .collect();
+                ensure!(
+                    page.bytes() <= PAGE_BYTES,
+                    "SQL result columns exceed 1 MiB"
+                );
+            }
+            SimpleQueryMessage::Row(row) => {
+                if truncated || page.rows.len() == PAGE_SIZE as usize {
+                    truncated = true;
+                    continue;
+                }
+                let cells = (0..row.len())
+                    .map(|index| {
+                        row.try_get(index)
+                            .map(|value| value.map(|text| Value::Text(display(text))))
+                    })
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                let next = Row {
+                    cells,
+                    target: None,
+                };
+                page.rows.push(next);
+                if page.bytes() > PAGE_BYTES {
+                    page.rows.pop();
+                    truncated = true;
+                }
+            }
+            SimpleQueryMessage::CommandComplete(rows) => affected = rows,
+            _ => {}
+        }
+    }
+    if returns_rows {
+        page.notice = if truncated {
+            format!(
+                "Executed once; showing first {} of {affected} rows",
+                page.rows.len()
+            )
+        } else {
+            format!("Executed once; {affected} rows returned")
+        };
+        Ok(QueryExecution::Page(page))
+    } else {
+        Ok(QueryExecution::Write(WriteResult {
+            outcome: WriteOutcome::Applied,
+            summary: format!("PostgreSQL command completed; {affected} rows affected"),
+        }))
+    }
 }

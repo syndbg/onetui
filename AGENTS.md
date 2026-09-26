@@ -14,7 +14,8 @@
 - Keep `hack/` for local setup and fixtures. Release tooling belongs in `scripts/` or the repository root.
 - Read the relevant source and ADRs. Stay in scope; reuse existing code and dependencies.
 - Keep implementation and tests in their owning package. No shared loops over datasource test suites; small duplicated fixture helpers are fine.
-- Add regression tests for bugs. Preserve validation, security and error handling; never weaken tests to pass.
+- Add regression tests for bugs. Preserve configuration, security and error handling; never weaken tests to pass.
+- Do not validate datasource queries on the client. Send them to the datasource and show its errors. Do not assume a datasource version or restrict its query syntax to a client-defined subset.
 - Update affected usage docs, config examples, CLI help and schema when behavior changes. Document non-obvious limits, not everything.
 - Keep lasting decisions and rejected alternatives in ADRs, and user guidance in the public docs. Keep delivery checklists and test reports in issues and pull requests.
 

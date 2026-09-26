@@ -1,5 +1,7 @@
 //! Connector experiments against the fixed disposable local PostgreSQL fixture.
-use onetui_core::provider::{Executor, PageRequest, Provider, RequestContext, ShutdownContext};
+use onetui_core::provider::{
+    Executor, PageRequest, Provider, QueryExecution, RequestContext, ShutdownContext, WriteOutcome,
+};
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use std::io::Write;
 use std::process::Command;
@@ -31,6 +33,177 @@ async fn sql_query(
             context,
         )
         .await
+}
+
+async fn executor_pid(reader: &onetui_postgres::PostgresExecutor) -> i32 {
+    let page = sql_query(reader, "SELECT pg_backend_pid()", None)
+        .await
+        .unwrap();
+    page.rows[0].cells[0]
+        .as_ref()
+        .and_then(onetui_core::Value::text)
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+async fn sql_once(
+    executor: &onetui_postgres::PostgresExecutor,
+    text: &str,
+) -> anyhow::Result<QueryExecution> {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor
+        .execute_query(
+            onetui_core::provider::QueryRequest {
+                page: PageRequest {
+                    resource: onetui_core::Resource::new("postgres.query", vec![]),
+                    continuation: None,
+                },
+                text: text.into(),
+            },
+            context,
+        )
+        .await
+}
+
+#[tokio::test]
+#[ignore = "creates and removes a table in the disposable PostgreSQL fixture"]
+async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
+    let mut writer = onetui_postgres::PostgresProvider
+        .configure(&toml::from_str("url_env='DSN'").unwrap(), &|_| {
+            Some(PG_ADMIN.into())
+        })
+        .unwrap();
+    let table = format!("demo.onetui_write_{}", std::process::id());
+    let _ = sql_once(&writer, &format!("DROP TABLE IF EXISTS {table}")).await;
+    let created = sql_once(
+        &writer,
+        &format!("CREATE TABLE {table} (id integer PRIMARY KEY, label text)"),
+    )
+    .await
+    .unwrap();
+    match created {
+        QueryExecution::Write(write) => {
+            assert_eq!(write.outcome, WriteOutcome::Applied, "{}", write.summary)
+        }
+        QueryExecution::Page(_) => panic!("CREATE TABLE returned rows"),
+    }
+
+    let inserted = sql_once(
+        &writer,
+        &format!("INSERT INTO {table} VALUES (1, 'first') RETURNING id, label"),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(inserted, QueryExecution::Page(page) if page.rows.len() == 1 && !page.next));
+    let rejected = sql_once(&writer, &format!("INSERT INTO {table} VALUES (1, 'again')"))
+        .await
+        .unwrap();
+    assert!(
+        matches!(rejected, QueryExecution::Write(write) if write.outcome == WriteOutcome::Rejected && write.summary.contains("23505"))
+    );
+    let updated = sql_once(
+        &writer,
+        &format!("UPDATE {table} SET label = 'second' WHERE id = 1"),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(updated, QueryExecution::Write(write) if write.outcome == WriteOutcome::Applied && write.summary.contains("1 rows affected"))
+    );
+    let page = sql_query(
+        &writer,
+        &format!("SELECT label FROM {table} ORDER BY id"),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(
+        page.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("second")
+    );
+    let inserted = sql_once(
+        &writer,
+        &format!(
+            "INSERT INTO {table} SELECT n, 'more' FROM generate_series(2, 150) AS n RETURNING id"
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(inserted, QueryExecution::Page(page) if page.rows.len() == 100 && !page.next && page.notice.contains("149 rows"))
+    );
+    let count = sql_query(&writer, &format!("SELECT count(*) FROM {table}"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        count.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("150")
+    );
+    assert!(sql_once(&writer, "SELECT 1; SELECT 2").await.is_err());
+
+    let blocker = FixturePg::plain(PG_ADMIN).await;
+    blocker.client.batch_execute("BEGIN").await.unwrap();
+    blocker
+        .client
+        .query_one(
+            &format!("SELECT id FROM {table} WHERE id = 1 FOR UPDATE"),
+            &[],
+        )
+        .await
+        .unwrap();
+    let observer = FixturePg::plain(PG_ADMIN).await;
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let pending = writer.execute_query(
+        onetui_core::provider::QueryRequest {
+            page: PageRequest {
+                resource: onetui_core::Resource::new("postgres.query", vec![]),
+                continuation: None,
+            },
+            text: format!("UPDATE {table} SET label = 'cancelled' WHERE id = 1"),
+        },
+        context,
+    );
+    let wait_and_cancel = async {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let waiting: bool = observer
+                    .client
+                    .query_one(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'onetui' AND wait_event_type = 'Lock' AND position($1 in query) > 0)",
+                        &[&table],
+                    )
+                    .await
+                    .unwrap()
+                    .get(0);
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("write did not reach the server lock");
+        cancel.send(()).unwrap();
+    };
+    let (_, cancelled) = tokio::join!(wait_and_cancel, pending);
+    assert!(
+        matches!(cancelled.unwrap(), QueryExecution::Write(write) if write.outcome == WriteOutcome::Unknown)
+    );
+    blocker.client.batch_execute("ROLLBACK").await.unwrap();
+
+    sql_once(&writer, &format!("DROP TABLE {table}"))
+        .await
+        .unwrap();
+    writer
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -380,18 +553,13 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     .unwrap();
     assert!(!second.rows.is_empty());
     assert_ne!(first.rows[0].cells[0], second.rows[0].cells[0]);
+    let pid = executor_pid(&reader).await;
     reader
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))
         .await
         .unwrap();
     let observer = FixturePg::plain(PG_ADMIN).await;
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            let row = observer.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'onetui-browse'", &[]).await.unwrap();
-            if row.get::<_, i64>(0) == 0 { break; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("browse connection remained open after metadata read");
+    wait_for_backend(&observer.client, pid, "gone").await;
     assert!(
         !columns.rows.is_empty(),
         "cached metadata stays readable after disconnect"
@@ -581,6 +749,7 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
         row_page(&reader, "browse_bigint", None).await.unwrap().rows[0].cells[0],
         first.rows[0].cells[0]
     );
+    let pid = executor_pid(&reader).await;
     assert!(
         row_page(&reader, "browse_composite", first.continuation.clone())
             .await
@@ -604,12 +773,7 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
             .is_err()
     );
     let observer = FixturePg::plain(PG_ADMIN).await;
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if observer.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'onetui-browse'", &[]).await.unwrap().get::<_, i64>(0) == 0 { break; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("row browsing left a connection/transaction open");
+    wait_for_backend(&observer.client, pid, "gone").await;
     assert_eq!(
         second.rows.len(),
         100,
@@ -697,6 +861,7 @@ async fn production_row_cancel_discards_active_connection_and_allows_new_read() 
     let observer = FixturePg::plain(PG_ADMIN).await;
     let (cancel, receiver) = tokio::sync::oneshot::channel();
     let reader = provider();
+    let pid = executor_pid(&reader).await;
     let task = tokio::spawn(async move {
         reader
             .fetch_page(
@@ -714,12 +879,7 @@ async fn production_row_cancel_discards_active_connection_and_allows_new_read() 
             )
             .await
     });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if observer.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'onetui-browse' AND wait_event = 'PgSleep'", &[]).await.unwrap().get::<_, i64>(0) == 1 { break; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("row request never reached server sleep");
+    wait_for_backend(&observer.client, pid, "sleep").await;
     let started = std::time::Instant::now();
     cancel.send(()).unwrap();
     let error = tokio::time::timeout(Duration::from_secs(3), task)
@@ -729,12 +889,7 @@ async fn production_row_cancel_discards_active_connection_and_allows_new_read() 
         .unwrap_err();
     assert!(error.to_string().contains("cancelled"));
     eprintln!("postgres active-read cancellation: {:?}", started.elapsed());
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if observer.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'onetui-browse'", &[]).await.unwrap().get::<_, i64>(0) == 0 { break; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("cancelled row connection remained open");
+    wait_for_backend(&observer.client, pid, "gone").await;
     let reader = provider();
     assert_eq!(
         row_page(&reader, "keyed_rows", None)
@@ -844,15 +999,7 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
         .await
         .unwrap();
     assert_eq!(first.rows.len(), 100);
-    let pid: i32 = observer
-        .client
-        .query_one(
-            "SELECT pid FROM pg_stat_activity WHERE application_name = 'onetui-browse'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let pid = executor_pid(&executor).await;
     assert!(
         observer
             .client
@@ -902,18 +1049,7 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
             .and_then(onetui_core::Value::text),
         Some("101")
     );
-    assert_eq!(
-        observer
-            .client
-            .query_one(
-                "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-browse'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, i32>(0),
-        pid
-    );
+    assert_eq!(executor_pid(&executor).await, pid);
     wait_for_backend(&observer.client, pid, "idle").await;
 
     let (cancel, context) = RequestContext::new(Duration::from_secs(60));
@@ -947,15 +1083,7 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
         )
         .await
         .unwrap();
-    let replacement: i32 = observer
-        .client
-        .query_one(
-            "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-browse'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let replacement = executor_pid(&executor).await;
     assert_ne!(pid, replacement);
     wait_for_backend(&observer.client, replacement, "idle").await;
 
@@ -983,15 +1111,7 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
         )
         .await
         .unwrap();
-    let final_pid: i32 = observer
-        .client
-        .query_one(
-            "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-browse'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let final_pid = executor_pid(&executor).await;
     assert_ne!(replacement, final_pid);
     let (_cancel, context) = RequestContext::new(Duration::from_secs(1));
     let (result, ()) = tokio::join!(
@@ -1012,15 +1132,7 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
     assert_eq!(*status.borrow(), ConnectionStatus::Disconnected);
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
     executor.check(context).await.unwrap();
-    let check_pid: i32 = observer
-        .client
-        .query_one(
-            "SELECT pid FROM pg_stat_activity WHERE application_name='onetui-check'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let check_pid = executor_pid(&executor).await;
     assert_ne!(final_pid, check_pid);
     executor
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))

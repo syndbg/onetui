@@ -17,7 +17,7 @@ Use one query editor and result-viewing flow, with each provider owning its quer
 
 The [core contract](../../crates/core/src/provider.rs) exposes an optional `QueryDescriptor` with the language, display-only watermark, result resource and required resource-path depth. The same descriptor supplies the UI and offline `onetui schema` catalog. A provider without this capability does not expose the query action.
 
-The worker submits the draft and its paging request through `Executor::query_page`:
+The worker submits paged reads through `Executor::query_page`. PostgreSQL can also submit a statement once through `Executor::execute_once`:
 
 ```rust
 pub struct QueryRequest {
@@ -30,6 +30,12 @@ fn query_page(
     request: QueryRequest,
     context: RequestContext,
 ) -> impl Future<Output = Result<Page>> + Send;
+
+fn execute_once(
+    &self,
+    request: QueryRequest,
+    context: RequestContext,
+) -> impl Future<Output = Result<QueryExecution>> + Send;
 ```
 
 The [built-in executor enum](../../src/providers.rs) delegates this operation with native async dispatch, following [ADR-0002](0002-use-static-enum-dispatch-for-built-in-providers.md). Core stays independent of SDKs and Ratatui. The [existing worker](../../crates/tui/src/worker.rs) owns cancellation and deadlines; the TUI rejects stale results and reuses its tables, row inspectors and [value formats](0004-preserve-values-and-select-display-formats.md). Query syntax and SDK conversion stay out of the renderer.
@@ -37,6 +43,8 @@ The [built-in executor enum](../../src/providers.rs) delegates this operation wi
 ## Execution and lifetime
 
 The [PostgreSQL connector](../../crates/postgres/src/query.rs) prepares one statement in a read-only transaction and requires a row-producing query that fits a derived table. Server-side size guards bound returned values before decoding. After a successful page it rolls back and runs `DISCARD ALL` in a separate request, clearing session settings and advisory locks before reuse. Errors and cancellation retire the transport. SQL parsing and database enforcement replace keyword-based safety checks. Least-privilege credentials remain necessary: read-only transactions do not sandbox functions with external effects.
+
+The PostgreSQL editor always uses one-shot execution, including for SELECT. PostgreSQL parses one statement before dispatch. The connector streams returned rows into a bounded, non-pageable result or reports the command's affected-row count, then retires the connection. A server error is a rejection; a timeout or broken connection after dispatch leaves the outcome unknown. The UI never sends this request through paging or refresh.
 
 SQL pages use independent LIMIT/OFFSET reads. An explicit unique ordering makes traversal more predictable, but there is no cross-page snapshot and deep offsets can repeat expensive work. No transaction or cursor stays open while the user reads the screen, preserving [ADR-0001's lifecycle](0001-register-providers-and-own-session-lifecycles.md).
 
@@ -53,4 +61,4 @@ Drafts and query tokens stay in memory by default. Query history can be persiste
 - A long-lived SQL cursor would retain transaction or materialization state while the user is idle. Independent pages accept weaker consistency to avoid that lifetime.
 - A second query worker or runtime plugin layer would duplicate the existing session, cancellation and dispatch mechanisms. Queries use the selected executor instead.
 
-Each datasource remains responsible for its own query capabilities. Qdrant requests use the configured REST endpoint and can write. PostgreSQL parameters and utility commands remain outside this slice.
+Each datasource remains responsible for its own query capabilities. Qdrant requests use the configured REST endpoint and can write. PostgreSQL parameters remain outside this slice.
