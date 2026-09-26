@@ -13,8 +13,8 @@ History stays in memory for the current session by default. To keep the last 100
 | --- | --- |
 | [PostgreSQL](#postgresql) | SQL queries |
 | [Qdrant](#qdrant) | HTTP requests |
-| [Kafka](kafka.md) | Partition offset or timestamp replay |
-| [NATS](nats.md) | Stream replay and JetStream publishing |
+| [Kafka](kafka.md#queries) | Partition reads and record publishing |
+| [NATS](nats.md#replay) | Stream reads and JetStream publishing |
 | [DynamoDB](dynamodb.md#queries) | Native reads and PartiQL statements |
 
 ## PostgreSQL

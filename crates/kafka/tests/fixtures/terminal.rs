@@ -419,12 +419,14 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
             pty.wait(&["kafka.records", &format!("Page{page}")]);
         }
         pty.send(b"e");
-        pty.wait(&["KafkareplayJSON", "retaineddata"]);
-        pty.send(b"\x15{\"offset\":123,\"end_offset\":250}\r");
+        pty.wait(&["KafkaCONSUME/PRODUCE", "retaineddata"]);
+        // The verb line names the target; the editor prefills it from the open partition.
+        // The range lives on the verb line, so a read needs no multiline body.
+        pty.send(b"\x15CONSUME demo_events/0 offsets 123..250\r");
         pty.wait(&[
             "Runquery?",
             &format!("Connection:{alias}"),
-            "Target:kafka.query/demo_events/0",
+            "Target:kafka.query/demo_events",
         ]);
         pty.send(b"\r");
         pty.wait(&["kafka.query", "executed", "100shown/100loaded", "[123,250)"]);
@@ -432,11 +434,11 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
         pty.wait(&["kafka.query", "Page2", "27shown/27loaded", "[223,250)"]);
         pty.send(b"p");
         pty.wait(&["kafka.query", "Page1", "[123,250)"]);
-        pty.send(b"e\x15{\"offset\":-1}\r");
+        pty.send(b"e\x15CONSUME demo_events/0 offsets -1..\r");
         pty.wait(&[
             "Runquery?",
             &format!("Connection:{alias}"),
-            "Target:kafka.query/demo_events/0",
+            "Target:kafka.query/demo_events",
         ]);
         pty.send(b"\r");
         pty.wait(&["nonnegativesigned64-bitintegers", "retaineddata"]);
@@ -448,6 +450,28 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
         pty.wait(&["Rowdata", "timestamp_ms", "headers", "value"]);
         pty.send(b":display format hex\r");
         pty.wait(&["Rowdata", "00000000"]);
+
+        pty.send(b"c");
+        pty.wait(&["connections", "second"]);
+
+        // Publishing reports a typed write outcome, like every other write provider.
+        // It runs last and against demo_writable: the other seeded topics are asserted
+        // to hold exact record counts, so publishing into one would break those tests.
+        // The confirmation shows the open view's resource, so the topic is opened from
+        // the connections list rather than only named on the verb line.
+        pty.open_filtered(alias);
+        pty.wait(&["kafka.resources", "kafka.topics"]);
+        pty.send(b"k\r");
+        pty.wait(&["kafka.topics", "demo_writable"]);
+        pty.open_filtered("demo_writable");
+        pty.wait(&["kafka.topic", "kafka.topic_config"]);
+        pty.send(b"e");
+        pty.wait(&["KafkaCONSUME/PRODUCE"]);
+        pty.send(b"\x15PRODUCE demo_writable/0\x1b[13;2u\x1b[13;2u\x1b[200~{\"key\":\"pty\",\"value\":\"published\"}\x1b[201~\r");
+        pty.wait(&["Runquery?", "Target:kafka.query/demo_writable"]);
+        pty.send(b"\r");
+        pty.wait(&["outcome", "applied", "Published1recordsto"]);
+        pty.send(b"\x1b\x1b");
         pty.send(b"c");
         pty.wait(&["connections", "second"]);
     }

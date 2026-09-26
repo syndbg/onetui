@@ -119,7 +119,7 @@ async fn protobuf_registry_versions_imports_indexes_replay_and_following() {
         assert_eq!(live.rows[2].cells[7], None);
         assert_eq!(live.rows[2].cells[3], Some(Value::Bytes(message(125, ids))));
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let replay = executor.query_page(QueryRequest {page:PageRequest {resource:Resource::new("kafka.query", resource.path), continuation:None}, text:r#"{"offset":1,"end_offset":3}"#.into()}, context).await.unwrap();
+        let replay = executor.query_page(QueryRequest {page:PageRequest {resource:Resource::new("kafka.query", resource.path.clone()), continuation:None}, text:format!("CONSUME {}/{} offsets 1..3", resource.path[0], resource.path[1])}, context).await.unwrap();
         assert_eq!(replay.rows[0].cells, first.rows[1].cells);
         executor.shutdown(ShutdownContext::new(Duration::from_secs(3))).await.unwrap();
     }).await;

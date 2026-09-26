@@ -259,10 +259,13 @@ async fn exercise_binding(source: Source) {
             .query_page(
                 QueryRequest {
                     page: PageRequest {
-                        resource: Resource::new("kafka.query", resource.path),
+                        resource: Resource::new("kafka.query", resource.path.clone()),
                         continuation: None,
                     },
-                    text: r#"{"offset":1,"end_offset":5}"#.into(),
+                    text: format!(
+                        "CONSUME {}/{} offsets 1..5",
+                        resource.path[0], resource.path[1]
+                    ),
                 },
                 context,
             )

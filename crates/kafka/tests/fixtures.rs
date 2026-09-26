@@ -381,9 +381,10 @@ async fn kafka_replays_offsets_timestamps_and_exclusive_ranges() {
             resource: Resource::new("kafka.query", vec!["demo_events".into(), "0".into()]),
             continuation,
         },
-        text: text.into(),
+        // The verb line carries the whole read; each case supplies only its range.
+        text: format!("CONSUME demo_events/0 {text}"),
     };
-    let text = r#"{"offset":123,"end_offset":250}"#;
+    let text = "offsets 123..250";
     let mut token = None;
     let mut bookmark = None;
     for (start, count) in [(123, 100), (223, 27)] {
@@ -409,25 +410,22 @@ async fn kafka_replays_offsets_timestamps_and_exclusive_ranges() {
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
     assert!(
         executor
-            .query_page(request("{}", bookmark), context)
+            .query_page(request("offsets ..", bookmark), context)
             .await
             .is_err()
     );
     // The fixture assigns event n to partition n % 3 with timestamp base + n.
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
     let timed = executor
-        .query_page(
-            request(r#"{"timestamp_ms":1750000000369,"end_offset":130}"#, None),
-            context,
-        )
+        .query_page(request("time 1750000000369..130", None), context)
         .await
         .unwrap();
     assert_eq!(timed.rows.len(), 7);
     assert_eq!(timed.rows[0].cells[0], Some("123".into()));
     for text in [
-        r#"{"timestamp_ms":1750009999999}"#,
-        r#"{"offset":250,"end_offset":250}"#,
-        r#"{"timestamp_ms":1750000000369,"end_offset":100}"#,
+        "time 1750009999999..",
+        "offsets 250..250",
+        "time 1750000000369..100",
     ] {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let page = executor
@@ -436,7 +434,7 @@ async fn kafka_replays_offsets_timestamps_and_exclusive_ranges() {
             .unwrap();
         assert!(page.rows.is_empty() && !page.next);
     }
-    for text in [r#"{"offset":501}"#, r#"{"end_offset":501}"#] {
+    for text in ["offsets 501..", "offsets ..501"] {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let error = executor
             .query_page(request(text, None), context)
@@ -449,7 +447,7 @@ async fn kafka_replays_offsets_timestamps_and_exclusive_ranges() {
     cancel.send(()).unwrap();
     assert!(
         executor
-            .query_page(request("{}", None), context)
+            .query_page(request("offsets ..", None), context)
             .await
             .unwrap_err()
             .to_string()
