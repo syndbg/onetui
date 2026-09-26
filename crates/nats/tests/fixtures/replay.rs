@@ -23,6 +23,19 @@ async fn query(
 }
 
 #[tokio::test]
+#[ignore = "requires disposable NATS fixture"]
+async fn rejected_replay_keeps_the_nats_connection() {
+    let mut executor = executor();
+    let stream = format!("MISSING_ONETUI_{}", std::process::id());
+    assert!(query(&executor, &stream, "{}", None).await.is_err());
+    assert_eq!(*executor.status().borrow(), ConnectionStatus::Connected);
+    read(&executor, "nats.streams", &[], None, false)
+        .await
+        .unwrap();
+    close(&mut executor).await;
+}
+
+#[tokio::test]
 #[ignore = "creates/deletes one disposable stream; replay reader has no consumer permissions"]
 async fn subject_sequence_time_empty_pages_and_bookmark_binding() {
     let admin = admin().await;

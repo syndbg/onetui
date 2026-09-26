@@ -562,6 +562,32 @@ async fn native_errors_redact_configured_secrets_and_allow_recovery() {
 }
 
 #[tokio::test]
+async fn rejected_query_keeps_the_dynamodb_client() {
+    let server = Server::start(vec![
+        (
+            400,
+            json!({"__type":"ValidationException","message":"invalid query"}).to_string(),
+        ),
+        (200, json!({"Items":[]}).to_string()),
+    ]);
+    let executor = server.executor();
+    let error = query(&executor, r#"{"operation":"Scan"}"#, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("HTTP 400") && error.contains("ValidationException"));
+    assert_eq!(*executor.status().borrow(), ConnectionStatus::Connected);
+    assert!(
+        query(&executor, r#"{"operation":"Scan"}"#, None)
+            .await
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    assert_eq!(server.finish().len(), 2);
+}
+
+#[tokio::test]
 async fn oversized_http_response_fails_without_a_partial_page() {
     let server = Server::start(vec![(
         200,

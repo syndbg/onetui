@@ -394,10 +394,21 @@ impl Api<'_> {
 }
 fn success(value: Json) -> Result<Json> {
     if let Some(error) = value.get("error") {
-        anyhow::bail!("{error}");
+        return Err(ApiError(error.to_string()).into());
     }
     Ok(value)
 }
+
+#[derive(Debug)]
+pub(crate) struct ApiError(String);
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ApiError {}
 pub(crate) async fn page(
     api: &Api<'_>,
     session: u64,
