@@ -15,7 +15,7 @@ History stays in memory for the current session by default. To keep the last 100
 | [Qdrant](#qdrant) | HTTP requests |
 | [Kafka](kafka.md#replay-from-an-offset-or-timestamp) | Partition offset or timestamp replay |
 | [NATS](nats.md#replay) | Stream subject, sequence or time replay |
-| [DynamoDB](dynamodb.md#queries) | Native reads and PartiQL SELECT |
+| [DynamoDB](dynamodb.md#queries) | Native reads and PartiQL statements |
 
 ## PostgreSQL
 

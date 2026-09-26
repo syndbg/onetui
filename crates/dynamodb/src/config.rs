@@ -5,7 +5,7 @@ use onetui_core::config::{safe_name, secret};
 use serde::Deserialize;
 use std::time::Duration;
 
-// ponytail: one trust job; retries cannot accumulate threads behind a stalled OS read.
+// Keep cancelled trust loading from accumulating threads behind a stalled OS read.
 static TRUST_LOAD: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -195,6 +195,7 @@ impl Config {
         };
         let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(Region::new(self.region.clone()))
+            // Browsing and checks keep SDK retries; query clients override this to disable them.
             .retry_config(
                 aws_sdk_dynamodb::config::retry::RetryConfig::standard().with_max_attempts(3),
             )

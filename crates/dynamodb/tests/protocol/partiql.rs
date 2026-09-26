@@ -62,7 +62,7 @@ async fn batch_errors_and_transaction_positions_remain_inspectable() {
     let text = r#"{"operation":"ExecuteTransaction","statements":[{"statement":"SELECT * FROM demo WHERE pk=?","parameters":[{"S":"missing"}]},{"statement":"SELECT * FROM demo WHERE pk=?","parameters":[{"S":"a"}]}]}"#;
     let page = query(&e, text, None).await.unwrap();
     assert_eq!(cell(&page, 0, "response"), Some(transaction_response));
-    assert!(!page.next && page.notice.contains("atomic read"));
+    assert!(!page.next && page.notice.contains("atomic operation"));
     let calls = server.finish();
     assert!(
         calls[0]
@@ -83,19 +83,110 @@ async fn batch_errors_and_transaction_positions_remain_inspectable() {
 }
 
 #[tokio::test]
-async fn writes_and_other_tables_fail_before_client_initialization() {
-    let server = Server::start(vec![]);
+async fn partiql_statements_reach_dynamodb_and_show_native_results() {
+    let server = Server::start(vec![
+        (
+            200,
+            json!({"ConsumedCapacity":{"CapacityUnits":1}}).to_string(),
+        ),
+        (
+            400,
+            json!({"__type":"ValidationException","message":"native syntax error"}).to_string(),
+        ),
+        (
+            503,
+            json!({"__type":"ServiceUnavailable","message":"try later"}).to_string(),
+        ),
+    ]);
     let e = server.executor();
-    for text in [
-        r#"{"operation":"ExecuteStatement","statement":"DELETE FROM demo WHERE pk=?","parameters":[{"S":"a"}]}"#,
-        r#"{"operation":"ExecuteStatement","statement":"SELECT * FROM other"}"#,
-        r#"{"operation":"BatchExecuteStatement","statements":[{"statement":"SELECT * FROM demo WHERE pk='a'"},{"statement":"DELETE FROM demo"}]}"#,
-        r#"{"operation":"ExecuteTransaction","statements":[{"statement":"SELECT * FROM demo WHERE pk='a'"},{"statement":"SELECT * FROM other WHERE pk='a'"}]}"#,
-    ] {
-        assert!(query(&e, text, None).await.is_err(), "{text}");
-        assert_eq!(*e.status().borrow(), ConnectionStatus::Configured);
-    }
-    assert!(server.finish().is_empty());
+    let insert = r#"{"operation":"ExecuteStatement","statement":"INSERT INTO other VALUE {'pk': ?}","parameters":[{"S":"a"}]}"#;
+    let page = query(&e, insert, None).await.unwrap();
+    assert!(!page.next);
+    assert_eq!(
+        cell(&page, 0, "response"),
+        Some(json!({"ConsumedCapacity":{"CapacityUnits":1}}))
+    );
+    assert!(page.notice.contains("statement completed"));
+    let invalid = r#"{"operation":"ExecuteStatement","statement":"server parses this"}"#;
+    assert!(
+        query(&e, invalid, None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("native syntax error")
+    );
+    assert_eq!(*e.status().borrow(), ConnectionStatus::Connected);
+    let delete = r#"{"operation":"ExecuteStatement","statement":"DELETE FROM demo WHERE pk=?","parameters":[{"S":"a"}]}"#;
+    assert!(
+        query(&e, delete, None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("outcome unknown")
+    );
+    let calls = server.finish();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[0].1["Statement"], "INSERT INTO other VALUE {'pk': ?}");
+    assert_eq!(calls[0].1["Parameters"], json!([{"S":"a"}]));
+    assert_eq!(calls[1].1["Statement"], "server parses this");
+    assert_eq!(calls[2].1["Statement"], "DELETE FROM demo WHERE pk=?");
+}
+
+#[tokio::test]
+async fn partiql_batch_and_transaction_writes_reach_native_operations() {
+    let batch_response = json!({"Responses":[{"TableName":"other"}]});
+    let transaction_response = json!({"Responses":[{}]});
+    let server = Server::start(vec![
+        (200, batch_response.to_string()),
+        (200, transaction_response.to_string()),
+    ]);
+    let e = server.executor();
+    let batch = r#"{"operation":"BatchExecuteStatement","statements":[{"statement":"INSERT INTO other VALUE {'pk':'a'}"}]}"#;
+    let page = query(&e, batch, None).await.unwrap();
+    assert_eq!(cell(&page, 0, "response"), Some(batch_response));
+    let transaction = r#"{"operation":"ExecuteTransaction","statements":[{"statement":"DELETE FROM other WHERE pk='a'"}]}"#;
+    let page = query(&e, transaction, None).await.unwrap();
+    assert_eq!(cell(&page, 0, "response"), Some(transaction_response));
+    let calls = server.finish();
+    assert_eq!(calls.len(), 2);
+    assert!(
+        calls[0]
+            .0
+            .contains("DynamoDB_20120810.BatchExecuteStatement")
+    );
+    assert_eq!(
+        calls[0].1["Statements"][0]["Statement"],
+        "INSERT INTO other VALUE {'pk':'a'}"
+    );
+    assert!(calls[1].0.contains("DynamoDB_20120810.ExecuteTransaction"));
+    assert_eq!(
+        calls[1].1["TransactStatements"][0]["Statement"],
+        "DELETE FROM other WHERE pk='a'"
+    );
+}
+
+#[tokio::test]
+async fn completed_transaction_reports_an_unrenderable_response() {
+    let response = json!({"Responses":[{"Item":{"payload":{"S":"x".repeat(1024 * 1024)}}}]});
+    let server = Server::start(vec![(200, response.to_string())]);
+    let e = server.executor();
+    let transaction = r#"{"operation":"ExecuteTransaction","statements":[{"statement":"DELETE FROM demo WHERE pk='a'"}]}"#;
+    let error = query(&e, transaction, None).await.unwrap_err().to_string();
+    assert!(error.contains("request completed"), "{error}");
+    assert!(error.contains("could not be displayed"), "{error}");
+    assert_eq!(server.finish().len(), 1);
+}
+
+#[tokio::test]
+async fn completed_statement_reports_an_unreadable_response() {
+    let server = Server::start(vec![(200, "not-json".into())]);
+    let e = server.executor();
+    let statement =
+        r#"{"operation":"ExecuteStatement","statement":"DELETE FROM demo WHERE pk='a'"}"#;
+    let error = query(&e, statement, None).await.unwrap_err().to_string();
+    assert!(error.contains("request completed"), "{error}");
+    assert!(error.contains("could not be read"), "{error}");
+    assert_eq!(server.finish().len(), 1);
 }
 
 #[tokio::test]

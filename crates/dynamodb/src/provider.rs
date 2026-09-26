@@ -28,7 +28,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &["dynamodb.records"],
     query: Some(QueryDescriptor {
         resource: "dynamodb.query",
-        language: "DynamoDB read JSON",
+        language: "DynamoDB operation JSON",
         watermark: "{\n  \"operation\": \"Scan\",\n  \"limit\": 100\n}",
         contextual_watermark: Some(crate::query::watermark),
         path_depth: 1,
@@ -88,7 +88,9 @@ pub struct DynamoDbExecutor {
 
 struct Session {
     database: Client,
+    query_database: Client,
     streams: aws_sdk_dynamodbstreams::Client,
+    query_streams: aws_sdk_dynamodbstreams::Client,
 }
 
 struct Lease<'a> {
@@ -111,11 +113,25 @@ impl DynamoDbExecutor {
         let mut config = aws_sdk_dynamodb::config::Builder::from(&shared);
         // Endpoint selection belongs to this alias, not AWS_ENDPOINT_URL or profile services.
         config.set_endpoint_url(self.config.endpoint_url.clone());
+        let mut query_config = aws_sdk_dynamodb::config::Builder::from(&shared);
+        query_config.set_endpoint_url(self.config.endpoint_url.clone());
         let mut streams = aws_sdk_dynamodbstreams::config::Builder::from(&shared);
         streams.set_endpoint_url(self.config.streams_endpoint_url.clone());
+        let mut query_streams = aws_sdk_dynamodbstreams::config::Builder::from(&shared);
+        query_streams.set_endpoint_url(self.config.streams_endpoint_url.clone());
         Ok(Session {
             database: Client::from_conf(config.build()),
+            query_database: Client::from_conf(
+                query_config
+                    .retry_config(aws_sdk_dynamodb::config::retry::RetryConfig::disabled())
+                    .build(),
+            ),
             streams: aws_sdk_dynamodbstreams::Client::from_conf(streams.build()),
+            query_streams: aws_sdk_dynamodbstreams::Client::from_conf(
+                query_streams
+                    .retry_config(aws_sdk_dynamodbstreams::config::retry::RetryConfig::disabled())
+                    .build(),
+            ),
         })
     }
 
@@ -147,9 +163,14 @@ impl DynamoDbExecutor {
         } else {
             None
         };
-        if let Some(query) = &query {
-            query.validate_scope(&request.resource.path[0])?;
-        }
+        let partiql_request = matches!(
+            query,
+            Some(
+                crate::query::Read::ExecuteStatement { .. }
+                    | crate::query::Read::BatchExecuteStatement { .. }
+                    | crate::query::Read::ExecuteTransaction { .. }
+            )
+        );
         let stream_read = crate::streams::is_resource(request.resource.id)
             || matches!(query, Some(crate::query::Read::GetRecords { .. }));
         ensure!(
@@ -172,6 +193,7 @@ impl DynamoDbExecutor {
             status: &self.status,
             clean: false,
         };
+        let mut native_completed = false;
         let attempt = context
             .run(async {
                 if lease.client.is_none() {
@@ -179,7 +201,16 @@ impl DynamoDbExecutor {
                     *lease.client = Some(self.client().await?);
                 }
                 let session = lease.client.as_ref().unwrap();
-                let client = &session.database;
+                let client = if query_request {
+                    &session.query_database
+                } else {
+                    &session.database
+                };
+                let streams = if query_request {
+                    &session.query_streams
+                } else {
+                    &session.streams
+                };
                 let name = request
                     .resource
                     .path
@@ -194,7 +225,7 @@ impl DynamoDbExecutor {
                 }) = &query
                 {
                     crate::streams::replay(
-                        &session.streams,
+                        streams,
                         name,
                         shard_id,
                         sequence_number,
@@ -205,7 +236,7 @@ impl DynamoDbExecutor {
                     .await?
                 } else if stream_read {
                     crate::streams::read(
-                        &session.streams,
+                        streams,
                         &request.resource,
                         position.as_ref(),
                         follow,
@@ -213,6 +244,7 @@ impl DynamoDbExecutor {
                     .await?
                 } else if let Some(query) = query {
                     let batch = matches!(query, crate::query::Read::BatchGetItem { .. });
+                    let partiql_transaction = matches!(query, crate::query::Read::ExecuteTransaction { .. });
                     let transaction = matches!(query, crate::query::Read::TransactGetItems { .. } | crate::query::Read::ExecuteTransaction { .. });
                     let statement_batch = matches!(query, crate::query::Read::BatchExecuteStatement { .. });
                     let statement_limit = match &query {
@@ -224,6 +256,9 @@ impl DynamoDbExecutor {
                         _ => None,
                     };
                     let body = crate::api::query(client, name, query, position.as_ref()).await?;
+                    if partiql_request {
+                        native_completed = true;
+                    }
                     if let Some(limit) = statement_limit {
                         crate::partiql::page(body, limit)?
                     } else if statement_batch {
@@ -238,7 +273,11 @@ impl DynamoDbExecutor {
                         page.notice = "Native vector response; SearchResults retain service ranking, scores, typed items and capacity; no continuation".into();
                         (page, None)
                     } else if batch || transaction {
-                        crate::browse::multi_items(body, name, batch)?
+                        let (mut page, token) = crate::browse::multi_items(body, name, batch)?;
+                        if partiql_transaction {
+                            page.notice = "Native transaction response; atomic operation; Responses retain request order and missing-item positions".into();
+                        }
+                        (page, token)
                     } else {
                         crate::browse::items(body)?
                     }
@@ -270,7 +309,16 @@ impl DynamoDbExecutor {
             })
             .await;
         let completed = attempt.is_ok();
-        let result = attempt.and_then(|result| result);
+        let result = match attempt {
+            Ok(Err(error)) | Err(error) if native_completed => Err(anyhow!(
+                "DynamoDB request completed, but its response could not be displayed: {error}"
+            )),
+            Err(error) if partiql_request => Err(anyhow!(
+                "DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"
+            )),
+            Ok(result) => result,
+            Err(error) => Err(error),
+        };
         if result.is_ok() || (query_request && completed && lease.client.is_some()) {
             lease.clean = true;
             self.status.send_replace(ConnectionStatus::Connected);
@@ -310,9 +358,6 @@ impl Executor for DynamoDbExecutor {
                     .list_tables()
                     .limit(1)
                     .customize()
-                    .config_override(
-                        aws_sdk_dynamodb::config::Builder::new().retry_classifier(capture.clone()),
-                    )
                     .interceptor(capture.clone())
                     .send()
                     .await
