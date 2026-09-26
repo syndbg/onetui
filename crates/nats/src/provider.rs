@@ -2,7 +2,8 @@ use anyhow::{Result, anyhow, ensure};
 use onetui_core::Page;
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
+    QueryDescriptor, QueryExecution, QueryRequest, RequestContext, ShutdownContext, WriteOutcome,
+    WriteResult,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,9 +34,9 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &["nats.messages", "nats.core_messages", "nats.kv_history"],
     query: Some(QueryDescriptor {
         resource: "nats.query",
-        language: "Replay JSON",
-        contextual_watermark: None,
-        watermark: "{\n  \"subject\": \">\",\n  \"start_sequence\": 1\n}",
+        language: "NATS CONSUME/PRODUCE",
+        contextual_watermark: Some(crate::statement::watermark),
+        watermark: "PRODUCE stream subject\n\nhello",
         path_depth: 1,
         scope_resources: &["nats.messages", "nats.stream_info", "nats.query"],
     }),
@@ -99,6 +100,24 @@ pub struct NatsExecutor {
 struct Session {
     client: async_nats::Client,
     subscription: Option<crate::core_subscription::Subscription>,
+}
+
+/// Classify a publish that produced no acknowledgment. Once the message is dispatched,
+/// nothing proves it was not stored, and a Core subscriber may have received it even
+/// when JetStream refused to store it. A failure before dispatch never reached the wire,
+/// so it stays an ordinary error rather than sending the user to inspect an unchanged
+/// stream.
+fn publish_failure(error: anyhow::Error, dispatched: bool) -> Result<QueryExecution> {
+    if dispatched {
+        Ok(QueryExecution::Write(WriteResult {
+            outcome: WriteOutcome::Unknown,
+            summary: format!(
+                "Publish outcome unknown: {error}. Core subscribers may have received the message; inspect before retrying"
+            ),
+        }))
+    } else {
+        Err(error)
+    }
 }
 
 impl NatsExecutor {
@@ -181,6 +200,32 @@ impl NatsExecutor {
         });
         Ok(result?)
     }
+    async fn ensure_session(
+        &self,
+        slot: &mut Option<Box<Session>>,
+        context: &mut RequestContext,
+    ) -> Result<()> {
+        if slot.as_ref().is_some_and(|session| {
+            session.client.connection_state() == async_nats::connection::State::Connected
+        }) {
+            return Ok(());
+        }
+        *slot = None;
+        match context.run(self.connect()).await.and_then(|result| result) {
+            Ok(client) => {
+                *slot = Some(Box::new(Session {
+                    client,
+                    subscription: None,
+                }))
+            }
+            Err(error) => {
+                self.generation.fetch_add(1, Ordering::Relaxed);
+                self.status.send_replace(ConnectionStatus::Disconnected);
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
     async fn execute(
         &self,
         page: Option<(PageRequest, bool)>,
@@ -203,17 +248,7 @@ impl NatsExecutor {
                 }
             }
             let mut slot = context.run(self.client.lock()).await?;
-            if slot.as_ref().is_none_or(|c| c.client.connection_state() != async_nats::connection::State::Connected) {
-                *slot = None;
-                match context.run(self.connect()).await.and_then(|result| result) {
-                    Ok(client) => *slot = Some(Box::new(Session { client, subscription: None })),
-                    Err(error) => {
-                        self.generation.fetch_add(1, Ordering::Relaxed);
-                        self.status.send_replace(ConnectionStatus::Disconnected);
-                        return Err(error);
-                    }
-                }
-            }
+            self.ensure_session(&mut slot, &mut context).await?;
             let session = slot.as_mut().unwrap();
             let deadline = context.deadline;
             let client = &session.client;
@@ -269,12 +304,92 @@ impl NatsExecutor {
             }
             result
         }.await;
-        result.map_err(|error| {
-            onetui_core::diagnostic(
-                error,
-                &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-            )
-        })
+        result.map_err(|error| self.diagnostic(error))
+    }
+
+    async fn publish(
+        &self,
+        request: PageRequest,
+        subject: &str,
+        headers: &[(&str, &str)],
+        payload: &[u8],
+        mut context: RequestContext,
+    ) -> Result<QueryExecution> {
+        ensure!(!self.closed, "NATS session is closed");
+        ensure!(
+            self.config.jetstream,
+            "JetStream is disabled for this connection"
+        );
+        ensure!(
+            request.continuation.is_none(),
+            "NATS publish does not support continuation"
+        );
+        let stream = request.resource.path[0].clone();
+        let mut slot = context.run(self.client.lock()).await?;
+        self.ensure_session(&mut slot, &mut context).await?;
+        let client = slot.as_ref().expect("connected session").client.clone();
+        let jetstream = match self.config.domain.as_deref() {
+            Some(domain) => async_nats::jetstream::with_domain(client, domain),
+            None => async_nats::jetstream::new(client),
+        };
+        let mut message = async_nats::jetstream::message::PublishMessage::build()
+            .payload(payload.to_vec().into())
+            .expected_stream(&stream);
+        for (name, value) in headers {
+            message = message.header(*name, *value);
+        }
+        // The message is only in flight once send_publish resolves. An error from the
+        // call itself never reached the wire, so it stays an ordinary rejection; a
+        // cancellation or failure while awaiting the acknowledgment does not.
+        let mut dispatched = false;
+        let mut acknowledged = None;
+        let attempt = context
+            .run(async {
+                let pending = jetstream.send_publish(subject.to_owned(), message).await?;
+                dispatched = true;
+                acknowledged = Some(pending.await?);
+                anyhow::Ok(())
+            })
+            .await;
+        let result = match (acknowledged, attempt) {
+            (Some(ack), _) => Ok(QueryExecution::Write(WriteResult {
+                outcome: WriteOutcome::Applied,
+                summary: format!("Published to {} at sequence {}", ack.stream, ack.sequence),
+            })),
+            (None, Ok(Err(error)) | Err(error)) => {
+                publish_failure(self.diagnostic(error), dispatched)
+            }
+            (None, Ok(Ok(()))) => unreachable!("successful publish has an acknowledgment"),
+        };
+        if slot.as_ref().is_some_and(|session| {
+            session.client.connection_state() == async_nats::connection::State::Connected
+        }) {
+            self.status.send_replace(ConnectionStatus::Connected);
+        } else {
+            slot.take();
+            self.generation.fetch_add(1, Ordering::Relaxed);
+            self.status.send_replace(ConnectionStatus::Disconnected);
+        }
+        result
+    }
+
+    fn diagnostic(&self, error: anyhow::Error) -> anyhow::Error {
+        onetui_core::diagnostic(
+            error,
+            &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+    }
+
+    async fn consume(
+        &self,
+        mut page: PageRequest,
+        stream: &str,
+        replay: crate::replay::Replay,
+        context: RequestContext,
+    ) -> Result<Page> {
+        page.resource.path = vec![stream.to_owned()];
+        self.execute(Some((page, false)), Some(replay), context)
+            .await
     }
 }
 
@@ -299,12 +414,7 @@ impl Executor for NatsExecutor {
             self.generation.fetch_add(1, Ordering::Relaxed);
             self.status.send_replace(ConnectionStatus::Disconnected);
         }
-        result.map_err(|error| {
-            onetui_core::diagnostic(
-                error,
-                &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-            )
-        })
+        result.map_err(|error| self.diagnostic(error))
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status.subscribe()
@@ -332,9 +442,43 @@ impl Executor for NatsExecutor {
             request.page.resource.id == "nats.query",
             "Invalid NATS query resource"
         );
-        let replay = crate::replay::Replay::parse(&request.text)?;
-        self.execute(Some((request.page, false)), Some(replay), context)
-            .await
+        match crate::statement::parse(&request.text)? {
+            crate::statement::Statement::Consume { stream, replay } => {
+                self.consume(request.page, stream, replay, context).await
+            }
+            crate::statement::Statement::Produce { .. } => Err(anyhow!(
+                "NATS PRODUCE returns an acknowledgment; it does not page"
+            )),
+        }
+    }
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        context: RequestContext,
+    ) -> Result<QueryExecution> {
+        request.validate()?;
+        ensure!(
+            request.page.resource.id == "nats.query",
+            "Invalid NATS query resource"
+        );
+        match crate::statement::parse(&request.text)? {
+            crate::statement::Statement::Consume { stream, replay } => self
+                .consume(request.page, stream, replay, context)
+                .await
+                .map(QueryExecution::Page),
+            crate::statement::Statement::Produce {
+                stream,
+                subject,
+                headers,
+                payload,
+            } => {
+                let mut page = request.page;
+                page.resource.path = vec![stream.to_owned()];
+                crate::browse::validate(&page, false)?;
+                self.publish(page, subject, &headers, &payload, context)
+                    .await
+            }
+        }
     }
     async fn shutdown(&mut self, context: ShutdownContext) -> Result<()> {
         self.closed = true;
@@ -359,11 +503,30 @@ impl Executor for NatsExecutor {
             Ok(())
         };
         self.status.send_replace(ConnectionStatus::Closed);
-        result.map_err(|error| {
-            onetui_core::diagnostic(
-                error,
-                &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-            )
-        })
+        result.map_err(|error| self.diagnostic(error))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_dispatched_publish_has_an_unknown_outcome() {
+        // Cancellation, a lost acknowledgment or a JetStream refusal after the message
+        // is on the wire: the stream may or may not hold it.
+        let dispatched = publish_failure(anyhow!("Request cancelled"), true).unwrap();
+        let QueryExecution::Write(write) = dispatched else {
+            panic!("a dispatched failure reports a write result")
+        };
+        assert_eq!(write.outcome, WriteOutcome::Unknown);
+        assert!(write.summary.contains("Request cancelled"));
+        assert!(write.summary.contains("inspect before retrying"));
+
+        // Refused by the client before sending, so the stream cannot have changed.
+        let Err(error) = publish_failure(anyhow!("payload too large"), false) else {
+            panic!("a publish that never reached the wire is an ordinary error")
+        };
+        assert_eq!(error.to_string(), "payload too large");
     }
 }

@@ -22,6 +22,9 @@ mod discovery;
 #[path = "fixtures/replay.rs"]
 mod replay;
 
+#[path = "fixtures/publish.rs"]
+mod publish;
+
 #[path = "fixtures/auth.rs"]
 mod auth;
 
