@@ -15,7 +15,8 @@ async fn query(
                     resource: Resource::new("nats.query", vec![stream.into()]),
                     continuation,
                 },
-                text: text.into(),
+                // The verb line carries subject and range; there is no body.
+                text: format!("CONSUME {stream} {text}"),
             },
             context,
         )
@@ -27,7 +28,7 @@ async fn query(
 async fn rejected_replay_keeps_the_nats_connection() {
     let mut executor = executor();
     let stream = format!("MISSING_ONETUI_{}", std::process::id());
-    assert!(query(&executor, &stream, "{}", None).await.is_err());
+    assert!(query(&executor, &stream, ">", None).await.is_err());
     assert_eq!(*executor.status().borrow(), ConnectionStatus::Connected);
     read(&executor, "nats.streams", &[], None, false)
         .await
@@ -60,8 +61,7 @@ async fn subject_sequence_time_empty_pages_and_bookmark_binding() {
                 .unwrap();
         }
         let mut executor = executor();
-        let text = json!({"subject":format!("{prefix}.0"),"start_sequence":1,"end_sequence":240})
-            .to_string();
+        let text = format!("{prefix}.0 seq 1..240");
         let first = query(&executor, &name, &text, None).await.unwrap();
         assert_eq!(first.rows.len(), 100);
         assert_eq!(first.rows[0].cells[0], Some("1".into()));
@@ -75,8 +75,8 @@ async fn subject_sequence_time_empty_pages_and_bookmark_binding() {
             .await
             .unwrap();
         assert_eq!(again.rows[0].cells, next.rows[0].cells);
-        assert!(query(&executor, &name, "{}", bookmark).await.is_err());
-        let future = r#"{"start_time":"9999-01-01T00:00:00Z"}"#;
+        assert!(query(&executor, &name, ">", bookmark).await.is_err());
+        let future = "> time 9999-01-01T00:00:00Z..";
         let empty = query(&executor, &name, future, None).await.unwrap();
         assert!(empty.rows.is_empty() && empty.next);
         let empty = query(&executor, &name, future, empty.continuation)
@@ -91,14 +91,9 @@ async fn subject_sequence_time_empty_pages_and_bookmark_binding() {
             .await
             .unwrap();
         let cutoff = ordinary.rows[50].cells[2].as_ref().unwrap().text().unwrap();
-        let timed = query(
-            &executor,
-            &name,
-            &json!({"start_time":cutoff}).to_string(),
-            None,
-        )
-        .await
-        .unwrap();
+        let timed = query(&executor, &name, &format!("> time {cutoff}.."), None)
+            .await
+            .unwrap();
         assert_eq!(timed.rows[0].cells[0], Some("51".into()));
         assert_eq!(timed.rows.len(), 50);
         assert!(timed.next);

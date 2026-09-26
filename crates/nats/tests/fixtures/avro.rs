@@ -51,8 +51,7 @@ async fn avro_registry_demo_browse_replay_and_follow() {
                     resource: Resource::new("nats.query", vec!["DEMO_AVRO_REGISTRY".into()]),
                     continuation: None,
                 },
-                text: r#"{"subject":"demo.avro.registry","start_sequence":2,"end_sequence":3}"#
-                    .into(),
+                text: "CONSUME DEMO_AVRO_REGISTRY demo.avro.registry seq 2..3".into(),
             },
             context,
         )
@@ -141,7 +140,7 @@ async fn avro_catalog_references_paging_replay_follow_and_reopen() {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let replay = executor.query_page(onetui_core::provider::QueryRequest {
             page: PageRequest { resource: Resource::new("nats.query", vec![name.clone()]), continuation: None },
-            text: json!({"subject":subject,"start_sequence":1,"end_sequence":2}).to_string(),
+            text: format!("CONSUME {name} {subject} seq 1..2"),
         }, context).await.unwrap();
         assert_eq!(replay.rows[0].cells, page.rows[0].cells);
         let tail = read(&executor, "nats.messages", &[&name], None, true).await.unwrap();
@@ -215,7 +214,7 @@ async fn avro_browse_replay_follow_errors_and_reader_schema() {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let replay = executor.query_page(onetui_core::provider::QueryRequest {
             page: PageRequest { resource: Resource::new("nats.query", vec![name.clone()]), continuation: None },
-            text: json!({"subject":subject,"start_sequence":1,"end_sequence":2}).to_string(),
+            text: format!("CONSUME {name} {subject} seq 1..2"),
         }, context).await.unwrap();
         assert_eq!(replay.rows[0].cells, page.rows[0].cells);
         assert_eq!(page.rows[1].cells[3], Some(Value::Bytes(vec![255])));

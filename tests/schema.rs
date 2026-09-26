@@ -1,7 +1,7 @@
 use std::process::Command;
 
 #[test]
-fn nats_catalog_is_offline_and_exposes_read_operations() {
+fn nats_catalog_is_offline_and_exposes_operations() {
     let output = dump(&["--datasource", "nats"]);
     assert!(output.status.success());
     let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -13,6 +13,7 @@ fn nats_catalog_is_offline_and_exposes_read_operations() {
         serde_json::json!(["nats.messages", "nats.core_messages", "nats.kv_history"])
     );
     assert_eq!(nats["query"]["resource"], "nats.query");
+    assert_eq!(nats["publish"]["resource"], "nats.query");
     assert_eq!(nats["resources"].as_array().unwrap().len(), 20);
     assert_eq!(nats["configuration"]["system_discovery"]["default"], false);
     for resource in nats["resources"].as_array().unwrap() {
