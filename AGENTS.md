@@ -29,7 +29,7 @@ Prefix agent shell commands with `rtk`; use `rtk proxy` when needed. Keep user-f
 
 ## Safety
 
-- Use code-review-graph first for code exploration/review. Refresh and retry missing results before falling back to `rg` and source reads.
+- Use CodeGraph (`codegraph_explore`) first for code exploration and review when a `.codegraph/` index exists at or above the repository root. If no index exists, use `rg` and source reads. Do not initialize an index unless the user asks.
 - Preserve existing edits. Ask before Git-state changes. Never run `git commit` or add `Co-Authored-By`.
 - Write only to disposable fixtures, never real datasources. Do not bypass reset guards or delete running fixtures without authorization. `make dev-down` deletes fixture data.
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) for SemVer and GitHub UI releases. No version bumps, tags or publishing without authorization.
