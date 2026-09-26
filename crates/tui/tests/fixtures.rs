@@ -271,7 +271,7 @@ mod terminal {
             }
         }
         async fn sessions(&self) -> Vec<tokio_postgres::Row> {
-            self.client.query("SELECT pid, wait_event FROM pg_stat_activity WHERE application_name='onetui-browse' AND usename='onetui_reader'", &[]).await.unwrap()
+            self.client.query("SELECT pid, wait_event FROM pg_stat_activity WHERE application_name='onetui' AND usename='onetui_reader'", &[]).await.unwrap()
         }
         async fn wait_count(&self, count: usize) {
             tokio::time::timeout(Duration::from_secs(3), async {
