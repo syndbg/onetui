@@ -2,6 +2,12 @@
 members = ["crates/core", "crates/avro", "crates/protobuf", "crates/schema-source", "crates/postgres", "crates/qdrant", "crates/kafka", "crates/nats", "crates/dynamodb", "crates/rabbitmq", "crates/theme", "crates/tui"]
 resolver = "3"
 
+# Line tables keep file:line in backtraces and panics without the full DWARF
+# type graph, which is what makes debug artifacts large. Roughly 20% less
+# disk per build with no loss in stack traces.
+[profile.dev]
+debug = "line-tables-only"
+
 [workspace.package]
 version = "0.1.0"
 license = "Apache-2.0"

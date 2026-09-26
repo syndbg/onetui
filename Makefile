@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt format-check clippy shell-check lint test verify workflow-lint theme-gallery dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package package-deb package-rpm
+.PHONY: help build build-release run fmt format-check clippy shell-check lint test verify workflow-lint theme-gallery dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check package package-deb package-rpm sweep sweep-install
 
 help:
 	@printf '%s\n' \
@@ -24,6 +24,7 @@ help:
 	  'dev-traffic-nats       Produce one NATS demo.live message every 15 seconds; Ctrl-C stops' \
 	  'check-local            Check all local fixtures, including Redpanda Schema Registry' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
+	  'sweep                  Delete build artifacts unused for 14 days (cargo keeps none itself)' \
 	  'test-integration       Test all fixtures, or one with DATASOURCE=postgres|qdrant|kafka|nats|dynamodb|rabbitmq|tui' \
 	  'test-buf-live          Verify public Buf label/commit discovery and decoding (Internet)' \
 	  'release-check TAG=v...  Verify the release tag matches Cargo version' \
@@ -102,6 +103,16 @@ test-integration: build
 
 test-buf-live:
 	cargo test -p onetui-kafka --lib hosted_buf_label_and_pinned_commit_decode_the_same_message --locked -- --ignored --nocapture
+
+# cargo never garbage-collects target/, so incremental and dep artifacts from
+# deleted branches and old dependency versions accumulate without bound. Left
+# alone this reaches a size where cargo spends minutes stat-ing files it will
+# not use, and a no-op build becomes slower than a full rebuild.
+sweep: sweep-install
+	cargo sweep --time 14
+
+sweep-install:
+	@command -v cargo-sweep >/dev/null || cargo install cargo-sweep --locked
 
 release-check:
 	bash scripts/release.sh check "$$TAG"
