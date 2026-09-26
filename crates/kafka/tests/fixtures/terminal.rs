@@ -344,7 +344,7 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
     let mut command = Command::new(binary);
     command.arg("--config").arg(config.path());
     let (mut pty, slave) = Pty::spawn(command);
-    pty.wait_token("\x1b[>1u", Duration::from_secs(3));
+    pty.wait_token("\x1b[>9u", Duration::from_secs(3));
     pty.wait(&["connections", "kafka", "second"]);
     assert!(
         !tcgetattr(&slave)
