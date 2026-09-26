@@ -1,6 +1,6 @@
 # Kafka
 
-Inspect topics, brokers, configuration, consumer groups and lag. Browse historical records or follow new arrivals within one topic. OneTUI does not publish, join application groups or commit offsets.
+Inspect topics, brokers, configuration, consumer groups and lag. Browse historical records or follow new arrivals within one topic. Publish records from the query editor. OneTUI does not join application groups or commit offsets.
 
 ## Configuration
 
@@ -46,17 +46,112 @@ Group lag measures offset distance, not message count. Compaction and transactio
 
 Choose a topic's records view to browse all its partitions, or open **Partitions** to select one. Records are ordered within each partition, not globally by timestamp. If a topic exceeds the whole-topic limit, browse individual partitions.
 
-### Replay from an offset or timestamp
+## Queries
 
-Select a partition, press `e`, and enter:
+Press `e` on a topic or partition to open the query editor. A query has a verb line, a blank line, then a body:
 
-```json
-{"offset":123,"end_offset":250}
+```
+VERB topic[/partition]
+
+body
 ```
 
-This reads offsets `[123, 250)`. Use `timestamp_ms` instead of `offset` to start at a Unix timestamp in milliseconds. `{}` starts at the earliest retained offset. Replay is limited to one partition; unavailable positions produce errors instead of silently moving elsewhere.
+The verb is `CONSUME` to read records or `PRODUCE` to publish them. The verb line names its own target, so a query means the same thing wherever you run it. The editor prefills the line from the view you opened. `CONSUME` states its range on that line and takes no body; only `PRODUCE` has one. Use Shift+Enter for the newlines; see [query controls](queries.md).
 
-See [query controls](queries.md). Use the ordinary records view for following.
+### CONSUME: read from an offset or timestamp
+
+```
+CONSUME orders/0 offsets 123..250
+```
+
+This reads offsets `[123, 250)` on partition 0. `CONSUME` reads one named partition, so the verb line always needs a partition, and it takes no body.
+
+The range is `offsets start..end` or `time start..end`. Either side may be omitted:
+
+| Range | Reads |
+| --- | --- |
+| `offsets 123..250` | Offsets `[123, 250)`. |
+| `offsets 123..` | From offset 123 to the current read-committed end. |
+| `offsets ..250` | From the earliest retained offset up to 250. |
+| `time 1750000000369..` | From the first record at or after that Unix millisecond timestamp. |
+| *omitted* | The whole retained partition. |
+
+A `time` start resolves to an offset; it is not a per-record time filter. The end is always an exclusive offset.
+
+Omit the range to read everything retained:
+
+```
+CONSUME orders/0
+```
+
+Despite the name, `CONSUME` reads directly by offset. It joins no consumer group and commits no offsets, so it never affects another application's position. Unavailable positions produce errors instead of silently reading elsewhere.
+
+### PRODUCE: publish records
+
+Write one JSON record per line. Blank lines are ignored:
+
+```
+PRODUCE orders
+
+{"key":"order-1","value":"created"}
+{"key":"order-2","value":"created","headers":{"source":"onetui"}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `key` | Optional record key. |
+| `value` | Optional record value. A record needs a key or a value. |
+| `partition` | Optional target partition for this record. |
+| `headers` | Optional object of header names and values. |
+| `key_encoding` | How to decode `key`: `base64`, `hex` or `utf-8` (default). |
+| `value_encoding` | How to decode `value`, same values. |
+
+At most 100 records per submission.
+
+#### Binary payloads and tombstones
+
+Keys and values are UTF-8 text unless an encoding says otherwise:
+
+```
+PRODUCE orders
+
+{"key":"order-1","value":"3q2+7w==","value_encoding":"base64"}
+{"key":"order-2","value":"deadbeef","value_encoding":"hex"}
+```
+
+Whitespace inside a `base64` or `hex` payload is ignored. Use an encoding to publish to a topic you read through an Avro or Protobuf decoder: OneTUI does not encode the record for you, so supply the already-encoded bytes.
+
+A `null` value is a tombstone, the deletion marker for its key on a compacted topic:
+
+```
+PRODUCE orders
+
+{"key":"order-1","value":null}
+```
+
+A tombstone needs a key, since the key names the record being retired. An empty string value is not a tombstone; it stores an empty record.
+
+#### Choosing a partition
+
+The first of these that is present decides where a record goes:
+
+1. The record's own `partition` field.
+2. The partition on the verb line, such as `PRODUCE orders/2`.
+3. The broker's partitioner, which hashes the key, or round-robins when there is no key.
+
+So `PRODUCE orders` with keys lets Kafka place each record, while `PRODUCE orders/2` pins the whole batch to partition 2.
+
+#### Results
+
+A publish reports one outcome for the whole submission, with the offsets it was given:
+
+| outcome | summary |
+| --- | --- |
+| applied | Published 2 records to orders; delivered at partition:offset 0:1042, 1:377 |
+
+Records are sent with `acks=all`, so a reported offset is on every in-sync replica.
+
+Publishing is never retried. `applied` means every record was delivered and `rejected` that the broker refused all of them. Anything in between is `unknown`, including a batch where some records landed and others did not: resending it would duplicate the records that already arrived, so check the topic before submitting again.
 
 ## Live following
 
@@ -66,7 +161,7 @@ Browsing depends on retention. Refresh to include newer records or after a parti
 
 ## Permissions
 
-Record browsing needs topic `Read` and `Describe`, plus group `Describe` for its temporary ID, `onetui-<process-id>-<session-id>`. OneTUI does not join that group or commit offsets, so group `Read` is not required. Inspecting consumer groups requires `Describe` for those groups.
+Record browsing needs topic `Read` and `Describe`, plus group `Describe` for its temporary ID, `onetui-<process-id>-<session-id>`. OneTUI does not join that group or commit offsets, so group `Read` is not required. Inspecting consumer groups requires `Describe` for those groups. Publishing needs topic `Write`; OneTUI never creates a topic, so the topic must already exist.
 
 Configuration reads need `DescribeConfigs` on the topic, or on the cluster for broker settings. `--check` validates metadata and configured schema sources, not record-reading access.
 

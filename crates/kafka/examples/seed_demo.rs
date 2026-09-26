@@ -23,6 +23,9 @@ async fn main() -> Result<()> {
         ("demo_binary", 2, 512),
         ("demo_tombstones", 1, 64),
         ("demo_empty", 1, 0),
+        // Tests that publish need a topic of their own: the seeded topics above are
+        // asserted to hold exact record counts, so writing to one breaks other tests.
+        ("demo_writable", 2, 0),
     ] {
         if let Some(topic) = existing.topics().iter().find(|topic| topic.name() == name) {
             ensure!(
@@ -40,7 +43,9 @@ async fn main() -> Result<()> {
                 offsets += high;
             }
             ensure!(
-                offsets == i64::from(count),
+                // The writable topic grows as publish tests run, so only its existence
+                // and partition layout are checked.
+                name == "demo_writable" || offsets == i64::from(count),
                 "Existing {name} has {offsets} offsets, expected {count}; inspect before resetting fixtures"
             );
             println!("Preserved {name}: {count} records");

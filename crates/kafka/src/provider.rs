@@ -1,13 +1,14 @@
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
+    QueryDescriptor, QueryExecution, QueryRequest, RequestContext, ShutdownContext, WriteResult,
 };
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
 use rdkafka::client::ClientContext;
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext};
 use rdkafka::error::{KafkaError, RDKafkaErrorCode};
+use rdkafka::producer::{BaseProducer, Producer as _};
 use rdkafka::{ClientConfig, Message, Offset, TopicPartitionList};
 use std::sync::{
     Arc, Mutex as StdMutex,
@@ -43,10 +44,11 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &["kafka.records"],
     query: Some(QueryDescriptor {
         resource: "kafka.query",
-        language: "Kafka replay JSON",
-        contextual_watermark: None,
-        watermark: "{}",
-        path_depth: 2,
+        language: "Kafka CONSUME/PRODUCE",
+        contextual_watermark: Some(crate::query::watermark),
+        watermark: "PRODUCE topic\n\n{\"value\":\"\"}",
+        // A topic is enough to publish; the verb line names any partition.
+        path_depth: 1,
         scope_resources: &[],
     }),
     kind: "kafka",
@@ -125,6 +127,7 @@ enum Operation {
 enum Response {
     Check(CheckResult),
     Page(Page),
+    Write(WriteResult),
 }
 
 struct Job {
@@ -149,6 +152,7 @@ struct NativeContext {
     secrets: Vec<String>,
     oauth: Option<Arc<StdMutex<crate::oauth::Session>>>,
     deadline: StdMutex<Instant>,
+    reports: crate::produce::Reports,
 }
 
 impl ClientContext for NativeContext {
@@ -194,6 +198,33 @@ impl ClientContext for NativeContext {
 }
 impl ConsumerContext for NativeContext {}
 
+impl rdkafka::producer::ProducerContext for NativeContext {
+    // Records are identified by their position in the submitted batch.
+    type DeliveryOpaque = usize;
+
+    fn delivery(&self, result: &rdkafka::message::DeliveryResult<'_>, index: Self::DeliveryOpaque) {
+        let outcome = match result {
+            Ok(message) => crate::produce::Outcome::Delivered {
+                partition: message.partition(),
+                offset: message.offset(),
+            },
+            Err((error, _)) => {
+                let secrets: Vec<_> = self.secrets.iter().map(String::as_str).collect();
+                crate::produce::Outcome::Failed(
+                    onetui_core::diagnostic(anyhow!("{error}"), &secrets).to_string(),
+                )
+            }
+        };
+        self.reports.record(index, outcome);
+    }
+}
+
+/// Point a retained native client's diagnostics and deadline at the current job.
+fn refresh(context: &NativeContext, job: &Job) {
+    *context.errors.lock().unwrap_or_else(|e| e.into_inner()) = job.errors.clone();
+    *context.deadline.lock().unwrap_or_else(|e| e.into_inner()) = job.deadline;
+}
+
 fn request_error(error: anyhow::Error, errors: &StdMutex<Vec<String>>) -> anyhow::Error {
     let errors = errors.lock().unwrap_or_else(|e| e.into_inner());
     if errors.is_empty() {
@@ -222,6 +253,7 @@ impl KafkaExecutor {
                 .spawn(move || {
                     let _permit = permit;
                     let mut client = None;
+                    let mut producer: Option<BaseProducer<NativeContext>> = None;
                     let mut decoders = crate::decoding::Bindings::new(bindings);
                     while let Ok(job) = receive.recv() {
                         let result = (|| {
@@ -235,34 +267,50 @@ impl KafkaExecutor {
                                 session.lock().unwrap_or_else(|e| e.into_inner()).expired()
                             }) {
                                 client.take();
+                                if let Some(producer) = producer.take() {
+                                    crate::produce::flush(&producer, Duration::from_secs(1));
+                                }
                                 job.remaining()?;
+                            }
+                            let context = || NativeContext {
+                                status: status.clone(),
+                                errors: StdMutex::new(job.errors.clone()),
+                                secrets: secrets.clone(),
+                                oauth: oauth.clone(),
+                                deadline: StdMutex::new(job.deadline),
+                                reports: crate::produce::Reports::default(),
+                            };
+                            // Producing needs its own native client; one client cannot both
+                            // consume and produce. It stays unconnected until a first PRODUCE.
+                            if let Operation::Query(request) = &job.operation
+                                && let crate::statement::Statement::Produce { target, records } =
+                                    crate::statement::parse(&request.text)?
+                            {
+                                if producer.is_none() {
+                                    status.send_replace(ConnectionStatus::Connecting);
+                                    producer = Some(
+                                        crate::produce::config(&config)
+                                            .create_with_context::<_, BaseProducer<_>>(context())?,
+                                    );
+                                }
+                                let producer = producer.as_ref().unwrap();
+                                refresh(producer.context(), &job);
+                                return crate::produce::send(
+                                    producer,
+                                    &producer.context().reports,
+                                    &target,
+                                    &records,
+                                    &|| job.remaining(),
+                                )
+                                .map(Response::Write);
                             }
                             if client.is_none() {
                                 status.send_replace(ConnectionStatus::Connecting);
-                                client = Some(config.create_with_context::<_, BaseConsumer<_>>(
-                                    NativeContext {
-                                        status: status.clone(),
-                                        errors: StdMutex::new(job.errors.clone()),
-                                        secrets: secrets.clone(),
-                                        oauth: oauth.clone(),
-                                        deadline: StdMutex::new(job.deadline),
-                                    },
-                                )?);
+                                client = Some(
+                                    config.create_with_context::<_, BaseConsumer<_>>(context())?,
+                                );
                             }
-                            *client
-                                .as_ref()
-                                .unwrap()
-                                .context()
-                                .errors
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner()) = job.errors.clone();
-                            *client
-                                .as_ref()
-                                .unwrap()
-                                .context()
-                                .deadline
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner()) = job.deadline;
+                            refresh(client.as_ref().unwrap().context(), &job);
                             let topic = match &job.operation {
                                 Operation::Page(request) | Operation::Follow(request) => {
                                     request.resource.path.first()
@@ -326,6 +374,10 @@ impl KafkaExecutor {
                         let _ = job.reply.send(result);
                     }
                     drop(client);
+                    // Drain before dropping, so a queued record cannot append after close.
+                    if let Some(producer) = producer.take() {
+                        crate::produce::flush(&producer, Duration::from_secs(5));
+                    }
                     drop(decoders);
                     // A completed shutdown must make its owner slot immediately reusable.
                     drop(_permit);
@@ -362,10 +414,32 @@ impl KafkaExecutor {
 
 impl Executor for KafkaExecutor {
     async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
-        crate::query::prepare(&request, self.identity)?;
+        match self.execute_query(request, context).await? {
+            QueryExecution::Page(page) => Ok(page),
+            QueryExecution::Write(write) => anyhow::bail!(
+                "Kafka PRODUCE reports a write result, not a page: {}",
+                write.summary
+            ),
+        }
+    }
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        context: RequestContext,
+    ) -> Result<QueryExecution> {
+        // Reject a malformed statement before starting native work. A produce carries no
+        // page to resolve, so only a consume is prepared here.
+        request.validate()?;
+        if matches!(
+            crate::statement::parse(&request.text)?,
+            crate::statement::Statement::Replay { .. }
+        ) {
+            crate::query::prepare(&request, self.identity)?;
+        }
         match self.execute(Operation::Query(request), context).await? {
-            Response::Page(page) => Ok(page),
-            _ => unreachable!(),
+            Response::Page(page) => Ok(QueryExecution::Page(page)),
+            Response::Write(write) => Ok(QueryExecution::Write(write)),
+            Response::Check(_) => unreachable!(),
         }
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
@@ -642,7 +716,7 @@ fn run(
             let end = replay.end_offset.unwrap_or(stable_end);
             ensure!(
                 end >= low && end <= stable_end,
-                "Kafka replay end_offset {end} outside available [{low}, {stable_end}]"
+                "Kafka end_offset {end} outside available [{low}, {stable_end}]"
             );
             let start = if let Some(timestamp) = replay.timestamp_ms {
                 let offsets = native_request(client, job, |wait| {
@@ -796,6 +870,7 @@ fn response(page: Page, job: &Job) -> Result<Response> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onetui_core::provider::WriteOutcome;
     use onetui_core::{Resource, Value};
     use rdkafka::mocking::MockCluster;
     use rdkafka::producer::{BaseProducer, BaseRecord, Producer};
@@ -809,6 +884,7 @@ mod tests {
             secrets: vec!["fixture-secret".into()],
             oauth: None,
             deadline: StdMutex::new(Instant::now()),
+            reports: crate::produce::Reports::default(),
         };
         let error = KafkaError::Global(RDKafkaErrorCode::BrokerTransportFailure);
         native.error(error.clone(), "TLS alert fixture-secret\x1b[31m");
@@ -856,6 +932,26 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    async fn produce(executor: &KafkaExecutor, text: &str) -> Result<WriteResult> {
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        match executor
+            .execute_query(
+                QueryRequest {
+                    page: PageRequest {
+                        resource: Resource::new("kafka.query", vec!["records".into()]),
+                        continuation: None,
+                    },
+                    text: text.into(),
+                },
+                context,
+            )
+            .await?
+        {
+            QueryExecution::Write(write) => Ok(write),
+            QueryExecution::Page(_) => panic!("a produce reports a write result"),
+        }
     }
 
     async fn follow(
@@ -955,7 +1051,10 @@ mod tests {
         assert_eq!(previous.rows[0].cells[0], Some("100".into()));
         let beginning = fetch(&executor, resource.clone(), None).await;
         assert_eq!(beginning.rows[0].cells[0], Some("0".into()));
-        let replay_text = r#"{"offset":125,"end_offset":240}"#;
+        let replay_text = format!(
+            "CONSUME {}/{} offsets 125..240",
+            resource.path[0], resource.path[1]
+        );
         let mut continuation = None;
         for (offset, count) in [(125, 100), (225, 15)] {
             let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
@@ -966,7 +1065,7 @@ mod tests {
                             resource: Resource::new("kafka.query", resource.path.clone()),
                             continuation,
                         },
-                        text: replay_text.into(),
+                        text: replay_text.clone(),
                     },
                     context,
                 )
@@ -977,8 +1076,78 @@ mod tests {
             continuation = page.continuation;
         }
         assert!(continuation.is_none());
-        let empty = fetch(&executor, partitions.rows[1].target.clone().unwrap(), None).await;
-        assert!(empty.rows.is_empty() && !empty.next);
+
+        // Publishing goes through the same editor operation and reports one write result.
+        let published = produce(
+            &executor,
+            concat!(
+                "PRODUCE records/1\n\n",
+                "{\"key\":\"a\",\"value\":\"first\",\"headers\":{\"src\":\"tui\"}}\n",
+                "{\"value\":\"second\"}\n"
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(published.outcome, WriteOutcome::Applied);
+        assert!(
+            published
+                .summary
+                .starts_with("Published 2 records to records/1"),
+            "{}",
+            published.summary
+        );
+        // The verb line's partition placed both records, and their offsets survive.
+        assert!(
+            published.summary.contains("1:0, 1:1"),
+            "{}",
+            published.summary
+        );
+        // A per-record partition overrides the verb line's; partition 0 stays untouched
+        // so the follow assertions below still start from the seeded 250 records.
+        let routed = produce(
+            &executor,
+            "PRODUCE records/0\n\n{\"value\":\"third\",\"partition\":1}",
+        )
+        .await
+        .unwrap();
+        assert_eq!(routed.outcome, WriteOutcome::Applied);
+        assert!(routed.summary.contains("1:2"), "{}", routed.summary);
+        // Read the published records back to prove they were actually appended.
+        let written = fetch(&executor, partitions.rows[1].target.clone().unwrap(), None).await;
+        assert_eq!(written.rows.len(), 3);
+        assert_eq!(written.rows[0].cells[2], Some(Value::Bytes(b"a".to_vec())));
+        assert_eq!(
+            written.rows[0].cells[3],
+            Some(Value::Bytes(b"first".to_vec()))
+        );
+        assert_eq!(
+            written.rows[1].cells[3],
+            Some(Value::Bytes(b"second".to_vec()))
+        );
+        // Encoded payloads reach the broker as bytes, and a null value is a tombstone.
+        let encoded = produce(
+            &executor,
+            concat!(
+                "PRODUCE records/1\n\n",
+                "{\"key\":\"6b\",\"key_encoding\":\"hex\",\"value\":\"//4=\",\"value_encoding\":\"base64\"}\n",
+                "{\"key\":\"gone\",\"value\":null}\n"
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(encoded.outcome, WriteOutcome::Applied);
+        let written = fetch(&executor, partitions.rows[1].target.clone().unwrap(), None).await;
+        let encoded_row = written.rows.iter().rev().nth(1).unwrap();
+        assert_eq!(encoded_row.cells[2], Some(Value::Bytes(b"k".to_vec())));
+        assert_eq!(encoded_row.cells[3], Some(Value::Bytes(vec![255, 254])));
+        let tombstone = written.rows.last().unwrap();
+        assert_eq!(tombstone.cells[2], Some(Value::Bytes(b"gone".to_vec())));
+        assert_eq!(tombstone.cells[3], None, "a tombstone stores a null value");
+
+        // A rejected statement keeps the session usable (ADR-0013).
+        assert!(produce(&executor, "PRODUCE records/1\n\n{}").await.is_err());
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Connected);
+
         let tail = follow(&executor, resource.clone(), None).await;
         assert!(tail.rows.is_empty() && tail.continuation.is_some());
         let quiet = follow(&executor, resource.clone(), tail.continuation.clone()).await;

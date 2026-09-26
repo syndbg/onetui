@@ -274,9 +274,12 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
             .contains(&serde_json::json!("value_native"))
     );
     assert_eq!(kafka["query"]["resource"], "kafka.query");
-    assert_eq!(kafka["query"]["path_depth"], 2);
+    // A topic is enough to publish; the verb line names any partition.
+    assert_eq!(kafka["query"]["path_depth"], 1);
     assert_eq!(kafka["query_max_bytes"], 16384);
-    assert!(kafka["replay"]["timestamp_ms"].is_string());
+    assert!(kafka["query_statements"]["consume"]["offsets"].is_string());
+    assert!(kafka["query_statements"]["consume"]["time"].is_string());
+    assert!(kafka["query_statements"]["produce"]["encoding"].is_string());
     assert_eq!(
         kafka["follow_resources"],
         serde_json::json!(["kafka.records"])

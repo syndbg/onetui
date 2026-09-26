@@ -133,7 +133,7 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 | --- | --- |
 | [PostgreSQL](docs/postgres.md) | Tables, views, typed values, SQL and replication statistics |
 | [Qdrant](docs/qdrant.md) | Collections, points, payloads, vectors, HTTP requests and topology |
-| [Kafka](docs/kafka.md) | Metadata, configuration, groups, lag, record browsing, replay and following |
+| [Kafka](docs/kafka.md) | Metadata, configuration, groups, lag, record browsing, replay, following and publishing |
 | [NATS](docs/nats.md) | Core subscriptions, JetStream messages, replay, publishing, consumers, KV and objects |
 | [DynamoDB](docs/dynamodb.md) | Metadata, typed items, native reads, PartiQL, vector search and Streams |
 | [RabbitMQ](docs/rabbitmq.md) | Management metadata and metrics, without message inspection |

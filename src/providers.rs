@@ -362,7 +362,7 @@ mod tests {
                             ),
                             continuation: None,
                         },
-                        text: "{}".into(),
+                        text: "CONSUME demo_events/0".into(),
                     },
                     context
                 )
