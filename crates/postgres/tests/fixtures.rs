@@ -808,11 +808,12 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
             .is_err()
     );
     let observer = FixturePg::plain(PG_ADMIN).await;
-    wait_for_backend(&observer.client, pid, "gone").await;
+    wait_for_backend(&observer.client, pid, "idle").await;
+    assert_eq!(executor_pid(&reader).await, pid);
     assert_eq!(
         second.rows.len(),
         100,
-        "cached data survives disconnected reading time"
+        "failed bookmarks leave the cached page intact"
     );
     let last = row_page(&reader, "browse_bigint", second.continuation)
         .await
