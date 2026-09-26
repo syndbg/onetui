@@ -14,7 +14,7 @@ pub use provider::{DynamoDbExecutor, DynamoDbProvider};
 fn capabilities() -> serde_json::Value {
     let examples = serde_json::json!({"item":{"operation":"Scan","limit":100},"batch":{"operation":"BatchGetItem","keys":[{"pk":{"S":"demo"}}]},"transaction":{"operation":"TransactGetItems","items":[{"key":{"pk":{"S":"demo"}}}]},"vector":{"operation":"SearchVectors","index":"embedding","search_vector":[0.1,-0.2,0.3],"top_k":10},"partiql":{"operation":"ExecuteStatement","statement":"SELECT * FROM demo WHERE pk=?","parameters":[{"S":"demo"}],"limit":100},"partiql_batch":{"operation":"BatchExecuteStatement","statements":[{"statement":"SELECT * FROM demo WHERE pk=?","parameters":[{"S":"demo"}]}]},"partiql_transaction":{"operation":"ExecuteTransaction","statements":[{"statement":"SELECT * FROM demo WHERE pk=?","parameters":[{"S":"demo"}]}]},"stream":{"operation":"GetRecords","shard_id":"shard-id","sequence_number":"123","limit":100}});
     serde_json::json!({
-        "operations":["check","fetch_page","query_page","follow_page"],
+        "operations":["check","fetch_page","query_page","execute_query","follow_page"],
         "limits":{"page_rows":100,"page_bytes":1048576,"response_bytes":8388608,"bookmark_bytes":65536,"attribute_depth":32,"distinct_attributes_per_page":1024},
         "session":"Lazy AWS SDK client owned by the selected alias; native credential chain refresh and pooled HTTP connections. Native trust loading runs off async workers, with one blocking job at a time; request deadlines and cancellation remain active. Completed query failures keep the client; cancelled or timed-out operations discard it. No periodic application heartbeat.",
         "paging":"Explicit Scan or Query evaluates at most limit items (default 100). LastEvaluatedKey continues even after an empty filtered page. Bookmarks bind the alias session, resource and query. Independent reads, not snapshots; consumed capacity is returned.",
@@ -31,7 +31,7 @@ fn capabilities() -> serde_json::Value {
         },
         "query_syntax":{
             "operations":["Scan","Query","GetItem","BatchGetItem","TransactGetItems","SearchVectors","ExecuteStatement","BatchExecuteStatement","ExecuteTransaction","GetRecords"],
-            "scope":"selected table, or stream ARN for GetRecords; table/stream overrides rejected",
+            "scope":"Native item reads use the selected table, and GetRecords uses the selected stream ARN. PartiQL statements name their own tables.",
             "common_item_fields":["projection_expression","expression_attribute_names","consistent_read"],
             "scan_query_fields":["index","filter_expression","expression_attribute_values","limit"],
             "query_fields":{"key_condition_expression":"required string","scan_index_forward":"boolean, default true"},
@@ -41,18 +41,17 @@ fn capabilities() -> serde_json::Value {
             "multi_item_results":"Complete native JSON response, bounded to 1 MiB; Enter inspects values. Capacity, unprocessed keys and missing-item positions are retained. Batch n retries only unprocessed keys; no automatic retry loop or stable result order. Transactions have no continuation. Reduce keys or projection when too large.",
             "search_vectors_fields":{"index":"required vector index name, 3..255 ASCII letters, digits, underscores, dots or hyphens","search_vector":"1..4096 JSON numbers within finite 32-bit float range; sent as native N attributes; the overall 16 KiB query-text limit still applies","top_k":"required integer, 1..100","search_condition_expression":"optional native condition string","projection_expression":"optional native projection string","expression_attribute_names":"optional string map","expression_attribute_values":"optional AttributeValue map"},
             "vector_results":"Complete native JSON within 1 MiB; SearchResults keep service order, scores, typed items and capacity. No continuation. VectorIndexes are included in index metadata. DynamoDB Local does not implement vector search.",
-            "execute_statement_fields":{"statement":"required single SELECT, 1..8192 UTF-8 bytes, FROM the selected table and optional index","parameters":"optional nonempty array of native AttributeValue objects, bound to ? placeholders","consistent_read":"boolean, default false","limit":"1..100 evaluated items, default 100"},
-            "batch_execute_statement_fields":{"statements":"1..25 objects with statement, optional parameters and optional consistent_read (default false); each SELECT must identify one item as required by DynamoDB"},
-            "execute_transaction_fields":{"statements":"1..100 objects with statement and optional parameters; each SELECT identifies one item; consistent_read is not accepted because the read is transactional"},
-            "partiql_guard":"All statements are checked before connecting. Only one SELECT per statement from the selected table is allowed; no joins, subqueries, writes or table overrides. Use doubled quotes and typed parameters; backtick literals, backslash-escaped quotes and nested comments are rejected. Expressions are validated by DynamoDB.",
-            "partiql_results":"ExecuteStatement displays typed item rows and uses native NextToken bookmarks, including empty pages. LastEvaluatedKey without NextToken fails visibly instead of claiming completion. Responses above the requested row limit or 1 MiB are rejected, not truncated. Batch and transaction views retain complete native JSON, capacity, ordered responses and per-statement errors; they have no continuation or automatic retry loop.",
+            "execute_statement_fields":{"statement":"required PartiQL statement sent to DynamoDB unchanged","parameters":"optional nonempty array of native AttributeValue objects, bound to ? placeholders","consistent_read":"boolean, default false","limit":"1..100 evaluated items, default 100"},
+            "batch_execute_statement_fields":{"statements":"1..25 objects with statement, optional parameters and optional consistent_read"},
+            "execute_transaction_fields":{"statements":"1..100 objects with statement and optional parameters; consistent_read is not accepted"},
+            "partiql_results":"ExecuteStatement displays typed item rows or the native response and uses NextToken bookmarks for reads. Batch and transaction views retain native JSON, capacity, ordered responses and per-statement errors. PartiQL requests have no automatic retries; a lost response may leave the statement outcome unknown.",
             "get_records_fields":{"shard_id":"required string, 1..240 bytes without controls","sequence_number":"required decimal string, 1..40 digits; exact value retained","after":"boolean, default false: start at sequence; true starts after sequence","limit":"1..100 records, default 100"},
             "defaults":{"consistent_read":false,"limit":100},
             "values":"Expression values and keys use DynamoDB AttributeValue JSON; unknown fields and operations rejected",
             "examples":examples,
             "editor":"Streams rows supply their selected shard and sequence; item views use Scan. Existing drafts take precedence."
         },
-        "permissions":"Only invoked read operations are required. --check calls ListTables(limit=1). Browse operations can consume read capacity. No writes, administration, job creation or automatic whole-table traversal.",
+        "permissions":"Queries use the selected credentials. PartiQL statements may require write permissions and name tables independently of the browsing selection. --check calls ListTables(limit=1).",
         "paths": browse::RESOURCES.iter().map(|r|(r.id.to_owned(),match browse::depth(r.id) {0 => serde_json::json!([]), 2 if r.id == "dynamodb.index_insights" => serde_json::json!(["table name", "index name"]), 2 => serde_json::json!(["stream ARN", "shard ID"]), _ => serde_json::json!(["table name or resource ARN"])})).collect::<serde_json::Map<_,_>>()
     })
 }

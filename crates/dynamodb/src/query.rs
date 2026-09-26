@@ -135,27 +135,6 @@ pub(crate) fn watermark(
 }
 
 impl Read {
-    pub(crate) fn validate_scope(&self, table: &str) -> Result<()> {
-        let check = |statement: &str| -> Result<()> {
-            ensure!(
-                crate::partiql::source(statement)? == table,
-                "PartiQL must read the selected table"
-            );
-            Ok(())
-        };
-        match self {
-            Self::ExecuteStatement { statement, .. } => check(statement)?,
-            Self::BatchExecuteStatement { statements }
-            | Self::ExecuteTransaction { statements } => {
-                for statement in statements {
-                    check(&statement.statement)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
     pub fn parse(text: &str) -> Result<Self> {
         ensure!(
             !text.is_empty() && text.len() <= onetui_core::provider::QUERY_BYTES,
@@ -164,12 +143,8 @@ impl Read {
         let query: Self = serde_json::from_str(text)?;
         match &query {
             Self::ExecuteStatement {
-                statement,
-                parameters,
-                limit,
-                ..
+                parameters, limit, ..
             } => {
-                crate::partiql::source(statement)?;
                 crate::partiql::parameters(parameters.as_deref())?;
                 ensure!(
                     (1..=100).contains(limit),
@@ -185,7 +160,6 @@ impl Read {
                     "PartiQL requires 1..{max} statements"
                 );
                 for statement in statements {
-                    crate::partiql::source(&statement.statement)?;
                     crate::partiql::parameters(statement.parameters.as_deref())?;
                     ensure!(
                         !transaction || statement.consistent_read.is_none(),

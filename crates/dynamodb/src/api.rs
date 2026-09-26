@@ -8,19 +8,35 @@ use aws_sdk_dynamodb::{
 use serde_json::Value;
 
 macro_rules! send {
-    ($request:expr) => {{
+    ($request:expr) => {
+        send!($request, statement = false)
+    };
+    ($request:expr, statement = $statement:expr) => {{
         let capture = Capture::default();
         let result = $request
             .customize()
-            .config_override(
-                aws_sdk_dynamodb::config::Builder::new().retry_classifier(capture.clone()),
-            )
             .interceptor(capture.clone())
             .send()
             .await
             .map(|_| ())
             .map_err(|error| anyhow!("{}", DisplayErrorContext(error)));
-        capture.finish(result)
+        let status = capture.status();
+        let response = capture.finish(result);
+        if $statement {
+            match status {
+                Some(200..=299) => response.map_err(|error| {
+                    anyhow!("DynamoDB request completed, but its response could not be read: {error}")
+                }),
+                Some(500..) | None => response.map_err(|error| {
+                    anyhow!(
+                        "DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"
+                    )
+                }),
+                _ => response,
+            }
+        } else {
+            response
+        }
     }};
 }
 
@@ -155,7 +171,8 @@ pub(crate) async fn query(
                     .consistent_read(consistent_read)
                     .limit(limit)
                     .set_next_token(token)
-                    .return_consumed_capacity(ReturnConsumedCapacity::Indexes)
+                    .return_consumed_capacity(ReturnConsumedCapacity::Indexes),
+                statement = true
             )
         }
         Read::BatchExecuteStatement { statements } => {
@@ -177,7 +194,8 @@ pub(crate) async fn query(
                 client
                     .batch_execute_statement()
                     .set_statements(Some(statements))
-                    .return_consumed_capacity(ReturnConsumedCapacity::Indexes)
+                    .return_consumed_capacity(ReturnConsumedCapacity::Indexes),
+                statement = true
             )
         }
         Read::ExecuteTransaction { statements } => {
@@ -195,7 +213,8 @@ pub(crate) async fn query(
                 client
                     .execute_transaction()
                     .set_transact_statements(Some(statements))
-                    .return_consumed_capacity(ReturnConsumedCapacity::Total)
+                    .return_consumed_capacity(ReturnConsumedCapacity::Total),
+                statement = true
             )
         }
         Read::SearchVectors {

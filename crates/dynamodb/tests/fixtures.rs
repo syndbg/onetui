@@ -52,6 +52,90 @@ fn cell(page: &Page, row: usize, name: &str) -> Json {
 }
 
 #[tokio::test]
+#[ignore = "creates and deletes only its own DynamoDB Local table"]
+async fn fixture_partiql_writes_are_visible_and_can_be_reversed() {
+    use aws_sdk_dynamodb::types::{
+        AttributeDefinition, AttributeValue, BillingMode, KeySchemaElement, KeyType,
+        ScalarAttributeType,
+    };
+
+    let client = support::client();
+    let name = format!(
+        "onetui_partiql_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    client
+        .create_table()
+        .table_name(&name)
+        .billing_mode(BillingMode::PayPerRequest)
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("pk")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .unwrap(),
+        )
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("pk")
+                .key_type(KeyType::Hash)
+                .build()
+                .unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    let table = name.clone();
+    let result = tokio::spawn(async move {
+        let executor = executor();
+        for statement in [
+            format!("INSERT INTO \"{table}\" VALUE {{'pk': 'owned', 'value': 'before'}}"),
+            format!("UPDATE \"{table}\" SET \"value\"='after' WHERE pk='owned'"),
+        ] {
+            let text = json!({"operation":"ExecuteStatement","statement":statement});
+            let page = query(&executor, &table, &text.to_string(), None).await;
+            assert!(page.notice.contains("statement completed"));
+        }
+        let item = support::client()
+            .get_item()
+            .table_name(&table)
+            .key("pk", AttributeValue::S("owned".into()))
+            .send()
+            .await
+            .unwrap()
+            .item
+            .unwrap();
+        assert_eq!(item["value"], AttributeValue::S("after".into()));
+
+        let text = json!({"operation":"ExecuteStatement","statement":format!("DELETE FROM \"{table}\" WHERE pk='owned'")});
+        let page = query(&executor, &table, &text.to_string(), None).await;
+        assert!(page.notice.contains("statement completed"));
+        let item = support::client()
+            .get_item()
+            .table_name(&table)
+            .key("pk", AttributeValue::S("owned".into()))
+            .send()
+            .await
+            .unwrap();
+        assert!(item.item.is_none());
+    })
+    .await;
+
+    client
+        .delete_table()
+        .table_name(&name)
+        .send()
+        .await
+        .unwrap();
+    result.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires seeded DynamoDB Local Streams; read-only"]
 async fn fixture_streams_preserve_seed_images_and_sequence_bookmarks() {
     let e = executor();

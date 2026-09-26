@@ -35,57 +35,42 @@ async fn replay(
 }
 
 #[tokio::test]
-async fn inclusive_replay_survives_empty_pages_and_expiry_without_skipping_start() {
-    let expired = (
-        400,
-        json!({"__type":"ExpiredIteratorException","message":"iterator expired"}).to_string(),
-    );
+async fn inclusive_query_replay_reports_expiry_without_retrying() {
     let mut responses = replies(vec![
         json!({"ShardIterator":"at-start"}),
-        json!({"Records":[],"NextShardIterator":"empty"}),
+        json!({"Records":[record("9")],"NextShardIterator":"old"}),
     ]);
-    responses.push(expired.clone());
-    responses.extend(replies(vec![
-        json!({"ShardIterator":"renewed-at-start"}),
-        json!({"Records":[record("9"),record("00010")],"NextShardIterator":"after-ten"}),
-    ]));
-    responses.push(expired);
-    responses.extend(replies(vec![
-        json!({"ShardIterator":"renewed-after-ten"}),
-        json!({"Records":[record("11")]}),
-    ]));
+    responses.push((
+        400,
+        json!({"__type":"ExpiredIteratorException","message":"iterator expired"}).to_string(),
+    ));
     let server = Server::start(responses);
     let e = server.executor();
     let text = format!(
         r#"{{"operation":"GetRecords","shard_id":"{SHARD}","sequence_number":"0009","limit":2}}"#
     );
     let first = replay(&e, &text, None).await.unwrap();
-    assert!(first.rows.is_empty() && first.next);
+    assert_eq!(
+        cell(&first, 0, "record").unwrap()["dynamodb"]["SequenceNumber"],
+        "9"
+    );
+    assert!(first.next);
     let changed = text.replace("0009", "0008");
     assert!(
         replay(&e, &changed, first.continuation.clone())
             .await
             .is_err()
     );
-    let second = replay(&e, &text, first.continuation).await.unwrap();
-    assert_eq!(
-        cell(&second, 0, "record").unwrap()["dynamodb"]["SequenceNumber"],
-        "9"
-    );
-    let third = replay(&e, &text, second.continuation).await.unwrap();
-    assert_eq!(
-        cell(&third, 0, "record").unwrap()["dynamodb"]["SequenceNumber"],
-        "11"
-    );
-    assert!(!third.next);
+    let error = replay(&e, &text, first.continuation)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ExpiredIteratorException"), "{error}");
     let calls = server.finish();
     assert_eq!(calls[0].1["ShardIteratorType"], "AT_SEQUENCE_NUMBER");
     assert_eq!(calls[0].1["SequenceNumber"], "0009");
     assert_eq!(calls[1].1["Limit"], 2);
-    assert_eq!(calls[3].1["ShardIteratorType"], "AT_SEQUENCE_NUMBER");
-    assert_eq!(calls[3].1["SequenceNumber"], "0009");
-    assert_eq!(calls[6].1["ShardIteratorType"], "AFTER_SEQUENCE_NUMBER");
-    assert_eq!(calls[6].1["SequenceNumber"], "00010");
+    assert_eq!(calls.len(), 3);
 }
 
 #[tokio::test]
@@ -116,6 +101,54 @@ async fn explicit_after_replay_and_trimmed_sequences_keep_native_semantics() {
     assert_eq!(calls[0].1["ShardIteratorType"], "AFTER_SEQUENCE_NUMBER");
     assert_eq!(calls[1].1["Limit"], 1);
     assert_eq!(calls.len(), 3);
+}
+
+#[tokio::test]
+async fn browsing_streams_retries_a_transient_failure() {
+    let server = Server::start(vec![
+        (200, json!({"Streams":[]}).to_string()),
+        (
+            500,
+            json!({"__type":"InternalServerError","message":"transient fixture failure"})
+                .to_string(),
+        ),
+        (200, json!({"Streams":[]}).to_string()),
+    ]);
+    let executor = server.executor();
+    fetch(&executor, request("dynamodb.streams", &[], None))
+        .await
+        .unwrap();
+    let page = fetch(&executor, request("dynamodb.streams", &[], None))
+        .await
+        .unwrap();
+    assert!(page.rows.is_empty());
+    assert_eq!(server.finish().len(), 3);
+}
+
+#[tokio::test]
+async fn submitted_stream_query_requires_a_new_request_after_transient_failure() {
+    let server = Server::start(vec![
+        (200, json!({"ShardIterator":"first"}).to_string()),
+        (
+            500,
+            json!({"__type":"InternalServerError","message":"transient fixture failure"})
+                .to_string(),
+        ),
+        (200, json!({"ShardIterator":"second"}).to_string()),
+        (200, json!({"Records":[record("9")]}).to_string()),
+    ]);
+    let executor = server.executor();
+    let text = format!(
+        r#"{{"operation":"GetRecords","shard_id":"{SHARD}","sequence_number":"9","limit":1}}"#
+    );
+    let error = replay(&executor, &text, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("HTTP 500"), "{error}");
+    let page = replay(&executor, &text, None).await.unwrap();
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(server.finish().len(), 4);
 }
 
 #[tokio::test]

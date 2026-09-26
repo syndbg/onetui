@@ -604,7 +604,7 @@ async fn oversized_http_response_fails_without_a_partial_page() {
 }
 
 #[tokio::test]
-async fn native_transient_retries_remain_enabled() {
+async fn browsing_retries_a_transient_failure() {
     let server = Server::start(vec![
         (200, json!({"TableNames":[]}).to_string()),
         (
@@ -615,11 +615,37 @@ async fn native_transient_retries_remain_enabled() {
         (200, json!({"TableNames":[]}).to_string()),
     ]);
     let executor = server.executor();
-    // Initialize the client separately so this request measures native retry behavior.
     fetch(&executor, request("dynamodb.tables", &[], None))
         .await
         .unwrap();
     let page = fetch(&executor, request("dynamodb.tables", &[], None))
+        .await
+        .unwrap();
+    assert!(page.rows.is_empty());
+    assert_eq!(server.finish().len(), 3);
+}
+
+#[tokio::test]
+async fn submitted_query_requires_a_new_request_after_transient_failure() {
+    let server = Server::start(vec![
+        (200, json!({"TableNames":[]}).to_string()),
+        (
+            500,
+            json!({"__type":"InternalServerError","message":"transient fixture failure"})
+                .to_string(),
+        ),
+        (200, json!({"Items":[]}).to_string()),
+    ]);
+    let executor = server.executor();
+    fetch(&executor, request("dynamodb.tables", &[], None))
+        .await
+        .unwrap();
+    let error = query(&executor, r#"{"operation":"Scan"}"#, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("HTTP 500"), "{error}");
+    let page = query(&executor, r#"{"operation":"Scan"}"#, None)
         .await
         .unwrap();
     assert!(page.rows.is_empty());

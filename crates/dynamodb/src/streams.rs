@@ -11,9 +11,6 @@ macro_rules! send {
         let capture = Capture::default();
         let result = $request
             .customize()
-            .config_override(
-                aws_sdk_dynamodbstreams::config::Builder::new().retry_classifier(capture.clone()),
-            )
             .interceptor(capture.clone())
             .send()
             .await
@@ -220,9 +217,6 @@ async fn batch(
         .shard_iterator(iterator)
         .limit(limit)
         .customize()
-        .config_override(
-            aws_sdk_dynamodbstreams::config::Builder::new().retry_classifier(capture.clone()),
-        )
         .interceptor(capture.clone())
         .send()
         .await;
@@ -318,7 +312,7 @@ async fn records(
         }
     };
     let (mut result, expired, mut model_error) = batch(client, &token, limit).await;
-    if expired && (after.is_some() || at.is_some()) {
+    if expired && replay.is_none() && (after.is_some() || at.is_some()) {
         // Preserve inclusive replay until the first record is actually retained.
         let renewed = iterator(client, resource, kind, after.as_deref().or(at.as_deref())).await?;
         (result, _, model_error) = batch(client, &renewed, limit).await;

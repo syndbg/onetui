@@ -1,8 +1,4 @@
 use anyhow::{Result, anyhow, ensure};
-use aws_smithy_runtime_api::client::{
-    interceptors::context::InterceptorContext,
-    retries::classifiers::{ClassifyRetry, RetryAction},
-};
 use aws_smithy_runtime_api::{
     box_error::BoxError,
     client::{
@@ -10,7 +6,7 @@ use aws_smithy_runtime_api::{
             Intercept,
             context::{
                 AfterDeserializationInterceptorContextRef,
-                BeforeDeserializationInterceptorContextMut, BeforeTransmitInterceptorContextRef,
+                BeforeDeserializationInterceptorContextMut,
             },
         },
         runtime_components::RuntimeComponents,
@@ -22,18 +18,6 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-
-impl ClassifyRetry for Capture {
-    fn name(&self) -> &'static str {
-        "DynamoDBResponseLimit"
-    }
-    fn classify_retry(&self, _: &InterceptorContext) -> RetryAction {
-        if self.limit_exceeded.load(Ordering::Relaxed) {
-            return RetryAction::RetryForbidden;
-        }
-        RetryAction::NoActionIndicated
-    }
-}
 
 // DynamoDB's item-byte limit excludes JSON escaping and base64 expansion.
 pub(crate) const RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -58,20 +42,6 @@ impl std::fmt::Debug for Capture {
 impl Intercept for Capture {
     fn name(&self) -> &'static str {
         "DynamoDBResponse"
-    }
-
-    fn read_before_attempt(
-        &self,
-        _: &BeforeTransmitInterceptorContextRef<'_>,
-        _: &RuntimeComponents,
-        _: &mut ConfigBag,
-    ) -> Result<(), BoxError> {
-        // A retry can fail before receiving a response. Do not report the previous attempt.
-        *self
-            .response
-            .lock()
-            .map_err(|_| "DynamoDB response lock poisoned")? = None;
-        Ok(())
     }
 
     fn modify_before_deserialization(
@@ -115,6 +85,13 @@ impl Intercept for Capture {
 }
 
 impl Capture {
+    pub(crate) fn status(&self) -> Option<u16> {
+        self.response
+            .lock()
+            .ok()
+            .and_then(|response| response.as_ref().map(|response| response.status))
+    }
+
     pub fn finish(&self, result: Result<()>) -> Result<serde_json::Value> {
         self.finish_json(result, false)
     }

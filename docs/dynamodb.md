@@ -1,6 +1,6 @@
 # DynamoDB
 
-Browse table and index metadata, typed items, account resources and Streams. Run bounded native reads and PartiQL SELECTs.
+Browse table and index metadata, typed items, account resources and Streams. Run native reads and PartiQL statements.
 
 ## Configuration
 
@@ -12,7 +12,7 @@ region = "eu-west-1"
 
 Run `onetui --connection aws`. Credentials follow the AWS SDK chain, with environment credentials before the selected profile. Native profiles, SSO and roles are supported; `credential_process` is disabled. Use `onetui schema --datasource dynamodb` for settings and available operations.
 
-Custom endpoints need a separate `streams_endpoint_url` for Streams. Give the account read permissions for the resources you intend to inspect.
+Custom endpoints need a separate `streams_endpoint_url` for Streams.
 
 ## Browsing
 
@@ -22,7 +22,7 @@ Reads consume capacity. Narrow the query or projection if a result exceeds the s
 
 ## Queries
 
-Press `e` on a selected table and enter native read-operation JSON:
+Press `e` on a selected table and enter operation JSON:
 
 ```json
 {
@@ -33,9 +33,9 @@ Press `e` on a selected table and enter native read-operation JSON:
 }
 ```
 
-Available reads include Scan, GetItem, batch and transactional reads, PartiQL SELECTs, and vector search. Use `onetui schema --datasource dynamodb` for examples and fields. Keys and expression values use tagged AttributeValue JSON.
+Operations include Scan, GetItem, batch and transactional reads, PartiQL statements, and vector search. Use `onetui schema --datasource dynamodb` for examples and fields. Keys and expression values use tagged AttributeValue JSON.
 
-PartiQL accepts one `SELECT` from the selected table per statement. Prefer typed parameters for values. A query without a key condition may scan the table.
+PartiQL statements can read or write the table they name. Prefer typed parameters for values. A query without a key condition may scan the table. If a write times out, inspect the target before retrying.
 
 ## Streams
 
