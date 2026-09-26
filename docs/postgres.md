@@ -1,6 +1,6 @@
 # PostgreSQL
 
-Browse schemas, tables, views and column metadata, inspect typed values, and query rows with SQL.
+Browse schemas, tables, views and column metadata, inspect typed values, and run SQL queries.
 
 ## Configuration
 
@@ -12,7 +12,7 @@ url_env = "ONETUI_POSTGRES_URL"
 
 Set the environment variable to your PostgreSQL connection string, then run `onetui --connection pg`. Use `onetui schema --datasource postgres` for TLS settings and other options.
 
-Use credentials with schema `USAGE` and relation `SELECT` permissions. Column-only grants may allow metadata inspection but prevent browsing all fields.
+Browsing needs schema `USAGE` and relation `SELECT`. Grant only the write permissions you intend to use.
 
 ## Usage
 

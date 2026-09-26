@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use onetui_core::config::Config;
-use onetui_core::provider::{Executor, PageRequest, RequestContext, ShutdownContext};
+use onetui_core::provider::{
+    Executor, PageRequest, QueryExecution, RequestContext, ShutdownContext,
+};
 use onetui_tui::App;
 
 fn key(app: &mut App, code: KeyCode) {
@@ -12,7 +14,10 @@ fn key(app: &mut App, code: KeyCode) {
 }
 
 async fn complete(app: &mut App, executor: &onetui_postgres::PostgresExecutor) {
-    let request = app.request.take().expect("keyboard action queued a read");
+    let request = app
+        .request
+        .take()
+        .expect("keyboard action queued a request");
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
     let page = PageRequest {
         resource: request.resource.clone(),
@@ -20,11 +25,18 @@ async fn complete(app: &mut App, executor: &onetui_postgres::PostgresExecutor) {
     };
     let result = if let Some(text) = request.query.clone() {
         executor
-            .query_page(onetui_core::provider::QueryRequest { page, text }, context)
+            .execute_query(onetui_core::provider::QueryRequest { page, text }, context)
             .await
     } else {
-        executor.fetch_page(page, context).await
+        executor
+            .fetch_page(page, context)
+            .await
+            .map(QueryExecution::Page)
     };
+    let result = result.map(|execution| match execution {
+        QueryExecution::Page(page) => page,
+        QueryExecution::Write(_) => panic!("expected rows from the fixture query"),
+    });
     app.complete(&request, result);
 }
 
@@ -73,14 +85,6 @@ async fn keyboard_sql_editor_results_and_browsing_return() {
     assert_eq!(app.view.resource.id, "postgres.query");
     assert_eq!(app.view.page.rows.len(), 100);
     key(&mut app, KeyCode::Char('n'));
-    complete(&mut app, &executor).await;
-    assert_eq!(
-        app.view.page.rows[0].cells[0]
-            .as_ref()
-            .and_then(onetui_core::Value::text),
-        Some("101")
-    );
-    key(&mut app, KeyCode::Char('p'));
     assert!(app.request.is_none());
     key(&mut app, KeyCode::Enter);
     assert!(app.row_detail);
@@ -267,7 +271,7 @@ mod terminal {
             }
         }
         async fn sessions(&self) -> Vec<tokio_postgres::Row> {
-            self.client.query("SELECT pid, wait_event FROM pg_stat_activity WHERE application_name='onetui-browse' AND usename='onetui_reader'", &[]).await.unwrap()
+            self.client.query("SELECT pid, wait_event FROM pg_stat_activity WHERE application_name='onetui' AND usename='onetui_reader'", &[]).await.unwrap()
         }
         async fn wait_count(&self, count: usize) {
             tokio::time::timeout(Duration::from_secs(3), async {
@@ -747,10 +751,6 @@ mod terminal {
             "doubled",
             "Page1",
         ]);
-        pty.send(b"n");
-        pty.wait(&["Page2", "101"]);
-        pty.send(b"p");
-        pty.wait(&["Page1", "doubled"]);
         pty.send(b"e");
         pty.wait(&["SQLquery", "postgres.query[100shown/100loaded]", "doubled"]);
         pty.send(b"\x15\x1b[200~SELECT 1/0\x1b[201~\x1b[15~");
@@ -760,11 +760,9 @@ mod terminal {
             "22012",
             "divisionbyzero",
             "SQLquery",
-            "postgres.query[100shown/100loaded]",
-            "doubled",
+            "postgres.query[1shown/1loaded]",
+            "rejected",
         ]);
-        pty.send(b"\x03");
-        pty.wait(&["postgres.query[100shown/100loaded]", "doubled"]);
         pty.send(b"\x1b");
         pty.wait(&["postgres.schemas", "public"]);
         pty.send(b"q");

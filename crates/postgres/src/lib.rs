@@ -48,8 +48,8 @@ pub const ROWS: ResourceDescriptor = ResourceDescriptor {
 
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
-        "id": "postgres", "operations": ["check", "metadata_browse", "row_browse", "query_page"],
-        "query_syntax": "One SELECT, VALUES or read-only WITH statement, optionally ending in a semicolon. No parameters, utility statements or writes. 1..256 result columns, 100 rows per page, 1 MiB page cap. Independent OFFSET reads; specify a unique ORDER BY. Server read-only transaction plus rollback and DISCARD ALL; use least-privilege credentials because SQL functions may have external effects.",
+        "id": "postgres", "operations": ["check", "metadata_browse", "row_browse", "query_page", "execute_query"],
+        "query_syntax": "Enter/F5: one server-parsed SQL statement executed once, with up to 100 returned rows or an affected-row count. No parameters or multiple statements. The 1 MiB display limit applies.",
         "resources": [&SCHEMAS, &RELATIONS, &COLUMNS, &ROWS],
         "row_paging": "100 rows; non-null unique default-B-tree bigint/text keysets (all composite components), otherwise best-effort OFFSET. No cross-page snapshot.",
         "replication": {"resources": ["postgres.replication", "postgres.wal_receiver"], "path": [], "columns": "All native pg_stat_replication / pg_stat_wal_receiver columns for the connected server version", "permissions": "PostgreSQL may return NULL for restricted fields without pg_read_all_stats; preserve those NULLs. Server obfuscates sensitive conninfo fields.", "limits": "100 rows per page, 1 MiB; independent reads, not an HA membership inventory. No changes to replication slots or configuration."},

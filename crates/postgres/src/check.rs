@@ -48,11 +48,8 @@ pub(crate) fn postgres_config(dsn: &str, deadline: Duration) -> Result<tokio_pos
         config.ssl_mode(SslMode::Require);
     }
     config.connect_timeout(deadline);
-    config.application_name("onetui-check");
-    config.options(format!(
-        "-c default_transaction_read_only=on -c statement_timeout={}",
-        deadline.as_millis()
-    ));
+    config.application_name("onetui");
+    config.options(format!("-c statement_timeout={}", deadline.as_millis()));
     Ok(config)
 }
 

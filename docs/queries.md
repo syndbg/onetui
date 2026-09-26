@@ -4,14 +4,14 @@ Press `e` or enter `:query` on a supported resource. Enter, F5 or Ctrl-R submits
 A new query starts empty. Its watermark is a hint that disappears when you type.
 OneTUI asks before running a query by default. Set `ask_for_query_confirm = false` in your config to skip the prompt.
 
-Press `e` to edit and submit a query again. Use `n/p` to page through results. `r` refreshes ordinary resource views.
+Press `e` to edit and submit a query again. Use `n/p` where results support paging. `r` refreshes ordinary resource views.
 In the query editor, Ctrl-P and Ctrl-N browse recent queries submitted on this connection.
 Press Shift+H or enter `:history` while browsing to choose one from a list. Enter opens it for editing; Esc closes the list.
 History stays in memory for the current session by default. To keep the last 100 submissions across restarts, add `persist_query_history = true` at the top of your config. The unencrypted file beside it (`config.history.json` for `config.toml`) contains full query text, including any passwords or tokens. Turning the setting off does not delete that file.
 
 | Datasource | Query |
 | --- | --- |
-| [PostgreSQL](#postgresql) | SQL row queries |
+| [PostgreSQL](#postgresql) | SQL queries |
 | [Qdrant](#qdrant) | HTTP requests |
 | [Kafka](kafka.md#replay-from-an-offset-or-timestamp) | Partition offset or timestamp replay |
 | [NATS](nats.md#replay) | Stream subject, sequence or time replay |
@@ -26,7 +26,7 @@ WHERE active AND balance > 0
 ORDER BY id
 ```
 
-Use one `SELECT`, `VALUES`, or `WITH` query that reads data. Parameters, multiple statements, and utility commands such as `EXPLAIN` are unsupported. Include a unique ordering when page order matters.
+Enter or F5 runs one SQL statement. Results show up to 100 rows and do not page. PostgreSQL checks the SQL; parameters and multiple statements are not supported. If execution times out, inspect the target before retrying.
 
 Use least-privilege credentials. Queries consume database resources and may be logged.
 

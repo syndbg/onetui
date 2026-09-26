@@ -231,9 +231,9 @@ case "$command" in
 esac
 
 if [[ "$command" == run ]]; then
-    if [[ ! -f target/demo-onetui.toml ]]; then
-        printf 'Prepare demos with make dev-up (or make dev-seed for running fixtures).\n' >&2
-        exit 1
+    if [[ ! -f target/demo-onetui.toml || ! -d target/demo-schemas || ! -d target/nats-schemas ]]; then
+        cargo run -p onetui-kafka --example seed_redpanda --locked -- --prepare
+        cargo run -p onetui-nats --example seed_nats --locked -- --prepare
     fi
     exec ./target/debug/onetui --config target/demo-onetui.toml
 fi

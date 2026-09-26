@@ -169,20 +169,15 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
     if app.query_editor.is_some() {
-        key_hints(
-            frame,
-            keys,
-            p,
-            &[
-                ("Enter/F5", "execute query"),
-                ("Shift-Enter", "new line"),
-                ("Esc", "return / cancel request"),
-                ("Ctrl-u", "clear draft"),
-                ("Ctrl-p/n", "previous/next query"),
-                ("", "16 KiB; draft kept in memory"),
-            ],
-            &[],
-        );
+        let hints = [
+            ("Enter/F5", "execute query"),
+            ("Shift-Enter", "new line"),
+            ("Esc", "return / cancel request"),
+            ("Ctrl-u", "clear draft"),
+            ("Ctrl-p/n", "previous/next query"),
+            ("", "16 KiB; draft kept in memory"),
+        ];
+        key_hints(frame, keys, p, &hints, &[]);
         return;
     } else if app.history_menu.is_some() {
         key_hints(
@@ -1504,17 +1499,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 Line::raw("Set ask_for_query_confirm = false in config.toml to skip this prompt"),
             ])
             .centered()
-            .block(
-                panel(
-                    p,
-                    if http_request {
-                        " Run request? "
-                    } else {
-                        " Run query? "
-                    },
-                )
-                .style(Style::new().bg(color(p.background))),
-            ),
+            .block(panel(p, " Run query? ").style(Style::new().bg(color(p.background)))),
             popup,
         );
     }
