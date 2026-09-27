@@ -28,6 +28,30 @@ impl Drop for Terminal {
     }
 }
 
+/// Terminal output with style sequences (`ESC [ ... m`) removed, so a wait matches the
+/// visible text whatever colors the theme and syntax highlighting put between words.
+/// Cursor movement stays, so text from different screen positions is never joined.
+fn unstyled(output: &[u8]) -> String {
+    let text = String::from_utf8_lossy(output);
+    let mut visible = String::with_capacity(text.len());
+    let mut rest = text.as_ref();
+    while let Some(start) = rest.find("\x1b[") {
+        visible.push_str(&rest[..start]);
+        let sequence = &rest[start + 2..];
+        let end = sequence
+            .find(|c: char| !(c.is_ascii_digit() || c == ';' || c == ':'))
+            .unwrap_or(sequence.len());
+        if sequence[end..].starts_with('m') {
+            rest = &sequence[end + 1..];
+        } else {
+            visible.push_str("\x1b[");
+            rest = sequence;
+        }
+    }
+    visible.push_str(rest);
+    visible
+}
+
 impl Terminal {
     fn read(&mut self) {
         let mut bytes = [0; 8192];
@@ -46,7 +70,7 @@ impl Terminal {
         let until = Instant::now() + Duration::from_secs(5);
         loop {
             self.read();
-            if String::from_utf8_lossy(&self.output).contains(token) {
+            if unstyled(&self.output).contains(token) {
                 return;
             }
             assert!(

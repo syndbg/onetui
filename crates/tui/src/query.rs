@@ -113,7 +113,14 @@ impl Editor {
         Ok(())
     }
 
-    pub fn lines(&self, width: usize, wrap: bool) -> (Vec<Line<'static>>, usize, usize) {
+    /// Lay the text out in lines with the caret marked. `paint` gives the style for the
+    /// grapheme at a byte offset, such as its syntax color.
+    pub fn lines(
+        &self,
+        width: usize,
+        wrap: bool,
+        paint: impl Fn(usize) -> Style,
+    ) -> (Vec<Line<'static>>, usize, usize) {
         let mut lines = vec![Line::default()];
         let mut column = 0;
         let mut caret = (0, 0);
@@ -136,9 +143,9 @@ impl Editor {
                 || (offset < self.cursor && self.cursor < offset + grapheme.len())
             {
                 caret = (lines.len() - 1, column);
-                Style::new().add_modifier(Modifier::REVERSED)
+                paint(offset).add_modifier(Modifier::REVERSED)
             } else {
-                Style::default()
+                paint(offset)
             };
             lines
                 .last_mut()
@@ -175,7 +182,7 @@ mod tests {
         assert!(editor.text.contains("\nFROM"));
         assert!(editor.insert("\x1b[31m").is_err());
         assert!(editor.insert(&"x".repeat(QUERY_BYTES)).is_err());
-        let (lines, row, _) = editor.lines(8, true);
+        let (lines, row, _) = editor.lines(8, true, |_| Style::default());
         assert!(lines.len() > 2 && row > 0);
         editor
             .key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))

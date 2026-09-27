@@ -34,6 +34,10 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &["nats.messages", "nats.core_messages", "nats.kv_history"],
     query: Some(QueryDescriptor {
         resource: "nats.query",
+        syntax: onetui_core::provider::Syntax::Verbs(&[
+            ("CONSUME", onetui_core::provider::Body::Raw),
+            ("PRODUCE", onetui_core::provider::Body::Raw),
+        ]),
         language: "NATS CONSUME/PRODUCE",
         contextual_watermark: Some(crate::statement::watermark),
         watermark: "PRODUCE stream subject\n\nhello",

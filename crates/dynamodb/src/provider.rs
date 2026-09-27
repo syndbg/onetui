@@ -29,6 +29,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &["dynamodb.records"],
     query: Some(QueryDescriptor {
         resource: "dynamodb.query",
+        syntax: onetui_core::provider::Syntax::Json,
         language: "DynamoDB operation JSON",
         watermark: "{\n  \"operation\": \"Scan\",\n  \"limit\": 100\n}",
         is_statement: false,

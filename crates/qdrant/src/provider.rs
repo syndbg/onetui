@@ -28,6 +28,14 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "qdrant.query",
+        syntax: onetui_core::provider::Syntax::Verbs(&[
+            ("GET", onetui_core::provider::Body::Json),
+            ("POST", onetui_core::provider::Body::Json),
+            ("PUT", onetui_core::provider::Body::Json),
+            ("PATCH", onetui_core::provider::Body::Json),
+            ("DELETE", onetui_core::provider::Body::Json),
+            ("HEAD", onetui_core::provider::Body::Json),
+        ]),
         language: "HTTP request",
         contextual_watermark: None,
         watermark: "POST /collections/{collection}/points/scroll\n\n{\n  \"limit\": 10\n}",

@@ -4,6 +4,7 @@ mod history;
 mod popup;
 mod query;
 mod row_value;
+mod syntax;
 #[cfg(test)]
 mod test_provider;
 #[cfg(test)]
