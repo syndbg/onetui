@@ -3,13 +3,13 @@ use onetui_core::{Column, PAGE_BYTES, Page, Row, Value};
 use reqwest::{Method, header};
 use url::Url;
 
-pub(crate) struct Request<'a> {
+pub struct Request<'a> {
     pub method: Method,
     pub path: &'a str,
     pub body: &'a str,
 }
 
-pub(crate) fn parse(text: &str) -> Result<Request<'_>> {
+pub fn parse(text: &str) -> Result<Request<'_>> {
     let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
     let mut parts = line.split_whitespace();
     let method = parts.next().ok_or_else(|| anyhow!("Enter METHOD /path"))?;
@@ -33,28 +33,19 @@ pub(crate) fn parse(text: &str) -> Result<Request<'_>> {
     Ok(Request { method, path, body })
 }
 
-pub(crate) fn target(base: &str, request: &Request<'_>) -> Result<Url> {
-    let base = crate::qdrant_url(base)?;
+pub fn target(base: &Url, request: &Request<'_>) -> Result<Url> {
     let target = base.join(request.path)?;
     ensure!(
-        target.origin() == base.origin() && target.fragment().is_none(),
-        "Request path must stay on the configured Qdrant endpoint"
+        target.origin() == base.origin()
+            && target.fragment().is_none()
+            && target.username().is_empty()
+            && target.password().is_none(),
+        "Request path must stay on the configured endpoint"
     );
     Ok(target)
 }
 
-pub(crate) async fn send(
-    client: &reqwest::Client,
-    url: Url,
-    key: Option<&str>,
-    request: &Request<'_>,
-) -> Result<Page> {
-    let mut outbound = client.request(request.method.clone(), url);
-    if let Some(key) = key {
-        let mut value = header::HeaderValue::from_str(key)?;
-        value.set_sensitive(true);
-        outbound = outbound.header("api-key", value);
-    }
+pub async fn send(mut outbound: reqwest::RequestBuilder, request: &Request<'_>) -> Result<Page> {
     if !request.body.is_empty() {
         outbound = outbound
             .header(header::CONTENT_TYPE, "application/json")
@@ -70,7 +61,7 @@ pub(crate) async fn send(
         response
             .content_length()
             .is_none_or(|size| size <= limit as u64),
-        "Qdrant HTTP {status}: response exceeds the display limit"
+        "HTTP {status}: response exceeds the display limit"
     );
     let mut body = Vec::new();
     while let Some(chunk) = response
@@ -80,7 +71,7 @@ pub(crate) async fn send(
     {
         ensure!(
             chunk.len() <= limit - body.len(),
-            "Qdrant HTTP {status}: response exceeds the display limit"
+            "HTTP {status}: response exceeds the display limit"
         );
         body.extend_from_slice(&chunk);
     }
@@ -108,26 +99,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_keeps_body_for_qdrant_and_stays_on_configured_origin() {
+    fn request_keeps_native_body_and_stays_on_configured_origin() {
         let request =
             parse("POST /collections/demo/points/scroll?wait=true\n\n{invalid json}").unwrap();
         assert_eq!(request.method, Method::POST);
         assert_eq!(request.body, "{invalid json}");
         assert_eq!(
-            target("https://qdrant.example:6333", &request)
-                .unwrap()
-                .as_str(),
+            target(
+                &Url::parse("https://qdrant.example:6333").unwrap(),
+                &request
+            )
+            .unwrap()
+            .as_str(),
             "https://qdrant.example:6333/collections/demo/points/scroll?wait=true"
         );
         for text in [
             "GET https://other.example/collections",
             "GET //other.example/collections",
+            "GET /\\other.example/collections",
+            "GET /\\user:password@qdrant.example:6333/collections",
             "GET /collections#fragment",
             "POST /collections\n{\"name\":\"demo\"}",
         ] {
             assert!(
                 parse(text)
-                    .and_then(|request| target("https://qdrant.example:6333", &request))
+                    .and_then(|request| target(
+                        &Url::parse("https://qdrant.example:6333").unwrap(),
+                        &request
+                    ))
                     .is_err(),
                 "{text}"
             );

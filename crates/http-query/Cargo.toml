@@ -1,0 +1,13 @@
+[package]
+name = "onetui-http-query"
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+onetui-core = { path = "../core" }
+anyhow.workspace = true
+url.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }

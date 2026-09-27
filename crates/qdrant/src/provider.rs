@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-    QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
+    QueryDescriptor, QueryExecution, QueryRequest, RequestContext, ShutdownContext, WriteOutcome,
+    WriteResult,
 };
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
 use qdrant_client::qdrant::{
@@ -251,7 +252,17 @@ impl QdrantExecutor {
 }
 
 impl Executor for QdrantExecutor {
-    async fn query_page(&self, request: QueryRequest, mut context: RequestContext) -> Result<Page> {
+    async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
+        match self.execute_query(request, context).await? {
+            QueryExecution::Page(page) => Ok(page),
+            QueryExecution::Write(result) => Err(anyhow!(result.summary)),
+        }
+    }
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        mut context: RequestContext,
+    ) -> Result<QueryExecution> {
         ensure!(!self.closed, "Qdrant session is closed");
         request.validate()?;
         ensure!(
@@ -260,11 +271,11 @@ impl Executor for QdrantExecutor {
                 && request.page.continuation.is_none(),
             "Invalid Qdrant query resource"
         );
-        let input = crate::http::parse(&request.text)?;
+        let input = onetui_http_query::parse(&request.text)?;
         let base = self.rest_url.as_deref().ok_or_else(|| {
             anyhow!("Qdrant HTTP requests require rest_url in this connection's config")
         })?;
-        let target = crate::http::target(base, &input)?;
+        let target = onetui_http_query::target(&crate::qdrant_url(base)?, &input)?;
         let key = self.api_key.as_ref().and_then(|key| key.to_str().ok());
         let mut lease = Lease {
             channel: context.run(self.rest_client.lock()).await?,
@@ -274,33 +285,40 @@ impl Executor for QdrantExecutor {
         context
             .run(self.connect_rest(&mut lease.channel, base))
             .await??;
+        let mut outbound = lease
+            .channel
+            .as_ref()
+            .expect("REST client")
+            .request(input.method.clone(), target);
+        if let Some(key) = key {
+            let mut value = reqwest::header::HeaderValue::from_str(key)?;
+            value.set_sensitive(true);
+            outbound = outbound.header("api-key", value);
+        }
         let mut dispatched = false;
         let attempt = context
             .run(async {
                 dispatched = true;
-                crate::http::send(
-                    lease.channel.as_ref().expect("REST client"),
-                    target,
-                    key,
-                    &input,
-                )
-                .await
+                onetui_http_query::send(outbound, &input).await
             })
             .await;
         match attempt {
             Ok(Ok(page)) => {
                 lease.clean = true;
                 self.status.send_replace(ConnectionStatus::Connected);
-                Ok(page)
+                Ok(QueryExecution::Page(page))
             }
             Ok(Err(error)) | Err(error) if dispatched => {
                 let error = onetui_core::diagnostic(error, &[key.unwrap_or("")]);
                 if matches!(input.method, reqwest::Method::GET | reqwest::Method::HEAD) {
                     Err(error)
                 } else {
-                    Err(anyhow!(
-                        "HTTP request outcome unknown: {error}. Inspect the target before retrying"
-                    ))
+                    Ok(QueryExecution::Write(WriteResult {
+                        outcome: WriteOutcome::Unknown,
+                        summary: format!(
+                            "HTTP request outcome unknown: {error}. Inspect the target before retrying"
+                        ),
+                    }))
                 }
             }
             Ok(Err(error)) | Err(error) => Err(error),

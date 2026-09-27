@@ -152,8 +152,8 @@ async fn http_requests_show_status_and_raw_body() {
         "POST /collections/demo_products/points/scroll\n\n{\"limit\":1}",
     ] {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let page = executor
-            .query_page(
+        let result = executor
+            .execute_query(
                 onetui_core::provider::QueryRequest {
                     page: PageRequest {
                         resource: Resource::new("qdrant.query", vec![]),
@@ -165,6 +165,9 @@ async fn http_requests_show_status_and_raw_body() {
             )
             .await
             .unwrap();
+        let onetui_core::provider::QueryExecution::Page(page) = result else {
+            panic!("Expected a native HTTP response");
+        };
         assert_eq!(
             page.rows[0].cells[0].as_ref().unwrap().text(),
             Some("200 OK")
