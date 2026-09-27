@@ -108,6 +108,8 @@ jobs:
             images: amazon/dynamodb-local:3.3.1
           - datasource: rabbitmq
             images: rabbitmq:4.3.5-management
+          - datasource: cql
+            images: scylladb/scylla:2026.3.1 cassandra:5.0.9
           - datasource: tui
             images: postgres:16.13 qdrant/qdrant:v1.18.2
     steps:

@@ -13,6 +13,8 @@ export ONETUI_NATS_USERNAME='fixture-reader'
 export ONETUI_NATS_PASSWORD='fixture-reader-only'
 export ONETUI_RABBITMQ_USERNAME='fixture-reader'
 export ONETUI_RABBITMQ_PASSWORD='fixture-reader-only'
+export ONETUI_CQL_USERNAME='fixture_reader'
+export ONETUI_CQL_PASSWORD='fixture-reader-only'
 export ONETUI_DYNAMODB_ACCESS_KEY='onetuiFixtureOnly'
 export ONETUI_DYNAMODB_SECRET_KEY='fixture-secret-only'
 
@@ -74,6 +76,13 @@ seed_rabbitmq() {
     sh hack/fixtures/rabbitmq-seed.sh
 }
 
+seed_cql() {
+    sh hack/fixtures/cql-demo.sh scylla |
+        "${compose[@]}" exec -T scylla cqlsh 127.0.0.1 19042 -u fixture_admin -p fixture-admin-only
+    sh hack/fixtures/cql-demo.sh cassandra |
+        "${compose[@]}" exec -T cassandra cqlsh 127.0.0.1 19043
+}
+
 seed() {
     seed_postgres
     seed_qdrant
@@ -81,6 +90,7 @@ seed() {
     seed_nats
     seed_dynamodb
     seed_rabbitmq
+    seed_cql
 }
 
 up() {
@@ -95,6 +105,8 @@ up() {
     wait_for_connection local_dynamodb
     seed
     wait_for_connection local_rabbitmq
+    wait_for_connection local_scylla
+    wait_for_connection local_cassandra
 }
 
 up_test_suite() {
@@ -108,6 +120,7 @@ up_test_suite() {
         nats) services=(nats nats-tls nats-secure nats-jwt nats-system nats-system-peer redpanda) ;;
         dynamodb) services=(dynamodb) ;;
         rabbitmq) services=(rabbitmq rabbitmq-traffic) ;;
+        cql) services=(scylla cassandra) ;;
         tui) services=(postgres qdrant) ;;
     esac
 
@@ -140,6 +153,12 @@ up_test_suite() {
         rabbitmq)
             seed_rabbitmq
             wait_for_connection local_rabbitmq
+            ;;
+        cql)
+            # Roles are seeded, so seed before the reader connection can check.
+            seed_cql
+            wait_for_connection local_scylla
+            wait_for_connection local_cassandra
             ;;
         tui)
             wait_for_connection local_pg
@@ -208,7 +227,7 @@ test_suite=${2:-all}
 
 if [[ "$command" == test ]]; then
     case "$test_suite" in
-        all|postgres|qdrant|kafka|nats|dynamodb|rabbitmq|tui) ;;
+        all|postgres|qdrant|kafka|nats|dynamodb|rabbitmq|cql|tui) ;;
         *) printf 'Unknown integration test suite: %s\n' "$test_suite" >&2; exit 2 ;;
     esac
 fi
@@ -262,7 +281,7 @@ case "$command" in
         check_connection local_nats
         exec cargo run -p onetui-nats --example produce_nats --locked
         ;;
-    check) check_connection local_pg; check_connection local_pg_replica; check_connection local_qdrant; check_connection local_kafka; check_connection local_redpanda; check_connection local_nats; check_connection local_nats_system; check_connection local_dynamodb; check_connection local_rabbitmq ;;
+    check) check_connection local_pg; check_connection local_pg_replica; check_connection local_qdrant; check_connection local_kafka; check_connection local_redpanda; check_connection local_nats; check_connection local_nats_system; check_connection local_dynamodb; check_connection local_rabbitmq; check_connection local_scylla; check_connection local_cassandra ;;
     down) "${compose[@]}" down --timeout 10 ;;
     logs) "${compose[@]}" logs --no-color --tail 100 ;;
     test)

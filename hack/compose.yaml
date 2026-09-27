@@ -35,6 +35,51 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+  # The CQL driver opens pools at the address and port each node advertises, so both
+  # nodes advertise loopback and listen on their published port instead of 9042.
+  scylla:
+    image: scylladb/scylla:2026.3.1
+    command:
+      - --smp=1
+      - --memory=512M
+      - --overprovisioned=1
+      - --developer-mode=1
+      - --rpc-address=0.0.0.0
+      - --broadcast-rpc-address=127.0.0.1
+      - --native-transport-port=19042
+      # The shard-aware port defaults to 19042; move it and publish it so the driver's
+      # per-shard connections reach the node too.
+      - --native-shard-aware-transport-port=19142
+      - --options-file=/etc/scylla/onetui.yaml
+    ports:
+      - "127.0.0.1:19042:19042"
+      - "127.0.0.1:19142:19142"
+    volumes:
+      - ./fixtures/scylla.yaml:/etc/scylla/onetui.yaml:ro
+    healthcheck:
+      test: ["CMD", "cqlsh", "127.0.0.1", "19042", "-u", "fixture_admin", "-p", "fixture-admin-only", "-e", "SELECT release_version FROM system.local"]
+      interval: 3s
+      timeout: 10s
+      retries: 60
+  cassandra:
+    image: cassandra:5.0.9
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "sed -i 's/^native_transport_port: 9042/native_transport_port: 19043/' /etc/cassandra/cassandra.yaml && exec docker-entrypoint.sh cassandra -f"
+    environment:
+      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.1
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    ports:
+      - "127.0.0.1:19043:19043"
+    tmpfs:
+      - /var/lib/cassandra
+    healthcheck:
+      test: ["CMD", "cqlsh", "127.0.0.1", "19043", "-e", "SELECT release_version FROM system.local"]
+      interval: 3s
+      timeout: 10s
+      retries: 60
   dynamodb:
     image: amazon/dynamodb-local:3.3.1
     command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb", "-disableTelemetry"]

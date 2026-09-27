@@ -24,6 +24,8 @@ These are disposable local services with fake credentials, not production templa
 | `local_nats` | Streams, consumers, KV history and object contents |
 | `local_nats_system` | Server discovery |
 | `local_rabbitmq` | Queues, bindings, policies and populated connection metrics |
+| `local_scylla` | `onetui_demo.events` across three pages, typed values, a UDT and a case-sensitive table |
+| `local_cassandra` | The same demo schema without authentication |
 
 ## Redpanda and Schema Registry
 

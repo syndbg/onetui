@@ -59,10 +59,14 @@ impl Server {
                 .unwrap();
             let key = PrivateKeyDer::from_pem_file(&key).unwrap();
             Some(Arc::new(
-                rustls::ServerConfig::builder()
-                    .with_no_client_auth()
-                    .with_single_cert(certs, key)
-                    .unwrap(),
+                rustls::ServerConfig::builder_with_provider(Arc::new(
+                    rustls::crypto::ring::default_provider(),
+                ))
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .unwrap(),
             ))
         } else {
             None

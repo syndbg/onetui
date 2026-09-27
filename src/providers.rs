@@ -4,6 +4,7 @@ use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
     QueryExecution, QueryRequest, RequestContext, ShutdownContext,
 };
+use onetui_cql::{CqlExecutor, CqlProvider};
 use onetui_dynamodb::{DynamoDbExecutor, DynamoDbProvider};
 use onetui_kafka::{KafkaExecutor, KafkaProvider};
 use onetui_nats::{NatsExecutor, NatsProvider};
@@ -19,6 +20,7 @@ pub enum BuiltinProvider {
     Nats(NatsProvider),
     DynamoDb(DynamoDbProvider),
     RabbitMq(RabbitMqProvider),
+    Cql(CqlProvider),
 }
 
 pub const BUILTINS: &[BuiltinProvider] = &[
@@ -28,6 +30,7 @@ pub const BUILTINS: &[BuiltinProvider] = &[
     BuiltinProvider::Nats(NatsProvider),
     BuiltinProvider::DynamoDb(DynamoDbProvider),
     BuiltinProvider::RabbitMq(RabbitMqProvider),
+    BuiltinProvider::Cql(CqlProvider),
 ];
 
 pub enum BuiltinExecutor {
@@ -37,6 +40,7 @@ pub enum BuiltinExecutor {
     Nats(NatsExecutor),
     DynamoDb(DynamoDbExecutor),
     RabbitMq(RabbitMqExecutor),
+    Cql(CqlExecutor),
 }
 
 impl Provider for BuiltinProvider {
@@ -50,6 +54,7 @@ impl Provider for BuiltinProvider {
             Self::Nats(p) => p.descriptor(),
             Self::DynamoDb(p) => p.descriptor(),
             Self::RabbitMq(p) => p.descriptor(),
+            Self::Cql(p) => p.descriptor(),
         }
     }
 
@@ -61,6 +66,7 @@ impl Provider for BuiltinProvider {
             Self::Nats(p) => p.validate_config(options),
             Self::DynamoDb(p) => p.validate_config(options),
             Self::RabbitMq(p) => p.validate_config(options),
+            Self::Cql(p) => p.validate_config(options),
         }
     }
 
@@ -76,6 +82,7 @@ impl Provider for BuiltinProvider {
             Self::Nats(p) => p.configure(options, env).map(BuiltinExecutor::Nats),
             Self::DynamoDb(p) => p.configure(options, env).map(BuiltinExecutor::DynamoDb),
             Self::RabbitMq(p) => p.configure(options, env).map(BuiltinExecutor::RabbitMq),
+            Self::Cql(p) => p.configure(options, env).map(BuiltinExecutor::Cql),
         }
     }
 }
@@ -89,6 +96,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.stop_follow(context).await,
             Self::DynamoDb(e) => e.stop_follow(context).await,
             Self::RabbitMq(e) => e.stop_follow(context).await,
+            Self::Cql(e) => e.stop_follow(context).await,
         }
     }
     async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
@@ -99,6 +107,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.follow_page(request, context).await,
             Self::DynamoDb(e) => e.follow_page(request, context).await,
             Self::RabbitMq(e) => e.follow_page(request, context).await,
+            Self::Cql(e) => e.follow_page(request, context).await,
         }
     }
     async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
@@ -109,6 +118,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.query_page(request, context).await,
             Self::DynamoDb(e) => e.query_page(request, context).await,
             Self::RabbitMq(e) => e.query_page(request, context).await,
+            Self::Cql(e) => e.query_page(request, context).await,
         }
     }
     async fn execute_query(
@@ -123,6 +133,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.execute_query(request, context).await,
             Self::DynamoDb(e) => e.execute_query(request, context).await,
             Self::RabbitMq(e) => e.execute_query(request, context).await,
+            Self::Cql(e) => e.execute_query(request, context).await,
         }
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
@@ -133,6 +144,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.status(),
             Self::DynamoDb(e) => e.status(),
             Self::RabbitMq(e) => e.status(),
+            Self::Cql(e) => e.status(),
         }
     }
 
@@ -144,6 +156,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.check(context).await,
             Self::DynamoDb(e) => e.check(context).await,
             Self::RabbitMq(e) => e.check(context).await,
+            Self::Cql(e) => e.check(context).await,
         }
     }
 
@@ -155,6 +168,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.fetch_page(request, context).await,
             Self::DynamoDb(e) => e.fetch_page(request, context).await,
             Self::RabbitMq(e) => e.fetch_page(request, context).await,
+            Self::Cql(e) => e.fetch_page(request, context).await,
         }
     }
 
@@ -166,6 +180,7 @@ impl Executor for BuiltinExecutor {
             Self::Nats(e) => e.shutdown(context).await,
             Self::DynamoDb(e) => e.shutdown(context).await,
             Self::RabbitMq(e) => e.shutdown(context).await,
+            Self::Cql(e) => e.shutdown(context).await,
         }
     }
 }
@@ -251,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn postgres_variant_delegates_configuration_status_cancel_and_shutdown() {
         validate_catalog(BUILTINS).unwrap();
-        assert_eq!(BUILTINS.len(), 6);
+        assert_eq!(BUILTINS.len(), 7);
         let provider = find_provider(BUILTINS, "postgres").unwrap();
         let options = toml::from_str("url_env='DSN'").unwrap();
         provider.validate_config(&options).unwrap();
@@ -320,6 +335,36 @@ mod tests {
                 )
                 .await
                 .is_err()
+        );
+        executor
+            .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+            .await
+            .unwrap();
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Closed);
+    }
+
+    #[tokio::test]
+    async fn cql_variant_registers_lazily_and_delegates_cancellation_and_shutdown() {
+        let provider = find_provider(BUILTINS, "cql").unwrap();
+        let options = toml::from_str("nodes=['127.0.0.1:9042']").unwrap();
+        provider.validate_config(&options).unwrap();
+        assert_eq!(provider.descriptor().entry_resource, Some("cql.keyspaces"));
+        assert_eq!(provider.descriptor().query.unwrap().resource, "cql.query");
+        let mut executor = provider
+            .configure(&options, &|_| panic!("no secret configured"))
+            .unwrap();
+        assert!(matches!(executor, BuiltinExecutor::Cql(_)));
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Configured);
+        let (cancel, context) = RequestContext::new(Duration::from_secs(1));
+        cancel.send(()).unwrap();
+        assert!(
+            executor
+                .check(context)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("cancelled")
         );
         executor
             .shutdown(ShutdownContext::new(Duration::from_secs(1)))

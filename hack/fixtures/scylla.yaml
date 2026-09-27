@@ -1,0 +1,6 @@
+# Disposable fixture settings. Recent Scylla creates no default superuser; the salted
+# password is fixture-admin-only as SHA-512 crypt (openssl passwd -6).
+authenticator: PasswordAuthenticator
+authorizer: CassandraAuthorizer
+auth_superuser_name: fixture_admin
+auth_superuser_salted_password: "$6$onetuifixture$Zi2WlbyyioHmdAwXBUpDpEvywRKrMsH7YtqBKYZNIlNmGGZWnmW1GMZi7y5Z9MTYtQaUe31Xon09IMjXEd0cu0"
