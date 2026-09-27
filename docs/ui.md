@@ -48,6 +48,8 @@ Press `f` on a supported resource to follow new arrivals. Press `f` or Ctrl-C to
 
 ## Connection problems
 
+If a connection fails to open, a popup shows the reason. Enter or Esc returns to the connection list. Errors after a connection has loaded stay in the footer.
+
 Check an alias without opening the TUI:
 
 ```sh
