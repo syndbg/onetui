@@ -28,6 +28,8 @@ Integration tests require fresh disposable fixtures and refuse an existing devel
 
 PRs should state the problem, changes, checks and any compatibility risks. Report unrun checks; do not weaken tests to pass. Docs-only changes need content/link checks and `git diff --check`. See [performance checks](hack/performance.md) when investigating latency. Use `make theme-gallery` after UI or palette changes to regenerate the theme previews.
 
+Put `[skip-ci]` in the head commit message to skip PR and main CI jobs. Manual runs and published releases still run.
+
 ## Releases
 
 Target: v0.2.0. Follow Semantic Versioning; update Cargo.toml and Cargo.lock together. Tags must exactly match Cargo's version with a `v` prefix.

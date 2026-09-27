@@ -12,8 +12,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  skip:
+    name: Check CI marker
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.marker.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - id: marker
+        run: |
+          if ! git log -1 --format=%B | grep -Fiq '[skip-ci]'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build
+    needs: skip
+    if: needs.skip.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -29,6 +47,8 @@ jobs:
 
   format:
     name: Format
+    needs: skip
+    if: needs.skip.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -39,6 +59,8 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: skip
+    if: needs.skip.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -54,6 +76,8 @@ jobs:
 
   unit:
     name: Unit tests
+    needs: skip
+    if: needs.skip.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -69,6 +93,8 @@ jobs:
 
   shell:
     name: Shell syntax
+    needs: skip
+    if: needs.skip.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -79,6 +105,8 @@ jobs:
 
   workflow:
     name: Workflow definitions
+    needs: skip
+    if: needs.skip.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

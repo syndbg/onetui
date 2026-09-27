@@ -15,6 +15,7 @@ concurrency:
 jobs:
   build:
     name: Build
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci]')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -30,6 +31,7 @@ jobs:
 
   format:
     name: Format
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci]')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -40,6 +42,7 @@ jobs:
 
   clippy:
     name: Clippy
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci]')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -55,6 +58,7 @@ jobs:
 
   unit:
     name: Unit tests
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci]')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -70,6 +74,7 @@ jobs:
 
   shell:
     name: Shell syntax
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci]')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -80,6 +85,7 @@ jobs:
 
   workflow:
     name: Workflow definitions
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci]')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
