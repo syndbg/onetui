@@ -951,7 +951,7 @@ fn connection_form(frame: &mut Frame, area: Rect, app: &App) {
         let width = fields.width.saturating_sub(label_width + 2).max(1) as usize;
         let value = if i == form.field {
             // Keep the caret visible while editing a value longer than the field.
-            let (lines, row, _) = input.lines(width, true);
+            let (lines, row, _) = input.lines(width, true, |_| Style::default());
             lines.into_iter().nth(row).unwrap_or_default()
         } else {
             Line::raw(display(&input.text))
@@ -1061,8 +1061,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     );
                 }
             } else {
-                let (lines, row, column) =
-                    editor.lines(inner.width as usize, app.config.display.word_wrap);
+                let kinds = syntax_kinds(app, &editor.text);
+                let (lines, row, column) = editor.lines(
+                    inner.width as usize,
+                    app.config.display.word_wrap,
+                    |offset| {
+                        kinds
+                            .get(offset)
+                            .map_or_else(Style::default, |&kind| syntax_style(p, kind))
+                    },
+                );
                 let top = row.saturating_sub(inner.height.saturating_sub(1) as usize);
                 let left = if app.config.display.word_wrap {
                     0
@@ -1075,11 +1083,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 );
             }
         } else if let Some(text) = &app.view.query {
-            let lines = text
-                .split('\n')
-                .map(|line| Line::raw(display(line)))
-                .collect::<Vec<_>>();
-            frame.render_widget(wrapping(Paragraph::new(lines), app), inner);
+            let kinds = syntax_kinds(app, text);
+            frame.render_widget(
+                wrapping(Paragraph::new(painted(text, &kinds, p)), app),
+                inner,
+            );
         }
     }
     if app.connection_form.is_some() {
@@ -1529,6 +1537,63 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Alignment::Center,
         );
     }
+}
+
+/// Syntax kinds for query text in the current view's language. Everything is plain when
+/// value highlighting is turned off, which also governs the editor.
+fn syntax_kinds(app: &App, text: &str) -> Vec<crate::syntax::Kind> {
+    match app.query_descriptor() {
+        Some(descriptor) if app.config.display.highlight => {
+            crate::syntax::kinds(descriptor.syntax, text)
+        }
+        _ => vec![crate::syntax::Kind::Plain; text.len()],
+    }
+}
+
+/// Syntax colors reuse the palette's existing roles, so every theme has them.
+fn syntax_style(p: &Palette, kind: crate::syntax::Kind) -> Style {
+    use crate::syntax::Kind;
+    match kind {
+        Kind::Plain => Style::default(),
+        Kind::Keyword => Style::new()
+            .fg(color(p.key_hint))
+            .add_modifier(Modifier::BOLD),
+        Kind::String => Style::new().fg(color(p.success)),
+        Kind::Number => Style::new().fg(color(p.warning)),
+        Kind::Comment => Style::new()
+            .fg(color(p.muted))
+            .add_modifier(Modifier::ITALIC),
+        Kind::Name => Style::new().fg(color(p.identifier)),
+    }
+}
+
+/// Lines of `text` with each run of one kind as one span.
+fn painted(text: &str, kinds: &[crate::syntax::Kind], p: &Palette) -> Vec<Line<'static>> {
+    let mut offset = 0;
+    text.split('\n')
+        .map(|line| {
+            let mut spans = Vec::new();
+            let mut start = 0;
+            let kind_at = |i: usize| kinds.get(offset + i).copied();
+            for (i, _) in line.char_indices().skip(1) {
+                if kind_at(i) != kind_at(start) {
+                    spans.push(Span::styled(
+                        display(&line[start..i]),
+                        kind_at(start).map_or_else(Style::default, |kind| syntax_style(p, kind)),
+                    ));
+                    start = i;
+                }
+            }
+            if start < line.len() {
+                spans.push(Span::styled(
+                    display(&line[start..]),
+                    kind_at(start).map_or_else(Style::default, |kind| syntax_style(p, kind)),
+                ));
+            }
+            offset += line.len() + 1;
+            Line::from(spans)
+        })
+        .collect()
 }
 
 /// A titled panel on an opaque background, so a popup hides what it covers.
@@ -2137,6 +2202,44 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use std::io::Write;
+
+    #[test]
+    fn editor_and_executed_query_are_syntax_colored_unless_highlighting_is_off() {
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, Some("sample"));
+        let request = app.request.take().unwrap();
+        app.complete(&request, Ok(Page::default()));
+        app.act(Action::Query);
+        app.paste("SELECT 'x' FROM t");
+        let p = app.config.theme.palette();
+        // The first cell showing `text` on screen.
+        let cell = |app: &App, text: &str| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|frame| draw(frame, app)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            (0..24)
+                .flat_map(|y| (0..80).map(move |x| (x, y)))
+                .find(|&(x, y)| {
+                    (0..text.len() as u16)
+                        .all(|i| buffer[(x + i, y)].symbol() == &text[i as usize..i as usize + 1])
+                })
+                .map(|position| buffer[position].clone())
+                .unwrap_or_else(|| panic!("{text} not on screen"))
+        };
+        let keyword = cell(&app, "SELECT");
+        assert_eq!(keyword.fg, color(p.key_hint));
+        assert!(keyword.modifier.contains(Modifier::BOLD));
+        assert_eq!(cell(&app, "'x'").fg, color(p.success));
+
+        app.config.display.highlight = false;
+        let plain = cell(&app, "SELECT");
+        assert!(!plain.modifier.contains(Modifier::BOLD));
+        assert_ne!(plain.fg, color(p.key_hint));
+    }
 
     #[test]
     fn query_watermark_disappears_on_input_and_returns_when_cleared() {

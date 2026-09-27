@@ -61,6 +61,35 @@ pub(crate) const RESOURCES: &[&ResourceDescriptor] = &[
     ),
 ];
 
+/// CQL words beyond the shared SQL set, colored as keywords in the editor. `key` and
+/// `type` are left out: they are common column names, and coloring those misleads.
+pub(crate) const CQL_KEYWORDS: &[&str] = &[
+    "ALLOW",
+    "APPLY",
+    "BATCH",
+    "CONTAINS",
+    "COUNTER",
+    "FILTERING",
+    "FROZEN",
+    "KEYSPACE",
+    "KEYSPACES",
+    "LIST",
+    "LOGGED",
+    "MAP",
+    "MATERIALIZED",
+    "PERMISSIONS",
+    "ROLE",
+    "ROLES",
+    "STATIC",
+    "TIMEUUID",
+    "TOKEN",
+    "TTL",
+    "TUPLE",
+    "UNLOGGED",
+    "USE",
+    "WRITETIME",
+];
+
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "configuration": {

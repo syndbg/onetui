@@ -100,26 +100,37 @@
 <text x="396" y="209" fill="#b4befe" font-weight="normal" textLength="1060" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
 <rect x="16" y="214" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="231" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="214" width="1420" height="22" fill="#1e1e2e"/>
-<text x="26" y="231" fill="#cdd6f4" font-weight="normal" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">SELECT id, name, country                                                                                                                      </text>
+<rect x="26" y="214" width="60" height="22" fill="#1e1e2e"/>
+<text x="26" y="231" fill="#89dceb" font-weight="bold" textLength="60" lengthAdjust="spacingAndGlyphs" xml:space="preserve">SELECT</text>
+<rect x="86" y="214" width="1360" height="22" fill="#1e1e2e"/>
+<text x="86" y="231" fill="#cdd6f4" font-weight="normal" textLength="1360" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> id, name, country                                                                                                                      </text>
 <rect x="1446" y="214" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="231" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="236" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="253" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="236" width="1420" height="22" fill="#1e1e2e"/>
-<text x="26" y="253" fill="#cdd6f4" font-weight="normal" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">FROM demo.customers                                                                                                                           </text>
+<rect x="26" y="236" width="40" height="22" fill="#1e1e2e"/>
+<text x="26" y="253" fill="#89dceb" font-weight="bold" textLength="40" lengthAdjust="spacingAndGlyphs" xml:space="preserve">FROM</text>
+<rect x="66" y="236" width="1380" height="22" fill="#1e1e2e"/>
+<text x="66" y="253" fill="#cdd6f4" font-weight="normal" textLength="1380" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> demo.customers                                                                                                                           </text>
 <rect x="1446" y="236" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="253" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="258" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="275" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="258" width="1420" height="22" fill="#1e1e2e"/>
-<text x="26" y="275" fill="#cdd6f4" font-weight="normal" textLength="1420" lengthAdjust="spacingAndGlyphs" xml:space="preserve">WHERE active                                                                                                                                  </text>
+<rect x="26" y="258" width="50" height="22" fill="#1e1e2e"/>
+<text x="26" y="275" fill="#89dceb" font-weight="bold" textLength="50" lengthAdjust="spacingAndGlyphs" xml:space="preserve">WHERE</text>
+<rect x="76" y="258" width="1370" height="22" fill="#1e1e2e"/>
+<text x="76" y="275" fill="#cdd6f4" font-weight="normal" textLength="1370" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> active                                                                                                                                  </text>
 <rect x="1446" y="258" width="10" height="22" fill="#1e1e2e"/>
 <text x="1446" y="275" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <rect x="16" y="280" width="10" height="22" fill="#1e1e2e"/>
 <text x="16" y="297" fill="#b4befe" font-weight="normal" textLength="10" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<rect x="26" y="280" width="110" height="22" fill="#1e1e2e"/>
-<text x="26" y="297" fill="#cdd6f4" font-weight="normal" textLength="110" lengthAdjust="spacingAndGlyphs" xml:space="preserve">ORDER BY id</text>
+<rect x="26" y="280" width="50" height="22" fill="#1e1e2e"/>
+<text x="26" y="297" fill="#89dceb" font-weight="bold" textLength="50" lengthAdjust="spacingAndGlyphs" xml:space="preserve">ORDER</text>
+<rect x="76" y="280" width="10" height="22" fill="#1e1e2e"/>
+<rect x="86" y="280" width="20" height="22" fill="#1e1e2e"/>
+<text x="86" y="297" fill="#89dceb" font-weight="bold" textLength="20" lengthAdjust="spacingAndGlyphs" xml:space="preserve">BY</text>
+<rect x="106" y="280" width="30" height="22" fill="#1e1e2e"/>
+<text x="106" y="297" fill="#cdd6f4" font-weight="normal" textLength="30" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> id</text>
 <rect x="136" y="280" width="10" height="22" fill="#cdd6f4"/>
 <rect x="146" y="280" width="1300" height="22" fill="#1e1e2e"/>
 <rect x="1446" y="280" width="10" height="22" fill="#1e1e2e"/>

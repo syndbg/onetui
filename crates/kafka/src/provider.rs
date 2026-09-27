@@ -44,6 +44,10 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &["kafka.records"],
     query: Some(QueryDescriptor {
         resource: "kafka.query",
+        syntax: onetui_core::provider::Syntax::Verbs(&[
+            ("CONSUME", onetui_core::provider::Body::Raw),
+            ("PRODUCE", onetui_core::provider::Body::Json),
+        ]),
         language: "Kafka CONSUME/PRODUCE",
         contextual_watermark: Some(crate::query::watermark),
         watermark: "PRODUCE topic\n\n{\"value\":\"\"}",

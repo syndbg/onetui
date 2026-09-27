@@ -32,6 +32,9 @@ static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     resources: crate::RESOURCES,
     query: Some(QueryDescriptor {
         resource: "cql.query",
+        syntax: onetui_core::provider::Syntax::Sql {
+            keywords: crate::CQL_KEYWORDS,
+        },
         language: "CQL",
         watermark: "SELECT keyspace_name FROM system_schema.keyspaces",
         is_statement: false,

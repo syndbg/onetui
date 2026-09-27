@@ -24,6 +24,14 @@ static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     resources: crate::browse::RESOURCES,
     query: Some(QueryDescriptor {
         resource: "rabbitmq.query",
+        syntax: onetui_core::provider::Syntax::Verbs(&[
+            ("PUBLISH", onetui_core::provider::Body::Raw),
+            ("GET", onetui_core::provider::Body::Raw),
+            ("DECLARE", onetui_core::provider::Body::Json),
+            ("DELETE", onetui_core::provider::Body::Raw),
+            ("PURGE", onetui_core::provider::Body::Raw),
+            ("RAW", onetui_core::provider::Body::Json),
+        ]),
         language: "RabbitMQ statement",
         watermark: "PUBLISH / amq.default demo\n\nhello",
         is_statement: true,

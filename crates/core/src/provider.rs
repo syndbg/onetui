@@ -153,11 +153,34 @@ pub struct PageRequest {
 
 pub const QUERY_BYTES: usize = 16 * 1024;
 
+/// How the editor colors a query language. The TUI owns the lexers, and a provider declares
+/// which of these its language is and its extra keywords, so syntax stays provider-owned.
+#[derive(Clone, Copy, Debug)]
+pub enum Syntax {
+    /// SQL-like statements: SQL, CQL, PartiQL. `keywords` adds to a shared SQL set.
+    Sql { keywords: &'static [&'static str] },
+    /// A JSON document.
+    Json,
+    /// A verb line, optional `Name: value` header lines, a blank line, then a body.
+    /// Each verb says how its body is colored. An unknown verb's body is raw.
+    Verbs(&'static [(&'static str, Body)]),
+}
+
+/// The body that follows a verb line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Body {
+    Json,
+    /// Bytes taken literally, such as a message payload: not colored.
+    Raw,
+}
+
 #[derive(Clone, Copy, serde::Serialize)]
 pub struct QueryDescriptor {
     pub resource: &'static str,
     pub language: &'static str,
     pub watermark: &'static str,
+    #[serde(skip)]
+    pub syntax: Syntax,
     /// The submitted text names its own target, so the text itself is what the user must
     /// check. The editor then uses a taller fixed panel, a bare title, and confirms the
     /// first line instead of a resource path. HTTP request languages set this. A row
@@ -327,6 +350,7 @@ mod tests {
     fn query_scope_checks_resource_kind_and_path_depth() {
         let scoped = QueryDescriptor {
             resource: "query",
+            syntax: Syntax::Json,
             language: "JSON",
             watermark: "{}",
             is_statement: false,

@@ -26,6 +26,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &[],
     query: Some(QueryDescriptor {
         resource: "postgres.query",
+        syntax: onetui_core::provider::Syntax::Sql { keywords: &[] },
         language: "SQL",
         watermark: "SELECT 1 AS value",
         is_statement: false,

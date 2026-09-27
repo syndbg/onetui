@@ -48,6 +48,7 @@ static BROWSE: ProviderDescriptor = ProviderDescriptor {
     follow_resources: &["fake.rows"],
     query: Some(QueryDescriptor {
         resource: "fake.rows",
+        syntax: onetui_core::provider::Syntax::Sql { keywords: &[] },
         language: "Test query",
         contextual_watermark: None,
         watermark: "select 1",
