@@ -143,6 +143,30 @@ fn actual_cli_metadata_details_paging_and_terminal_restore() {
     terminal.send(b"\r");
     terminal.wait("Row data");
     terminal.wait("messages_ready");
+    terminal.send(b"\x1b");
+    terminal.wait("rabbitmq.queues");
+    terminal.send(b"e");
+    terminal.wait("RabbitMQ statement");
+    // The editor opens on the queue list, so the watermark prefills that vhost and the
+    // selected queue as a GET rather than a static example.
+    terminal.wait("GET / ");
+    terminal.send(b"\x1b[200~RAW GET /api/overview\x1b[201~");
+    terminal.wait("RAW GET /api/overview");
+    terminal.send(b"\r");
+    terminal.wait("Run query?");
+    terminal.send(b"n");
+    terminal.wait("RAW GET /api/overview");
+    terminal.send(b"\r");
+    terminal.wait("Run query?");
+    terminal.send(b"y");
+    terminal.wait("200 OK");
+    terminal.send(b"\x1b");
+    terminal.wait("rabbitmq.queues");
+    terminal.wait("100 loaded");
+    terminal.send(b"H");
+    terminal.wait("RAW GET /api/overview");
+    terminal.send(b"\x1b");
+    terminal.wait("rabbitmq.queues");
     terminal.send(b"q");
     terminal.wait("Quit OneTUI?");
     terminal.send(b"y");

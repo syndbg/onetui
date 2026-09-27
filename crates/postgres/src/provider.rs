@@ -28,6 +28,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         resource: "postgres.query",
         language: "SQL",
         watermark: "SELECT 1 AS value",
+        is_statement: false,
         contextual_watermark: None,
         path_depth: 0,
         scope_resources: &[],

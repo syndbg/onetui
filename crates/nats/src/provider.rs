@@ -37,6 +37,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         language: "NATS CONSUME/PRODUCE",
         contextual_watermark: Some(crate::statement::watermark),
         watermark: "PRODUCE stream subject\n\nhello",
+        is_statement: false,
         path_depth: 1,
         scope_resources: &["nats.messages", "nats.stream_info", "nats.query"],
     }),

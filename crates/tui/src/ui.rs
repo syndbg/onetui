@@ -764,7 +764,7 @@ fn query_panels(body: Rect, app: &App) -> [Rect; 2] {
     } else if app.query_editor.is_some()
         && app
             .query_descriptor()
-            .is_some_and(|descriptor| descriptor.language == "HTTP request")
+            .is_some_and(|descriptor| descriptor.is_statement)
     {
         body.height.min(7)
     } else {
@@ -1028,7 +1028,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         } else {
             "executed | e edit"
         };
-        let title = if language == "HTTP request" {
+        let title = if app.query_descriptor().is_some_and(|d| d.is_statement) {
             language.to_owned()
         } else {
             format!("{language} query")
@@ -1476,10 +1476,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
             width,
             height,
         );
-        let http_request = app
+        // A statement language confirms the submitted text; a row query confirms which
+        // resource it runs against.
+        let is_statement = app
             .query_descriptor()
-            .is_some_and(|descriptor| descriptor.language == "HTTP request");
-        let (target_label, target) = if http_request {
+            .is_some_and(|descriptor| descriptor.is_statement);
+        let (target_label, target) = if is_statement {
             (
                 "Request",
                 confirm.text.lines().next().unwrap_or("").to_owned(),

@@ -51,6 +51,7 @@ static BROWSE: ProviderDescriptor = ProviderDescriptor {
         language: "Test query",
         contextual_watermark: None,
         watermark: "select 1",
+        is_statement: false,
         path_depth: 0,
         scope_resources: &[],
     }),

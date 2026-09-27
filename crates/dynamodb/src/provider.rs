@@ -31,6 +31,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         resource: "dynamodb.query",
         language: "DynamoDB operation JSON",
         watermark: "{\n  \"operation\": \"Scan\",\n  \"limit\": 100\n}",
+        is_statement: false,
         contextual_watermark: Some(crate::query::watermark),
         path_depth: 1,
         scope_resources: &[
