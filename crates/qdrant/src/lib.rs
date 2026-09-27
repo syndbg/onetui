@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 mod browse;
 mod config;
-mod http;
 mod provider;
 mod query;
 mod topology;
@@ -59,7 +58,7 @@ fn rpc_error(status: tonic::Status) -> anyhow::Error {
 pub(crate) fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "id": "qdrant", "operations": ["check", "fetch_page", "query_page", "execute_query"],
-        "query_syntax": {"format": "METHOD /path, blank line, optional body", "endpoint": "configured rest_url", "body": "sent unchanged as application/json", "response": "HTTP status and raw body"},
+        "query_syntax": {"format": "METHOD /path, blank line, optional body", "endpoint": "configured rest_url", "body": "sent unchanged as application/json", "response": "HTTP status and raw body, including native errors; no continuation", "safety": "No redirects or automatic retries. Lost write responses report Unknown; inspect the target before resubmitting."},
         "session": "Lazy reusable size-capped gRPC channel and optional REST client; failed/cancelled operations discard the affected client. Shutdown drops both. REST client/trust setup runs off async workers with one process-wide job slot. No periodic metadata checks or heartbeat TOML setting. HTTP/2 keepalive interval unset; idle pings disabled.",
         "limits": {"page_rows": 100, "rpc_bytes": 1048576, "rest_bytes": 1048576, "display_page_bytes": 1048576, "retained_pages_per_view": 3},
         "navigation": "Enter: resources -> collections, cluster or peers. Collection -> points, metadata, shards, transfers or cluster details. Point -> payload or vectors. Enter on a data row inspects cached fields.",

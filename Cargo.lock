@@ -2408,6 +2408,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "onetui-http-query"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "onetui-core",
+ "reqwest",
+ "url",
+]
+
+[[package]]
 name = "onetui-kafka"
 version = "0.1.0"
 dependencies = [
@@ -2499,6 +2509,7 @@ dependencies = [
  "anyhow",
  "nix",
  "onetui-core",
+ "onetui-http-query",
  "qdrant-client",
  "reqwest",
  "rustls",

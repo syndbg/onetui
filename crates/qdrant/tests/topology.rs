@@ -11,6 +11,9 @@ use std::sync::{
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[path = "topology/query.rs"]
+mod query;
+
 #[derive(Clone)]
 struct Reply {
     status: u16,
@@ -75,7 +78,16 @@ impl Server {
                                     request.push(byte);
                                     assert!(request.len() < 16 * 1024);
                                 }
-                                q.lock().unwrap().push(String::from_utf8(request).unwrap());
+                                let mut request = String::from_utf8(request).unwrap();
+                                let length: usize = request.lines().find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse().unwrap())
+                                }).unwrap_or(0);
+                                assert!(length <= 16 * 1024);
+                                let mut body = vec![0; length];
+                                if socket.read_exact(&mut body).await.is_err() { return; }
+                                request.push_str(std::str::from_utf8(&body).unwrap());
+                                q.lock().unwrap().push(request);
                                 let reply = r.lock().unwrap().clone();
                                 let framing = if reply.chunked { "Transfer-Encoding: chunked".into() } else { format!("Content-Length: {}", reply.body.len()) };
                                 let headers = format!("HTTP/1.1 {} Test\r\n{framing}\r\nLocation: /elsewhere\r\n\r\n", reply.status);

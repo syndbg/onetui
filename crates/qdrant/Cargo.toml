@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 onetui-core = { path = "../core" }
+onetui-http-query = { path = "../http-query" }
 anyhow.workspace = true
 qdrant-client = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
