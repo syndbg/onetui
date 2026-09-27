@@ -61,63 +61,51 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 
 ## Demo
 
-### Data and queries
+Each recording is one datasource, from browsing to the query editor, against the [disposable demos](hack/README.md).
 
-Browse rows:
+### PostgreSQL
 
-[![Browse PostgreSQL rows in OneTUI](docs/assets/demo/browse.svg)](docs/assets/demo/browse.svg)
+Schemas and rows, a local filter and sort, row detail and columns, a SQL read and a write rejected for the read-only role, query history, then replicas and the WAL receiver.
 
-Inspect a row:
+![PostgreSQL in OneTUI](docs/assets/demo/postgres.gif)
 
-[![Inspect every field in a selected row](docs/assets/demo/inspect.svg)](docs/assets/demo/inspect.svg)
+### ScyllaDB and Cassandra
 
-Run a native query:
+One `cql` connection kind for both: a connection error, keyspaces, tables, native paging, row detail, CQL reads, a rejected write, and a write applied on Cassandra.
 
-[![Edit a native PostgreSQL query above its results](docs/assets/demo/query.svg)](docs/assets/demo/query.svg)
+![ScyllaDB and Cassandra in OneTUI](docs/assets/demo/cql.gif)
 
-Browse typed DynamoDB items:
+### Kafka
 
-[![Browse typed DynamoDB items](docs/assets/demo/dynamodb-items.svg)](docs/assets/demo/dynamodb-items.svg)
+Broker configuration, a record published from the editor, then Avro and Protobuf records decoded against the schema registry, with the decoded value in full and the raw bytes as hex.
 
-Each Kafka demo binds schemas to both the key and value. The screens below show the decoded key and its schema identity.
+![Kafka in OneTUI](docs/assets/demo/kafka.gif)
 
-Inspect an Avro-decoded key beside its original bytes and schema:
+### NATS
 
-[![Inspect an Avro-decoded Kafka key and its schema](docs/assets/demo/avro.svg)](docs/assets/demo/avro.svg)
+JetStream Avro and Protobuf messages decoded against their schemas, KV keys, object buckets, and a `CONSUME` statement.
 
-Inspect a Protobuf-decoded key beside its original bytes and schema:
+![NATS in OneTUI](docs/assets/demo/nats.gif)
 
-[![Inspect a Protobuf-decoded Kafka key and its schema](docs/assets/demo/protobuf.svg)](docs/assets/demo/protobuf.svg)
+### RabbitMQ
 
-### Operational views
+The overview, queue metrics and detail, exchanges, bindings and policies, then a management API request and a `DECLARE` rejected for the read-only user.
 
-Inspect connected PostgreSQL WAL senders:
+![RabbitMQ in OneTUI](docs/assets/demo/rabbitmq.gif)
 
-[![Inspect PostgreSQL replication state](docs/assets/demo/postgres-replication.svg)](docs/assets/demo/postgres-replication.svg)
+### Qdrant
 
-Inspect the upstream PostgreSQL WAL receiver:
+Collections, points and a point's payload, cluster state and peers, then an HTTP request from the editor.
 
-[![Inspect the PostgreSQL WAL receiver](docs/assets/demo/postgres-wal-receiver.svg)](docs/assets/demo/postgres-wal-receiver.svg)
+![Qdrant in OneTUI](docs/assets/demo/qdrant.gif)
 
-Inspect Kafka consumer groups:
+### DynamoDB
 
-[![Inspect Kafka consumer groups](docs/assets/demo/kafka-groups.svg)](docs/assets/demo/kafka-groups.svg)
+Tables, typed items, row detail, streams and shards, then PartiQL through `ExecuteStatement`.
 
-Inspect Kafka broker configuration, with sensitive values withheld:
+![DynamoDB in OneTUI](docs/assets/demo/dynamodb.gif)
 
-[![Inspect Kafka broker configuration](docs/assets/demo/kafka-broker-config.svg)](docs/assets/demo/kafka-broker-config.svg)
-
-Inspect Qdrant consensus state:
-
-[![Inspect Qdrant consensus state](docs/assets/demo/qdrant-consensus.svg)](docs/assets/demo/qdrant-consensus.svg)
-
-Inspect DynamoDB stream shards:
-
-[![Inspect DynamoDB stream shards](docs/assets/demo/dynamodb-stream-shards.svg)](docs/assets/demo/dynamodb-stream-shards.svg)
-
-Inspect RabbitMQ queue metrics:
-
-[![Inspect RabbitMQ queue metrics](docs/assets/demo/rabbitmq-queues.svg)](docs/assets/demo/rabbitmq-queues.svg)
+See [themes](docs/themes.md) for every built-in theme.
 
 Try the disposable demos from a source checkout:
 
