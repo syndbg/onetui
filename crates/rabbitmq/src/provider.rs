@@ -284,7 +284,7 @@ impl Executor for RabbitMqExecutor {
                         outcome: WriteOutcome::Unknown,
                         summary: format!(
                             "{} outcome unknown: {error}. Inspect the target before retrying",
-                            statement.describes()
+                            statement.request()
                         ),
                     }))
                 } else {

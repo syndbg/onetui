@@ -368,6 +368,39 @@ impl Statement<'_> {
         }
     }
 
+    /// The statement as the user wrote it, for rejected or unknown outcomes. `describes`
+    /// is past tense and only fits a request that succeeded.
+    pub(crate) fn request(&self) -> String {
+        match self {
+            Self::Publish {
+                vhost,
+                exchange,
+                routing_key,
+                ..
+            } => format!("PUBLISH to {exchange} on {vhost} with routing key {routing_key}"),
+            Self::Declare {
+                collection,
+                vhost,
+                name,
+                ..
+            } if scoped(collection) => format!("DECLARE {collection} {name} on {vhost}"),
+            Self::Declare {
+                collection, name, ..
+            } => format!("DECLARE {collection} {name}"),
+            Self::Delete {
+                collection,
+                vhost,
+                name,
+            } if scoped(collection) => format!("DELETE {collection} {name} on {vhost}"),
+            Self::Delete {
+                collection, name, ..
+            } => format!("DELETE {collection} {name}"),
+            Self::Purge { vhost, queue } => format!("PURGE {queue} on {vhost}"),
+            Self::Get { vhost, queue, .. } => format!("GET {queue} on {vhost}"),
+            Self::Raw { method, path, .. } => format!("RAW {method} {path}"),
+        }
+    }
+
     pub(crate) fn outbound(&self, base: &str) -> Result<Outbound> {
         let mut url = crate::config::endpoint(base)?;
         match self {
@@ -565,11 +598,11 @@ pub(crate) fn outcome(
             _ => format!("{} (HTTP {status})", statement.describes()),
         }
     } else if detail.is_empty() {
-        format!("RabbitMQ rejected {}: HTTP {status}", statement.describes())
+        format!("RabbitMQ rejected {}: HTTP {status}", statement.request())
     } else {
         format!(
             "RabbitMQ rejected {}: HTTP {status}: {detail}",
-            statement.describes()
+            statement.request()
         )
     };
     Ok(QueryExecution::Write(WriteResult {
@@ -883,6 +916,17 @@ mod tests {
         assert_eq!(
             watermark(&Resource::new("rabbitmq.query", vec![]), None),
             "PUBLISH / amq.default demo\n\nhello"
+        );
+    }
+
+    #[test]
+    fn failed_outcomes_name_the_request_in_its_verb_form() {
+        let declare = parse("DECLARE queue / demo").unwrap();
+        assert_eq!(declare.request(), "DECLARE queue demo on /");
+        let publish = parse("PUBLISH / amq.default demo\n\nhello").unwrap();
+        assert_eq!(
+            publish.request(),
+            "PUBLISH to amq.default on / with routing key demo"
         );
     }
 }
