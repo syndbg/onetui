@@ -5,6 +5,7 @@ use aws_sdk_dynamodb::{
     error::DisplayErrorContext,
     types::{Get, KeysAndAttributes, ReturnConsumedCapacity, TransactGetItem},
 };
+use onetui_core::provider::WriteOutcome;
 use serde_json::Value;
 
 macro_rules! send {
@@ -25,14 +26,14 @@ macro_rules! send {
         if $statement {
             match status {
                 Some(200..=299) => response.map_err(|error| {
-                    anyhow!("DynamoDB request completed, but its response could not be read: {error}")
+                    crate::partiql::Failure::error(WriteOutcome::Unknown,
+                        format!("DynamoDB request completed, but its response could not be read: {error}. Inspect the target before retrying"))
                 }),
                 Some(500..) | None => response.map_err(|error| {
-                    anyhow!(
-                        "DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"
-                    )
+                    crate::partiql::Failure::error(WriteOutcome::Unknown,
+                        format!("DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"))
                 }),
-                _ => response,
+                _ => response.map_err(|error| crate::partiql::Failure::error(WriteOutcome::Rejected, error.to_string())),
             }
         } else {
             response

@@ -1,7 +1,29 @@
 use anyhow::{Result, ensure};
 use aws_sdk_dynamodb::types::AttributeValue;
+use onetui_core::provider::{WriteOutcome, WriteResult};
 use serde::Deserialize;
 use serde_json::Value;
+
+#[derive(Debug)]
+pub(crate) struct Failure(pub WriteResult);
+
+impl Failure {
+    pub(crate) fn error(outcome: WriteOutcome, summary: impl Into<String>) -> anyhow::Error {
+        Self(WriteResult {
+            outcome,
+            summary: summary.into(),
+        })
+        .into()
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.summary.fmt(f)
+    }
+}
+
+impl std::error::Error for Failure {}
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
