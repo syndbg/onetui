@@ -1,6 +1,6 @@
 use onetui_core::{
     Page, Resource, Value,
-    provider::{Executor, PageRequest, Provider, QueryRequest, RequestContext},
+    provider::{Executor, PageRequest, Provider, QueryExecution, QueryRequest, RequestContext},
 };
 use onetui_dynamodb::{DynamoDbExecutor, DynamoDbProvider};
 use serde_json::{Value as Json, json};
@@ -30,18 +30,23 @@ async fn query(
     continuation: Option<String>,
 ) -> Page {
     let (_cancel, ctx) = RequestContext::new(Duration::from_secs(5));
-    e.query_page(
-        QueryRequest {
-            page: PageRequest {
-                resource: Resource::new("dynamodb.query", vec![table.into()]),
-                continuation,
+    let result = e
+        .execute_query(
+            QueryRequest {
+                page: PageRequest {
+                    resource: Resource::new("dynamodb.query", vec![table.into()]),
+                    continuation,
+                },
+                text: text.into(),
             },
-            text: text.into(),
-        },
-        ctx,
-    )
-    .await
-    .unwrap()
+            ctx,
+        )
+        .await
+        .unwrap();
+    match result {
+        QueryExecution::Page(page) => page,
+        QueryExecution::Write(result) => panic!("Expected a native response: {result:?}"),
+    }
 }
 fn cell(page: &Page, row: usize, name: &str) -> Json {
     let column = page.columns.iter().position(|c| c.name == name).unwrap();

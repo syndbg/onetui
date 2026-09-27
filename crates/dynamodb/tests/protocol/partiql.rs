@@ -1,4 +1,122 @@
 use super::*;
+use onetui_core::provider::{QueryExecution, WriteOutcome};
+
+fn statement_request(text: &str) -> QueryRequest {
+    QueryRequest {
+        page: request("dynamodb.query", &["demo"], None),
+        text: text.into(),
+    }
+}
+
+#[tokio::test]
+async fn editor_preserves_native_results_and_reports_rejected_or_unknown_outcomes() {
+    let batch_response = json!({"Responses":[{"TableName":"demo"},
+        {"Error":{"Code":"DuplicateItem","Message":"already exists"}}]});
+    let server = Server::start(vec![
+        (200, batch_response.to_string()),
+        (
+            400,
+            json!({"__type":"ValidationException","message":"native syntax error fixture-secret"})
+                .to_string(),
+        ),
+        (
+            503,
+            json!({"__type":"ServiceUnavailable","message":"try later"}).to_string(),
+        ),
+        (200, "not-json".into()),
+    ]);
+    let e = server.executor();
+    let batch = r#"{"operation":"BatchExecuteStatement","statements":[{"statement":"INSERT INTO demo VALUE {'pk':'a'}"},{"statement":"INSERT INTO demo VALUE {'pk':'b'}"}]}"#;
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let QueryExecution::Page(page) = e
+        .execute_query(statement_request(batch), context)
+        .await
+        .unwrap()
+    else {
+        panic!("A partial batch must retain its native response");
+    };
+    assert_eq!(cell(&page, 0, "response"), Some(batch_response));
+    for (outcome, message) in [
+        (WriteOutcome::Rejected, "native syntax error [REDACTED]"),
+        (WriteOutcome::Unknown, "outcome unknown"),
+        (
+            WriteOutcome::Unknown,
+            "request completed, but its response could not be read",
+        ),
+    ] {
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        let QueryExecution::Write(result) = e.execute_query(statement_request(
+            r#"{"operation":"ExecuteStatement","statement":"DELETE FROM demo WHERE pk='a'"}"#), context).await.unwrap() else {
+            panic!("Expected a shared write outcome");
+        };
+        assert_eq!(result.outcome, outcome);
+        assert!(result.summary.contains(message), "{}", result.summary);
+        assert!(!result.summary.contains("fixture-secret"));
+        assert_eq!(*e.status().borrow(), ConnectionStatus::Connected);
+    }
+    assert_eq!(server.finish().len(), 4);
+}
+
+#[tokio::test]
+async fn editor_cancellation_before_dispatch_is_an_error_without_sending() {
+    let server = Server::start(vec![]);
+    let e = server.executor();
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    cancel.send(()).unwrap();
+    let error = e
+        .execute_query(
+            statement_request(
+                r#"{"operation":"ExecuteStatement","statement":"DELETE FROM demo WHERE pk='a'"}"#,
+            ),
+            context,
+        )
+        .await
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("cancelled"));
+    assert!(!error.to_string().contains("outcome unknown"));
+    assert!(server.finish().is_empty());
+}
+
+#[tokio::test]
+async fn editor_cancellation_after_dispatch_is_unknown_without_retrying() {
+    let server = Server::delayed(vec![(200, "{}".into())], Duration::from_millis(300));
+    let e = server.executor();
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let execution = e.execute_query(
+        statement_request(
+            r#"{"operation":"ExecuteStatement","statement":"DELETE FROM demo WHERE pk='a'"}"#,
+        ),
+        context,
+    );
+    let cancel_after_dispatch = async {
+        loop {
+            match server.requests.try_recv() {
+                Ok((_, body)) => {
+                    assert_eq!(body["Statement"], "DELETE FROM demo WHERE pk='a'");
+                    cancel.send(()).unwrap();
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    tokio::time::sleep(Duration::from_millis(5)).await
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(execution, cancel_after_dispatch)
+    })
+    .await
+    .expect("request must reach the server before cancellation");
+    let QueryExecution::Write(result) = result.unwrap() else {
+        panic!("Expected an unknown write outcome");
+    };
+    assert_eq!(result.outcome, WriteOutcome::Unknown);
+    assert!(result.summary.contains("cancelled"));
+    assert_eq!(*e.status().borrow(), ConnectionStatus::Disconnected);
+    assert!(server.finish().is_empty());
+}
 
 #[tokio::test]
 async fn select_parameters_empty_pages_and_bookmarks_use_native_requests() {

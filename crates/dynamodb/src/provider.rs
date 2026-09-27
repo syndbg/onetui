@@ -4,7 +4,8 @@ use onetui_core::{
     Page,
     provider::{
         CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
-        QueryDescriptor, QueryRequest, RequestContext, ShutdownContext,
+        QueryDescriptor, QueryExecution, QueryRequest, RequestContext, ShutdownContext,
+        WriteOutcome,
     },
 };
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -194,6 +195,7 @@ impl DynamoDbExecutor {
             clean: false,
         };
         let mut native_completed = false;
+        let mut dispatched = false;
         let attempt = context
             .run(async {
                 if lease.client.is_none() {
@@ -255,6 +257,7 @@ impl DynamoDbExecutor {
                         crate::query::Read::SearchVectors { top_k, .. } => Some(*top_k as usize),
                         _ => None,
                     };
+                    dispatched = true;
                     let body = crate::api::query(client, name, query, position.as_ref()).await?;
                     if partiql_request {
                         native_completed = true;
@@ -310,11 +313,17 @@ impl DynamoDbExecutor {
             .await;
         let completed = attempt.is_ok();
         let result = match attempt {
-            Ok(Err(error)) | Err(error) if native_completed => Err(anyhow!(
-                "DynamoDB request completed, but its response could not be displayed: {error}"
+            Ok(Err(error)) | Err(error) if native_completed => Err(crate::partiql::Failure::error(
+                WriteOutcome::Unknown,
+                format!(
+                    "DynamoDB request completed, but its response could not be displayed: {error}. Inspect the target before retrying"
+                ),
             )),
-            Err(error) if partiql_request => Err(anyhow!(
-                "DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"
+            Err(error) if partiql_request && dispatched => Err(crate::partiql::Failure::error(
+                WriteOutcome::Unknown,
+                format!(
+                    "DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"
+                ),
             )),
             Ok(result) => result,
             Err(error) => Err(error),
@@ -324,10 +333,17 @@ impl DynamoDbExecutor {
             self.status.send_replace(ConnectionStatus::Connected);
         }
         result.map_err(|error| {
-            onetui_core::diagnostic(
+            let outcome = error
+                .downcast_ref::<crate::partiql::Failure>()
+                .map(|failure| failure.0.outcome);
+            let error = onetui_core::diagnostic(
                 error,
                 &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-            )
+            );
+            match outcome {
+                Some(outcome) => crate::partiql::Failure::error(outcome, error.to_string()),
+                None => error,
+            }
         })
     }
 }
@@ -403,6 +419,19 @@ impl Executor for DynamoDbExecutor {
             "Invalid DynamoDB query resource"
         );
         self.read(request.page, &request.text, false, context).await
+    }
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        context: RequestContext,
+    ) -> Result<QueryExecution> {
+        match self.query_page(request, context).await {
+            Ok(page) => Ok(QueryExecution::Page(page)),
+            Err(error) => match error.downcast::<crate::partiql::Failure>() {
+                Ok(failure) => Ok(QueryExecution::Write(failure.0)),
+                Err(error) => Err(error),
+            },
+        }
     }
     async fn shutdown(&mut self, context: ShutdownContext) -> Result<()> {
         self.status.send_replace(ConnectionStatus::Closing);

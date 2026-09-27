@@ -35,15 +35,7 @@ Enter or F5 runs the statement once. Results show up to 100 rows and do not page
 
 A statement may write. Use least-privilege credentials: queries consume database resources and may be logged.
 
-### Editor controls
-
-Enter, F5 or Ctrl-R submits the draft. Shift+Enter inserts a newline, and Ctrl-U clears the draft. Esc returns to browsing; Ctrl-C cancels active work. A new query starts empty, and its watermark is a hint that disappears when you type. Press `e` to edit and submit again; `r` refreshes ordinary resource views.
-
-OneTUI asks before running a query. Set `ask_for_query_confirm = false` in your config to skip the prompt.
-
-Ctrl-P and Ctrl-N browse recent queries submitted on this connection. Shift+H or `:history` while browsing opens them as a list: Enter opens one for editing, Esc closes the list. History stays in memory for the session. To keep the last 100 submissions across restarts, add `persist_query_history = true` at the top of your config. The unencrypted file beside it (`config.history.json` for `config.toml`) then holds full query text, including any passwords or tokens; turning the setting off does not delete that file.
-
-Shift+Enter needs a terminal that reports modified keys. OneTUI requests that, so it works wherever the terminal supports it. Where it does not, Shift+Enter is indistinguishable from Enter and submits instead: configure the key to send `ESC [ 13 ; 2 u` (`\x1b[13;2u`), or paste multiline text, which preserves newlines without executing. Inside tmux this also needs `set -g extended-keys on`.
+Use the [shared editor controls](ui.md#query-editor) for confirmation, cancellation and history.
 
 ## Replication
 
