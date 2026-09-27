@@ -333,6 +333,6 @@
 <rect x="66" y="676" width="1320" height="22" fill="#1a1b26"/>
 <rect x="1386" y="676" width="70" height="22" fill="#1a1b26"/>
 <rect x="16" y="698" width="1440" height="22" fill="#1a1b26"/>
-<text x="16" y="715" fill="#a9b1d6" font-weight="normal" textLength="1440" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Page 1 | 12 items | next: false | Synthetic demo data | Independent reads, not a snapshot                                                 v0.1.0</text>
+<text x="16" y="715" fill="#a9b1d6" font-weight="normal" textLength="1440" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Page 1 | 12 items | next: false | Synthetic demo data | Independent reads, not a snapshot                                                 v0.2.0</text>
 </g>
 </svg>

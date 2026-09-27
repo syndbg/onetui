@@ -9,10 +9,12 @@
 <p align="center">
   <a href="https://github.com/syndbg/onetui/actions/workflows/main.yaml"><img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF" alt="CI: GitHub Actions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/source-0.2.0-green" alt="Source version: 0.2.0"></a>
   <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/Rust-1.98.1-orange" alt="Rust 1.98.1"></a>
 </p>
 
 <p align="center">
+  <a href="#install">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#demo">Demo</a> ·
   <a href="#features-and-datasource-support">Datasources</a> ·
@@ -22,7 +24,40 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect data, run native queries and follow live messages without switching tools.
+OneTUI is a keyboard-driven terminal browser for databases and message streams, with navigation inspired by k9s. Inspect data, run native queries with syntax highlighting and follow live messages without switching tools.
+
+## Install
+
+### GitHub Releases
+
+Download an archive or Linux package from [Releases](https://github.com/syndbg/onetui/releases).
+
+Install a package with `sudo apt install ./onetui-*.deb` or `sudo dnf install ./onetui-*.rpm`.
+
+### Homebrew
+
+```sh
+# For the latest from origin/main
+brew install --HEAD syndbg/tap/onetui
+```
+
+### From source
+
+Install the [build prerequisites](CONTRIBUTING.md#local-setup), then:
+
+```sh
+git clone https://github.com/syndbg/onetui.git
+cd onetui
+cargo install --path . --locked
+```
+
+Add Cargo's binary directory, normally `$HOME/.cargo/bin`, to `PATH`.
+
+## Quick start
+
+Run `onetui`. Press `a` to add a connection, fill in its fields and press F2 to save. Select it and press Enter. Set any referenced secret environment variables before launching.
+
+Enter opens a resource or value; Esc goes back. Press `?` for available actions, `/` to filter rows, `e` for a native query or `f` to follow where supported. See the [user guide](docs/ui.md).
 
 ## Demo
 
@@ -94,39 +129,6 @@ make dev-traffic # optional live Kafka, Redpanda and NATS messages
 
 See [local demos](hack/README.md) for what to open. `make dev-down` deletes the fixture data.
 
-## Install
-
-### GitHub Releases
-
-Download an archive or Linux package from [Releases](https://github.com/syndbg/onetui/releases).
-
-Install a package with `sudo apt install ./onetui-*.deb` or `sudo dnf install ./onetui-*.rpm`.
-
-### Homebrew
-
-```sh
-# For the latest from origin/main
-brew install --HEAD syndbg/tap/onetui
-```
-
-### From source
-
-Install the [build prerequisites](CONTRIBUTING.md#local-setup), then:
-
-```sh
-git clone https://github.com/syndbg/onetui.git
-cd onetui
-cargo install --path . --locked
-```
-
-Add Cargo's binary directory, normally `$HOME/.cargo/bin`, to `PATH`.
-
-## Quick start
-
-Run `onetui`. Press `a` to add a connection, fill in its fields and press F2 to save. Select it and press Enter. Set any referenced secret environment variables before launching.
-
-Enter opens a resource or value; Esc goes back. Press `?` for available actions, `/` to filter rows, `e` for a native query or `f` to follow where supported. See the [user guide](docs/ui.md).
-
 ## Features and datasource support
 
 | Datasource | Functionality |
@@ -140,6 +142,8 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 | [ScyllaDB and Cassandra](docs/cql.md) | Keyspaces, tables, typed rows with native paging, and CQL |
 
 Kafka and NATS can decode Avro and Protobuf using files, directory catalogs, Confluent registries or Buf.
+
+The query editor highlights each datasource's language. Value inspection also supports JSON highlighting.
 
 Use least-privilege credentials. Queries still consume server resources.
 

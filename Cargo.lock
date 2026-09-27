@@ -2480,7 +2480,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onetui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2504,7 +2504,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-avro"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "apache-avro",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "onetui-theme",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-cql"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2547,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-dynamodb"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -2571,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-http-query"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "onetui-core",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-kafka"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "apache-avro",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-nats"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "apache-avro",
@@ -2633,7 +2633,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-postgres"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-protobuf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "prost",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-qdrant"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "nix",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-rabbitmq"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2708,7 +2708,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-schema-source"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-theme"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2734,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "onetui-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "crossterm",
