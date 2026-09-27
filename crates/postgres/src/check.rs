@@ -100,10 +100,21 @@ fn pg_tls(ca_file: Option<&Path>) -> Result<MakeRustlsConnect> {
         "no usable PostgreSQL CA certificates; configure an absolute ca_file path"
     );
     Ok(MakeRustlsConnect::new(
-        rustls::ClientConfig::builder()
+        client_config()?
             .with_root_certificates(roots)
             .with_no_client_auth(),
     ))
+}
+
+/// Name the ring provider explicitly. Another dependency in the binary (the CQL driver)
+/// enables rustls' aws-lc-rs backend too, which makes the implicit default ambiguous.
+fn client_config() -> Result<rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>> {
+    Ok(
+        rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()?,
+    )
 }
 
 pub(crate) async fn postgres_tls(
@@ -116,7 +127,7 @@ pub(crate) async fn postgres_tls(
             "ca_file cannot be combined with sslmode=disable"
         );
         MakeRustlsConnect::new(
-            rustls::ClientConfig::builder()
+            client_config()?
                 .with_root_certificates(rustls::RootCertStore::empty())
                 .with_no_client_auth(),
         )

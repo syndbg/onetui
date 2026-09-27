@@ -937,6 +937,15 @@ async fn production_row_cancel_discards_active_connection_and_allows_new_read() 
     );
 }
 
+/// The binary also links rustls' aws-lc-rs backend, so the provider must be named.
+fn ring_client() -> rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier> {
+    rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+}
+
 struct FixturePg {
     client: Client,
     driver: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
@@ -945,7 +954,7 @@ struct FixturePg {
 impl FixturePg {
     async fn connect(dsn: &str, roots: rustls::RootCertStore) -> Self {
         let tls = MakeRustlsConnect::new(
-            rustls::ClientConfig::builder()
+            ring_client()
                 .with_root_certificates(roots)
                 .with_no_client_auth(),
         );
@@ -1393,7 +1402,7 @@ async fn postgres_cancel_over_tls_finishes_before_connection_reuse() {
         roots.add(cert.unwrap()).unwrap();
     }
     let tls = MakeRustlsConnect::new(
-        rustls::ClientConfig::builder()
+        ring_client()
             .with_root_certificates(roots.clone())
             .with_no_client_auth(),
     );

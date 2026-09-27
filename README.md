@@ -137,6 +137,7 @@ Enter opens a resource or value; Esc goes back. Press `?` for available actions,
 | [NATS](docs/nats.md) | Core subscriptions, JetStream messages, replay, publishing, consumers, KV and objects |
 | [DynamoDB](docs/dynamodb.md) | Metadata, typed items, native reads, PartiQL, vector search and Streams |
 | [RabbitMQ](docs/rabbitmq.md) | Management metadata, metrics, publishing and resource administration |
+| [ScyllaDB and Cassandra](docs/cql.md) | Keyspaces, tables, typed rows with native paging, and CQL |
 
 Kafka and NATS can decode Avro and Protobuf using files, directory catalogs, Confluent registries or Buf.
 

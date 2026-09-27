@@ -25,7 +25,7 @@ help:
 	  'check-local            Check all local fixtures, including Redpanda Schema Registry' \
 	  'dev-logs / dev-down     Inspect / remove the local fixtures and their temporary data' \
 	  'sweep                  Delete build artifacts unused for 14 days (cargo keeps none itself)' \
-	  'test-integration       Test all fixtures, or one with DATASOURCE=postgres|qdrant|kafka|nats|dynamodb|rabbitmq|tui' \
+	  'test-integration       Test all fixtures, or one with DATASOURCE=postgres|qdrant|kafka|nats|dynamodb|rabbitmq|cql|tui' \
 	  'test-buf-live          Verify public Buf label/commit discovery and decoding (Internet)' \
 	  'release-check TAG=v...  Verify the release tag matches Cargo version' \
 	  'package TAG=v...        Build a native archive and SHA-256 file under dist/' \

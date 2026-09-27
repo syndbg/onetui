@@ -53,6 +53,10 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // The CQL driver enables rustls' aws-lc-rs backend alongside ring, so a dependency that
+    // asks for the process default would otherwise find two and panic. Pin ring, which
+    // every connector configures explicitly.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let args = Args::parse();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

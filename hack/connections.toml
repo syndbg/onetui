@@ -101,6 +101,16 @@ url = "http://127.0.0.1:15672"
 username_env = "ONETUI_RABBITMQ_USERNAME"
 password_env = "ONETUI_RABBITMQ_PASSWORD"
 
+[connections.local_scylla]
+kind = "cql"
+nodes = ["127.0.0.1:19042"]
+username_env = "ONETUI_CQL_USERNAME"
+password_env = "ONETUI_CQL_PASSWORD"
+
+[connections.local_cassandra]
+kind = "cql"
+nodes = ["127.0.0.1:19043"]
+
 [connections.local_nats_system]
 kind = "nats"
 servers = ["nats://127.0.0.1:14226"]
