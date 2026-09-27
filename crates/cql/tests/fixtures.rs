@@ -309,6 +309,8 @@ async fn scylla_editor_pages_reads_and_reports_write_outcomes() {
     let wrong = executor(SCYLLA, Some(("fixture_reader", "not-the-fixture-password")));
     let error = check(&wrong).await.unwrap_err().to_string();
     assert!(!error.contains("not-the-fixture-password"), "{error}");
+    // The server's answer, not the driver's pool and metadata wrapping.
+    assert!(!error.contains("pool"), "{error}");
 }
 
 #[tokio::test]

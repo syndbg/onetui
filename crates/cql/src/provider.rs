@@ -13,7 +13,10 @@ use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row};
 use rustls::pki_types::pem::PemObject;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::errors::{DbError, ExecutionError, PrepareError, RequestAttemptError};
+use scylla::errors::{
+    ConnectionError, ConnectionPoolError, ConnectionSetupRequestErrorKind, DbError, ExecutionError,
+    MetadataError, NewSessionError, PrepareError, RequestAttemptError,
+};
 use scylla::response::{PagingState, PagingStateResponse};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, watch};
@@ -181,7 +184,7 @@ impl CqlExecutor {
             .unwrap_or("");
         // A server answer carries its own code and message; the driver's wrapping
         // ("Preparation failed on every connection ...") only buries it.
-        let error = match db_error(&error) {
+        let error = match db_error(&error).or_else(|| setup_db_error(&error)) {
             Some((db, message)) => anyhow!("{db}: {message}"),
             None => error,
         };
@@ -452,6 +455,24 @@ fn db_error(error: &anyhow::Error) -> Option<(&DbError, &str)> {
         Some(PrepareError::AllAttemptsFailed {
             first_attempt: RequestAttemptError::DbError(db, message),
         }) => Some((db, message)),
+        _ => None,
+    }
+}
+
+/// A server refusal while opening the session, such as bad credentials. The driver
+/// wraps it in four layers of pool and metadata errors. Kept apart from `db_error` so a
+/// failed login does not count as a working connection.
+fn setup_db_error(error: &anyhow::Error) -> Option<(&DbError, &str)> {
+    let Some(NewSessionError::MetadataError(MetadataError::ConnectionPoolError(
+        ConnectionPoolError::Broken {
+            last_connection_error: ConnectionError::ConnectionSetupRequestError(setup),
+        },
+    ))) = error.downcast_ref::<NewSessionError>()
+    else {
+        return None;
+    };
+    match &setup.error {
+        ConnectionSetupRequestErrorKind::DbError(db, message) => Some((db, message)),
         _ => None,
     }
 }
