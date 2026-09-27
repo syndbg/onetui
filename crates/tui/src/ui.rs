@@ -4,10 +4,10 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, ensure};
 use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::App;
@@ -1464,18 +1464,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .style(Style::new().fg(color(p.muted))),
         status,
     );
-    if let Some(confirm) = &app.confirm_query
-        && area.width > 0
-        && area.height > 0
-    {
-        let width = area.width.min(76);
-        let height = area.height.min(7);
-        let popup = Rect::new(
-            area.x + (area.width - width) / 2,
-            area.y + (area.height - height) / 2,
-            width,
-            height,
-        );
+    if let Some(confirm) = &app.confirm_query {
         // A statement language confirms the submitted text; a row query confirms which
         // resource it runs against.
         let is_statement = app
@@ -1498,43 +1487,86 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 ),
             )
         };
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Paragraph::new(vec![
+        crate::popup::render(
+            frame,
+            area,
+            modal(p, " Run query? "),
+            vec![
                 Line::raw(format!("Connection: {}", display(&confirm.alias))),
                 Line::raw(format!("{target_label}: {}", display(&target))),
                 Line::raw("Enter or y: run    Esc or n: return"),
                 Line::raw("Set ask_for_query_confirm = false in config.toml to skip this prompt"),
-            ])
-            .centered()
-            .block(panel(p, " Run query? ").style(Style::new().bg(color(p.background)))),
-            popup,
+            ],
+            76,
+            Alignment::Center,
         );
     }
-    if app.confirm_quit && area.width > 0 && area.height > 0 {
-        let width = area.width.min(38);
-        let height = area.height.min(5);
-        let popup = Rect::new(
-            area.x + (area.width - width) / 2,
-            area.y + (area.height - height) / 2,
-            width,
-            height,
+    if let Some(failure) = &app.connect_error {
+        crate::popup::render(
+            frame,
+            area,
+            modal(
+                p,
+                format!(" Cannot connect to {} ", display(&failure.alias)),
+            )
+            .border_style(Style::new().fg(color(p.error))),
+            vec![
+                Line::raw(display(&failure.message)),
+                Line::raw(""),
+                Line::raw("Enter or Esc: back to connections").centered(),
+            ],
+            76,
+            Alignment::Left,
         );
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::raw("Enter or y: quit"),
-                Line::raw("Esc or n: stay"),
-            ])
-            .centered()
-            .block(panel(p, " Quit OneTUI? ").style(Style::new().bg(color(p.background)))),
-            popup,
+    }
+    if app.confirm_quit {
+        crate::popup::render(
+            frame,
+            area,
+            modal(p, " Quit OneTUI? "),
+            vec![Line::raw("Enter or y: quit"), Line::raw("Esc or n: stay")],
+            38,
+            Alignment::Center,
         );
     }
 }
 
+/// A titled panel on an opaque background, so a popup hides what it covers.
+fn modal(p: &Palette, title: impl Into<Line<'static>>) -> Block<'static> {
+    panel(p, title).style(Style::new().bg(color(p.background)))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connection_failure_popup_names_the_alias_and_reason() {
+        use super::*;
+        use ratatui::{Terminal, backend::TestBackend};
+        let config = onetui_core::config::Config::parse(
+            "[connections.sample]\nkind='fake'",
+            crate::test_provider::CATALOG,
+        )
+        .unwrap();
+        let mut app = App::new(config, None);
+        app.connect_error = Some(crate::app::ConnectError {
+            alias: "sample".into(),
+            message: "Username and/or password are incorrect".into(),
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = (0..24)
+            .map(|y| {
+                (0..80)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("Cannot connect to sample"), "{screen}");
+        assert!(screen.contains("Username and/or password are incorrect"));
+        assert!(screen.contains("Enter or Esc: back to connections"));
+    }
+
     #[test]
     fn quit_confirmation_is_centered_over_the_current_view() {
         use super::*;
@@ -3096,6 +3128,11 @@ mod tests {
                             .local_flags
                             .contains(LocalFlags::ICANON)
                     );
+                    // A failed connection opens a modal popup; Enter dismisses it first.
+                    if mode == "connection_error" {
+                        assert!(text.contains("Cannot connect to pg"));
+                        master.write_all(b"\r").unwrap();
+                    }
                     master.write_all(b"q").unwrap();
                     sent_quit = true;
                 }

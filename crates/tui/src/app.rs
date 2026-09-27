@@ -34,6 +34,11 @@ pub struct Request {
     reset: bool,
 }
 
+pub(crate) struct ConnectError {
+    pub(crate) alias: String,
+    pub(crate) message: String,
+}
+
 pub(crate) struct QueryConfirmation {
     pub(crate) alias: String,
     pub(crate) resource: Resource,
@@ -241,6 +246,10 @@ pub struct App {
     pub loading: bool,
     pub(crate) confirm_query: Option<QueryConfirmation>,
     pub error: Option<String>,
+    /// A connection that failed to open, shown as a popup over the connection list.
+    pub(crate) connect_error: Option<ConnectError>,
+    /// True from choosing a connection until its first page arrives or fails.
+    opening: bool,
     pub help: bool,
     pub detail: bool,
     pub row_detail: bool,
@@ -304,6 +313,8 @@ impl App {
             loading: false,
             confirm_query: None,
             error: None,
+            connect_error: None,
+            opening: false,
             help: false,
             detail: false,
             row_detail: false,
@@ -357,6 +368,7 @@ impl App {
         self.loading = false;
         self.confirm_query = None;
         self.error = None;
+        self.opening = false;
     }
 
     fn connections(&mut self) {
@@ -421,7 +433,7 @@ impl App {
     }
 
     pub(crate) fn paste(&mut self, text: &str) {
-        if self.confirm_quit || self.confirm_query.is_some() {
+        if self.confirm_quit || self.confirm_query.is_some() || self.connect_error.is_some() {
             return;
         }
         if let Some(form) = &mut self.connection_form {
@@ -496,6 +508,24 @@ impl App {
             projections(&page).map_err(anyhow::Error::msg)?;
             Ok(page)
         });
+        let opening = std::mem::take(&mut self.opening);
+        if let Err(error) = &result
+            && opening
+        {
+            // The connection never produced a page: return to the list and explain there,
+            // rather than leaving an empty view with the reason in the footer.
+            let alias = request.alias.clone();
+            let message = display(&error.to_string());
+            self.connections();
+            self.view.selected = self
+                .config
+                .aliases()
+                .iter()
+                .position(|(name, _)| *name == alias)
+                .unwrap_or(0);
+            self.connect_error = Some(ConnectError { alias, message });
+            return;
+        }
         match result {
             Ok(page) if page.bytes() <= PAGE_BYTES => {
                 if request.query != self.view.query {
@@ -584,7 +614,7 @@ impl App {
         if self.confirm_quit {
             return matches!(action, Action::Open | Action::Back | Action::Cancel);
         }
-        if self.confirm_query.is_some() {
+        if self.confirm_query.is_some() || self.connect_error.is_some() {
             return matches!(action, Action::Open | Action::Back | Action::Cancel);
         }
         if self.connection_form.is_some() {
@@ -1016,6 +1046,12 @@ impl App {
             }
             return;
         }
+        if self.connect_error.is_some() {
+            if matches!(action, Action::Open | Action::Back | Action::Cancel) {
+                self.connect_error = None;
+            }
+            return;
+        }
         if self.connection_form.is_some() {
             if matches!(action, Action::Back | Action::Cancel) {
                 self.connection_form = None;
@@ -1306,8 +1342,8 @@ impl App {
                 if self.help || self.detail {
                     return;
                 }
-                let (alias, target) = if self.view.resource == Resource::new("connections", vec![])
-                {
+                let opening = self.view.resource == Resource::new("connections", vec![]);
+                let (alias, target) = if opening {
                     let (alias, _) = self.config.aliases()
                         [self.view.selected_index().expect("selected connection")];
                     let provider = self.config.descriptor(alias).expect("validated alias");
@@ -1342,6 +1378,8 @@ impl App {
                 let parent = std::mem::replace(&mut self.view, View::new(alias, target));
                 self.parents.push(parent);
                 self.load(0, true);
+                // After load: its invalidate clears the flag for any earlier request.
+                self.opening = opening;
             }
             Action::Back => {
                 if self.help {
@@ -1460,6 +1498,16 @@ impl App {
             match key.code {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.act(Action::Open),
                 KeyCode::Esc | KeyCode::Char('n' | 'N') => self.act(Action::Back),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.act(Action::Cancel)
+                }
+                _ => {}
+            }
+            return;
+        }
+        if self.connect_error.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => self.act(Action::Back),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.act(Action::Cancel)
                 }
@@ -2313,6 +2361,39 @@ mod tests {
             Config::load(file.path(), crate::test_provider::CATALOG).unwrap(),
             Some("pg"),
         )
+    }
+
+    #[test]
+    fn a_connection_that_fails_to_open_returns_to_the_list_with_a_popup() {
+        let mut app = app();
+        let request = app.request.take().unwrap();
+        app.complete(&request, Err(anyhow::anyhow!("authentication failed")));
+        // Back on the list with the failed connection still selected; the footer is clear.
+        assert_eq!(app.view.resource, Resource::new("connections", vec![]));
+        assert_eq!(app.view.selected_index(), Some(0));
+        assert!(app.error.is_none());
+        let failure = app.connect_error.as_ref().unwrap();
+        assert_eq!(
+            (failure.alias.as_str(), failure.message.as_str()),
+            ("pg", "authentication failed")
+        );
+        // The popup is modal: other keys do nothing until it is dismissed.
+        app.key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(!app.confirm_quit && app.connect_error.is_some());
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.connect_error.is_none());
+        // Dismissing does not reconnect.
+        assert!(app.request.is_none());
+
+        // Once a connection has produced a page, later failures stay in the footer.
+        app.act(Action::Open);
+        let request = app.request.take().unwrap();
+        app.complete(&request, Ok(page(true)));
+        app.act(Action::Next);
+        let next = app.request.take().unwrap();
+        app.complete(&next, Err(anyhow::anyhow!("connection reset")));
+        assert!(app.connect_error.is_none());
+        assert_eq!(app.error.as_deref(), Some("connection reset"));
     }
 
     #[test]
