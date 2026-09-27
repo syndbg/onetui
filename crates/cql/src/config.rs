@@ -13,6 +13,10 @@ const MAX_NODES: usize = 32;
 pub(crate) struct Config {
     pub nodes: Vec<String>,
     #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
     pub username_env: Option<String>,
     #[serde(default)]
     pub password_env: Option<String>,
@@ -30,7 +34,7 @@ impl Config {
     pub fn parse(options: &toml::Table) -> Result<Self> {
         let config: Self = options.clone().try_into().map_err(|_| {
             anyhow!(
-                "Invalid CQL config; expected nodes and optional username_env, password_env, tls, ca_file and keyspace"
+                "Invalid CQL config; expected nodes and optional username, password, username_env, password_env, tls, ca_file and keyspace"
             )
         })?;
         ensure!(
@@ -41,8 +45,19 @@ impl Config {
             parsed(node)?;
         }
         ensure!(
-            config.username_env.is_some() == config.password_env.is_some(),
-            "CQL username_env and password_env must be configured together"
+            !config.username.as_deref().is_some_and(str::is_empty)
+                && !config.password.as_deref().is_some_and(str::is_empty),
+            "CQL username and password cannot be empty"
+        );
+        ensure!(
+            !(config.username.is_some() && config.username_env.is_some())
+                && !(config.password.is_some() && config.password_env.is_some()),
+            "CQL username and password each need one source: a value or an _env reference"
+        );
+        ensure!(
+            (config.username.is_some() || config.username_env.is_some())
+                == (config.password.is_some() || config.password_env.is_some()),
+            "CQL username and password must be configured together"
         );
         for name in [&config.username_env, &config.password_env]
             .into_iter()
@@ -65,7 +80,7 @@ impl Config {
         }
         // Credentials travel in the CQL handshake, so a plaintext remote connection would
         // put them on the wire. Loopback stays allowed for local development.
-        if !config.tls && config.username_env.is_some() {
+        if !config.tls && (config.username.is_some() || config.username_env.is_some()) {
             for node in &config.nodes {
                 ensure!(
                     loopback(node)?,
@@ -156,6 +171,18 @@ mod tests {
     fn credentials_are_paired_and_need_tls_off_loopback() {
         let local = "nodes = ['127.0.0.1:9042']\nusername_env = 'U'\npassword_env = 'P'";
         assert!(Config::parse(&table(local)).is_ok());
+        assert!(
+            Config::parse(&table(
+                "nodes=['127.0.0.1:9042']\nusername='user'\npassword='secret'"
+            ))
+            .is_ok()
+        );
+        assert!(
+            Config::parse(&table(
+                "nodes=['127.0.0.1:9042']\nusername='user'\npassword_env='P'"
+            ))
+            .is_ok()
+        );
         // localhost by name is loopback too.
         assert!(
             Config::parse(&table(
@@ -179,6 +206,10 @@ mod tests {
             "nodes = ['127.0.0.1:9042']\nusername_env = 'U'",
             "nodes = ['127.0.0.1:9042']\npassword_env = 'P'",
             "nodes = ['127.0.0.1:9042']\nusername_env = 'bad name'\npassword_env = 'P'",
+            "nodes = ['127.0.0.1:9042']\nusername = 'user'",
+            "nodes = ['127.0.0.1:9042']\nusername = 'user'\nusername_env = 'U'\npassword = 'secret'",
+            "nodes = ['127.0.0.1:9042']\nusername = 'user'\npassword = 'secret'\npassword_env = 'P'",
+            "nodes = ['remote:9042']\nusername = 'user'\npassword = 'secret'",
         ] {
             assert!(Config::parse(&table(text)).is_err(), "{text}");
         }

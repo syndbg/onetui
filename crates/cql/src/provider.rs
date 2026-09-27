@@ -68,12 +68,20 @@ impl Provider for CqlProvider {
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<CqlExecutor> {
         let config = Config::parse(options)?;
-        let credentials = match (&config.username_env, &config.password_env) {
-            (Some(user), Some(password)) => Some((
-                onetui_core::config::secret(user, env)?,
-                onetui_core::config::secret(password, env)?,
-            )),
-            _ => None,
+        let credentials = if let Some(user) =
+            config.username.as_ref().or(config.username_env.as_ref())
+        {
+            let username = match &config.username {
+                Some(value) => value.clone(),
+                None => onetui_core::config::secret(user, env)?,
+            };
+            let password = match &config.password {
+                Some(value) => value.clone(),
+                None => onetui_core::config::secret(config.password_env.as_deref().unwrap(), env)?,
+            };
+            Some((username, password))
+        } else {
+            None
         };
         Ok(CqlExecutor {
             identity: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
@@ -743,6 +751,13 @@ mod tests {
         assert_eq!(e.credentials, Some(("U-secret".into(), "P-secret".into())));
         assert_eq!(*e.status().borrow(), ConnectionStatus::Configured);
         assert!(CqlProvider.configure(&options, &|_| None).is_err());
+        let mixed = "nodes=['127.0.0.1:9042']\nusername='user'\npassword_env='P'"
+            .parse()
+            .unwrap();
+        let direct = CqlProvider
+            .configure(&mixed, &|_| Some("secret".into()))
+            .unwrap();
+        assert_eq!(direct.credentials, Some(("user".into(), "secret".into())));
         // The password never survives into an error message.
         assert_eq!(
             e.diagnostic(anyhow!("auth failed for P-secret"))

@@ -27,7 +27,9 @@ fn schema_registers_the_builtin_and_configuration_without_resolving_secrets() {
     assert_eq!(provider["query"]["path_depth"], 0);
     assert_eq!(provider["follow_resources"], serde_json::json!([]));
     assert_eq!(provider["configuration"]["url"]["required"], true);
-    assert_eq!(provider["configuration"]["username_env"]["required"], true);
-    assert_eq!(provider["configuration"]["password_env"]["required"], true);
+    assert!(provider["configuration"]["username"].is_object());
+    assert!(provider["configuration"]["password"].is_object());
+    assert!(provider["configuration"]["username_env"].is_object());
+    assert!(provider["configuration"]["password_env"].is_object());
     assert!(provider["configuration"]["ca_file"]["default"].is_null());
 }

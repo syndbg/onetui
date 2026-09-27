@@ -209,6 +209,28 @@ async fn catalog_config_and_offline_menus_do_not_connect() {
     );
 }
 
+#[test]
+fn literal_credentials_can_replace_environment_references() {
+    let options =
+        toml::from_str("url='https://example.invalid'\nusername='user'\npassword_env='PASS'")
+            .unwrap();
+    RabbitMqProvider.validate_config(&options).unwrap();
+    RabbitMqProvider
+        .configure(&options, &|_| Some("secret".into()))
+        .unwrap();
+    for invalid in [
+        "url='https://example.invalid'\nusername='user'",
+        "url='https://example.invalid'\nusername='user'\nusername_env='USER'\npassword='secret'",
+        "url='https://example.invalid'\nusername='user'\npassword=''",
+    ] {
+        assert!(
+            RabbitMqProvider
+                .validate_config(&toml::from_str(invalid).unwrap())
+                .is_err()
+        );
+    }
+}
+
 #[tokio::test]
 async fn native_pages_preserve_json_nulls_bytes_and_bound_bookmarks() {
     let first = json!({"page":1,"page_count":2,"items":[{"name":"q / София","vhost":"/","messages_ready":9007199254740993_u64,"future":{"flag":true},"state":null}]}).to_string();

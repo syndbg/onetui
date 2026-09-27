@@ -7,20 +7,40 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
     pub url: String,
-    pub username_env: String,
-    pub password_env: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub username_env: Option<String>,
+    pub password_env: Option<String>,
     pub ca_file: Option<PathBuf>,
 }
 
 impl Config {
     pub fn parse(options: &toml::Table) -> Result<Self> {
         let config: Self = options.clone().try_into().map_err(|_| {
-            anyhow!("Invalid RabbitMQ config; expected url, username_env, password_env and optional ca_file")
+            anyhow!("Invalid RabbitMQ config; expected url, username/password or username_env/password_env and optional ca_file")
         })?;
         endpoint(&config.url)?;
         ensure!(
-            onetui_core::config::safe_name(&config.username_env)
-                && onetui_core::config::safe_name(&config.password_env),
+            config.username.is_some() != config.username_env.is_some()
+                && config.password.is_some() != config.password_env.is_some(),
+            "RabbitMQ username and password each need one source: a value or an _env reference"
+        );
+        ensure!(
+            config
+                .username
+                .as_deref()
+                .is_none_or(|value| !value.is_empty())
+                && config
+                    .password
+                    .as_deref()
+                    .is_none_or(|value| !value.is_empty()),
+            "RabbitMQ username and password cannot be empty"
+        );
+        ensure!(
+            [&config.username_env, &config.password_env]
+                .into_iter()
+                .flatten()
+                .all(|name| onetui_core::config::safe_name(name)),
             "Invalid RabbitMQ credential environment reference"
         );
         ensure!(

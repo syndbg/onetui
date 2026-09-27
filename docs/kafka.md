@@ -10,11 +10,13 @@ kind = "kafka"
 bootstrap_servers = ["broker.example:9093"]
 security_protocol = "SASL_SSL"
 sasl_mechanism = "SCRAM-SHA-256"
-username_env = "ONETUI_KAFKA_USER"
-password_env = "ONETUI_KAFKA_PASSWORD"
+username = "user" # or username_env = "ONETUI_KAFKA_USER"
+password = "..." # or password_env = "ONETUI_KAFKA_PASSWORD"
 ```
 
-Set the referenced environment variables, then run `onetui --connection events`. Use `onetui schema --datasource kafka` for supported settings, defaults and limits.
+Run `onetui --connection events`. Use `onetui schema --datasource kafka` for supported settings, defaults and limits.
+
+For PLAIN or SCRAM, use `username_env` or `password_env` instead to read either value from an environment variable. Protect the config file if it contains a password.
 
 For private CAs, set `ca_file` to an absolute PEM path. For mTLS, set `client_cert_file` and `client_key_file`; encrypted keys also need `client_key_password_env`. Use `SSL` without SASL or `SASL_SSL` with it. Advertised broker addresses must be reachable, not just bootstrap addresses.
 

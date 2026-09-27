@@ -64,8 +64,14 @@ impl Provider for RabbitMqProvider {
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Self::Executor> {
         let config = crate::config::Config::parse(options)?;
-        let username = onetui_core::config::secret(&config.username_env, env)?;
-        let password = onetui_core::config::secret(&config.password_env, env)?;
+        let username = match &config.username {
+            Some(value) => value.clone(),
+            None => onetui_core::config::secret(config.username_env.as_deref().unwrap(), env)?,
+        };
+        let password = match &config.password {
+            Some(value) => value.clone(),
+            None => onetui_core::config::secret(config.password_env.as_deref().unwrap(), env)?,
+        };
         ensure!(
             !username.contains(':'),
             "RabbitMQ Basic authentication username cannot contain a colon"

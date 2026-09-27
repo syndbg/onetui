@@ -10,9 +10,11 @@ Enable the RabbitMQ management plugin, then configure its HTTP API endpoint:
 [connections.rabbit]
 kind = "rabbitmq"
 url = "https://rabbit.example.com:15671"
-username_env = "RABBITMQ_USERNAME"
-password_env = "RABBITMQ_PASSWORD"
+username = "user" # or username_env = "RABBITMQ_USERNAME"
+password = "..." # or password_env = "RABBITMQ_PASSWORD"
 ```
+
+Use `username_env` or `password_env` instead to read either value from an environment variable. Protect the config file if it contains a password.
 
 Use an origin URL without `/api`. HTTPS verifies certificates; HTTP is allowed only on loopback. Use `onetui schema --datasource rabbitmq` for settings, including private CA support.
 

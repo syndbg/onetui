@@ -15,6 +15,8 @@ pub(crate) struct Config {
     pub client_key_file: Option<String>,
     pub client_key_password_env: Option<String>,
     pub sasl_mechanism: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
     pub username_env: Option<String>,
     pub password_env: Option<String>,
     pub kerberos_principal: Option<String>,
@@ -106,6 +108,22 @@ impl Config {
                 "Kafka client_key_password_env requires a client key and a valid environment reference"
             );
         }
+        ensure!(
+            !(config.username.is_some() && config.username_env.is_some())
+                && !(config.password.is_some() && config.password_env.is_some()),
+            "Kafka username and password each need one source: a value or an _env reference"
+        );
+        ensure!(
+            config
+                .username
+                .as_deref()
+                .is_none_or(|value| !value.is_empty())
+                && config
+                    .password
+                    .as_deref()
+                    .is_none_or(|value| !value.is_empty()),
+            "Kafka username and password cannot be empty"
+        );
         if config.security_protocol == "SASL_SSL" {
             ensure!(
                 matches!(
@@ -116,8 +134,11 @@ impl Config {
             );
             if config.sasl_mechanism.as_deref() == Some("OAUTHBEARER") {
                 ensure!(
-                    config.username_env.is_none() && config.password_env.is_none(),
-                    "Kafka OAUTHBEARER uses oauth credentials, not username_env/password_env"
+                    config.username.is_none()
+                        && config.password.is_none()
+                        && config.username_env.is_none()
+                        && config.password_env.is_none(),
+                    "Kafka OAUTHBEARER uses oauth credentials, not username/password"
                 );
                 config
                     .oauth
@@ -127,6 +148,8 @@ impl Config {
             } else if config.sasl_mechanism.as_deref() == Some("GSSAPI") {
                 ensure!(
                     config.oauth.is_none()
+                        && config.username.is_none()
+                        && config.password.is_none()
                         && config.username_env.is_none()
                         && config.password_env.is_none(),
                     "Kafka GSSAPI uses an existing Kerberos ticket cache, not password or oauth settings"
@@ -154,14 +177,18 @@ impl Config {
             } else {
                 ensure!(config.oauth.is_none(), "Kafka oauth requires OAUTHBEARER");
                 ensure!(
-                    config.username_env.as_deref().is_some_and(safe_name)
-                        && config.password_env.as_deref().is_some_and(safe_name),
-                    "Kafka SASL_SSL requires valid username_env and password_env references"
+                    (config.username.is_some()
+                        || config.username_env.as_deref().is_some_and(safe_name))
+                        && (config.password.is_some()
+                            || config.password_env.as_deref().is_some_and(safe_name)),
+                    "Kafka SASL_SSL requires username and password values or valid _env references"
                 );
             }
         } else {
             ensure!(
                 config.sasl_mechanism.is_none()
+                    && config.username.is_none()
+                    && config.password.is_none()
                     && config.username_env.is_none()
                     && config.password_env.is_none(),
                 "Kafka SASL settings require SASL_SSL"
@@ -236,9 +263,15 @@ impl Config {
             config.set("sasl.mechanism", mechanism);
             config.set("enable.sasl.oauthbearer.unsecure.jwt", "false");
         }
-        if let Some(name) = &self.username_env {
-            let username = secret(name, env)?;
-            let password = secret(self.password_env.as_deref().unwrap(), env)?;
+        if self.username.is_some() || self.username_env.is_some() {
+            let username = match &self.username {
+                Some(value) => value.clone(),
+                None => secret(self.username_env.as_deref().unwrap(), env)?,
+            };
+            let password = match &self.password {
+                Some(value) => value.clone(),
+                None => secret(self.password_env.as_deref().unwrap(), env)?,
+            };
             ensure!(
                 !username.contains('\0') && !password.contains('\0'),
                 "Kafka SASL credentials must not contain NUL"
@@ -266,6 +299,29 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sasl_accepts_literal_or_environment_credentials_without_overlap() {
+        let base = "bootstrap_servers=['broker:9093']\nsecurity_protocol='SASL_SSL'\nsasl_mechanism='PLAIN'\n";
+        let config = Config::parse(
+            &toml::from_str(&format!("{base}username='user'\npassword_env='PASS'")).unwrap(),
+        )
+        .unwrap();
+        let (native, secrets) = config.native(1, &|_| Some("secret".into())).unwrap();
+        assert_eq!(native.get("sasl.username"), Some("user"));
+        assert_eq!(native.get("sasl.password"), Some("secret"));
+        assert_eq!(secrets, ["user", "secret"]);
+        for fields in [
+            "username='user'",
+            "username='user'\nusername_env='USER'\npassword='secret'",
+            "username='user'\npassword=''",
+        ] {
+            assert!(Config::parse(&toml::from_str(&format!("{base}{fields}")).unwrap()).is_err());
+        }
+        let oauth = format!("{base}username='user'\npassword='secret'\n");
+        let oauth = oauth.replace("PLAIN", "OAUTHBEARER");
+        assert!(Config::parse(&toml::from_str(&oauth).unwrap()).is_err());
+    }
 
     #[test]
     fn kerberos_uses_existing_credentials_without_shell_or_secret_lookup() {

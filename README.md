@@ -159,7 +159,7 @@ OneTUI reads one file: explicit `--config <path>`, otherwise `$XDG_CONFIG_HOME/o
 
 A missing default file opens an empty picker. The connection form creates it when you save. An explicit `--config` file must already exist. The footer shows the selected path.
 
-Fields ending in `_env` name environment variables, not secret values. Use TOML for nested OAuth or decoder settings. For example:
+Fields ending in `_env` name environment variables, not secret values. CQL, Kafka, NATS and RabbitMQ also accept literal `username = "..."` and `password = "..."` in TOML. Each field uses either a literal value or its `_env` form. Keep config files with literal passwords private. Use TOML for nested OAuth or decoder settings. For example:
 
 ```toml
 theme = "monokai"
