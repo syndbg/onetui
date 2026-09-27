@@ -158,6 +158,13 @@ pub struct QueryDescriptor {
     pub resource: &'static str,
     pub language: &'static str,
     pub watermark: &'static str,
+    /// The submitted text names its own target, so the text itself is what the user must
+    /// check. The editor then uses a taller fixed panel, a bare title, and confirms the
+    /// first line instead of a resource path. HTTP request languages set this. A row
+    /// query does not: it runs against the browsed resource, which the confirmation
+    /// shows instead, and so do Kafka and NATS, whose verb lines are scoped by
+    /// `path_depth` rather than read from the text.
+    pub is_statement: bool,
     #[serde(skip)]
     pub contextual_watermark: Option<fn(&Resource, Option<&crate::Row>) -> String>,
     /// Number of current resource path components needed to scope a query.
@@ -322,6 +329,7 @@ mod tests {
             resource: "query",
             language: "JSON",
             watermark: "{}",
+            is_statement: false,
             contextual_watermark: None,
             path_depth: 1,
             scope_resources: &["messages"],

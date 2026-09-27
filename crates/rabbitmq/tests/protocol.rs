@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -9,6 +9,9 @@ use onetui_core::provider::{
 use onetui_core::{Page, Resource, Value};
 use onetui_rabbitmq::{RabbitMqExecutor, RabbitMqProvider};
 use serde_json::json;
+
+#[path = "protocol/query.rs"]
+mod query;
 
 struct Server {
     url: String,
@@ -50,6 +53,18 @@ impl Server {
                         break;
                     }
                 }
+                let length: usize = request
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().unwrap())
+                    })
+                    .unwrap_or(0);
+                assert!(length <= 16 * 1024);
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                request.push_str(std::str::from_utf8(&body).unwrap());
                 seen.lock().unwrap().push(request);
                 std::thread::sleep(delay);
                 let _ = reader.get_mut().write_all(response.as_bytes());

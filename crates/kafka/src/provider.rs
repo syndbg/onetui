@@ -47,6 +47,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         language: "Kafka CONSUME/PRODUCE",
         contextual_watermark: Some(crate::query::watermark),
         watermark: "PRODUCE topic\n\n{\"value\":\"\"}",
+        is_statement: false,
         // A topic is enough to publish; the verb line names any partition.
         path_depth: 1,
         scope_resources: &[],

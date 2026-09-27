@@ -21,8 +21,10 @@ fn schema_registers_the_builtin_and_configuration_without_resolving_secrets() {
     let provider = &schema["datasources"][0];
     assert_eq!(schema["datasources"].as_array().unwrap().len(), 1);
     assert_eq!(provider["entry_resource"], "rabbitmq.resources");
-    assert_eq!(provider["resources"].as_array().unwrap().len(), 12);
-    assert!(provider["query"].is_null());
+    assert_eq!(provider["resources"].as_array().unwrap().len(), 13);
+    assert_eq!(provider["query"]["resource"], "rabbitmq.query");
+    assert_eq!(provider["query"]["language"], "RabbitMQ statement");
+    assert_eq!(provider["query"]["path_depth"], 0);
     assert_eq!(provider["follow_resources"], serde_json::json!([]));
     assert_eq!(provider["configuration"]["url"]["required"], true);
     assert_eq!(provider["configuration"]["username_env"]["required"], true);

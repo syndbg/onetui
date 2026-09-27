@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Result, ensure};
+use anyhow::{Result, anyhow, ensure};
 use base64::Engine;
 use onetui_core::provider::{
     CheckResult, ConnectionField, ConnectionStatus, Executor, PageRequest, Provider,
-    ProviderDescriptor, RequestContext, ShutdownContext,
+    ProviderDescriptor, QueryDescriptor, QueryExecution, QueryRequest, RequestContext,
+    ShutdownContext, WriteOutcome, WriteResult,
 };
 use onetui_core::{PAGE_BYTES, Page, Resource};
 use rustls::pki_types::pem::PemObject;
@@ -21,7 +22,16 @@ static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     entry_resource: Some("rabbitmq.resources"),
     browsing: "management metadata, metrics and cluster nodes",
     resources: crate::browse::RESOURCES,
-    query: None,
+    query: Some(QueryDescriptor {
+        resource: "rabbitmq.query",
+        language: "RabbitMQ statement",
+        watermark: "PUBLISH / amq.default demo\n\nhello",
+        is_statement: true,
+        contextual_watermark: Some(crate::statement::watermark),
+        // A vhost is optional: the verb line always names it, so the root still queries.
+        path_depth: 0,
+        scope_resources: &[],
+    }),
     follow_resources: &[],
     connection_fields: &[
         ConnectionField::text("url"),
@@ -198,6 +208,77 @@ impl RabbitMqExecutor {
 }
 
 impl Executor for RabbitMqExecutor {
+    async fn query_page(&self, request: QueryRequest, context: RequestContext) -> Result<Page> {
+        match self.execute_query(request, context).await? {
+            QueryExecution::Page(page) => Ok(page),
+            QueryExecution::Write(result) => Err(anyhow!(result.summary)),
+        }
+    }
+    async fn execute_query(
+        &self,
+        request: QueryRequest,
+        mut context: RequestContext,
+    ) -> Result<QueryExecution> {
+        ensure!(!self.closed, "RabbitMQ session is closed");
+        request.validate()?;
+        ensure!(
+            request.page.resource.id == "rabbitmq.query"
+                && request.page.resource.path.is_empty()
+                && request.page.continuation.is_none(),
+            "Invalid RabbitMQ query resource"
+        );
+        let statement = crate::statement::parse(&request.text)?;
+        let outbound = statement.outbound(&self.config.url)?;
+        let mut lease = Lease {
+            client: context.run(self.client.lock()).await?,
+            status: &self.status,
+            clean: false,
+        };
+        if lease.client.is_none() {
+            self.status.send_replace(ConnectionStatus::Connecting);
+            *lease.client = Some(context.run(self.client()).await??);
+        }
+        let mut pending = lease
+            .client
+            .as_ref()
+            .expect("HTTP client")
+            .request(outbound.method.clone(), outbound.url)
+            .basic_auth(&self.username, Some(&self.password));
+        if let Some(body) = &outbound.body {
+            pending = pending
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.clone());
+        }
+        let mut dispatched = false;
+        let attempt = context
+            .run(async {
+                dispatched = true;
+                crate::statement::send(pending).await
+            })
+            .await;
+        match attempt {
+            Ok(Ok(response)) => {
+                lease.clean = true;
+                self.status.send_replace(ConnectionStatus::Connected);
+                crate::statement::outcome(&statement, response)
+            }
+            Ok(Err(error)) | Err(error) => {
+                let error =
+                    onetui_core::diagnostic(error, &[&self.password, &self.encoded_credentials]);
+                if dispatched && !statement.reads() {
+                    Ok(QueryExecution::Write(WriteResult {
+                        outcome: WriteOutcome::Unknown,
+                        summary: format!(
+                            "{} outcome unknown: {error}. Inspect the target before retrying",
+                            statement.describes()
+                        ),
+                    }))
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status.subscribe()
     }
@@ -211,6 +292,10 @@ impl Executor for RabbitMqExecutor {
     }
     async fn fetch_page(&self, request: PageRequest, mut context: RequestContext) -> Result<Page> {
         ensure!(!self.closed, "RabbitMQ session is closed");
+        ensure!(
+            request.resource.id != "rabbitmq.query",
+            "Use execute_query for RabbitMQ HTTP requests"
+        );
         let number = crate::browse::position(
             &request.resource,
             request.continuation.as_deref(),

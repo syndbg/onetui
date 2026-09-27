@@ -11,6 +11,9 @@ use onetui_rabbitmq::{RabbitMqExecutor, RabbitMqProvider};
 
 const URL: &str = "http://127.0.0.1:15672";
 
+#[path = "fixtures/query.rs"]
+mod query;
+
 fn executor(url: &str, username: &str, password: &str, ca: Option<&str>) -> RabbitMqExecutor {
     let mut options = toml::from_str::<toml::Table>(&format!(
         "url='{url}'\nusername_env='USER'\npassword_env='PASS'"

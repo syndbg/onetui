@@ -31,6 +31,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         language: "HTTP request",
         contextual_watermark: None,
         watermark: "POST /collections/{collection}/points/scroll\n\n{\n  \"limit\": 10\n}",
+        is_statement: true,
         path_depth: 0,
         scope_resources: &[],
     }),

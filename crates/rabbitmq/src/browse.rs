@@ -133,6 +133,13 @@ pub(crate) const RESOURCES: &[&ResourceDescriptor] = &[
             "details",
         ],
     ),
+    &ResourceDescriptor {
+        id: "rabbitmq.query",
+        description: "HTTP request response from the configured management endpoint",
+        columns: &["status", "body"],
+        paging: true,
+        actions: &[],
+    },
 ];
 
 pub(crate) fn descriptor_for(id: &str) -> Result<&'static ResourceDescriptor> {
@@ -203,7 +210,7 @@ pub(crate) fn menu(resource: &Resource) -> Option<Page> {
         rows: RESOURCES
             .iter()
             .skip(start)
-            .filter(|r| r.id != "rabbitmq.vhost")
+            .filter(|r| !matches!(r.id, "rabbitmq.vhost" | "rabbitmq.query"))
             .map(|r| Row {
                 cells: vec![Some(r.description.into()), Some(r.id.into())],
                 target: Some(Resource::new(r.id, resource.path.clone())),
