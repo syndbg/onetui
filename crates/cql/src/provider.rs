@@ -168,6 +168,12 @@ impl CqlExecutor {
             .as_ref()
             .map(|(_, password)| password.as_str())
             .unwrap_or("");
+        // A server answer carries its own code and message; the driver's wrapping
+        // ("Preparation failed on every connection ...") only buries it.
+        let error = match db_error(&error) {
+            Some((db, message)) => anyhow!("{db}: {message}"),
+            None => error,
+        };
         onetui_core::diagnostic(error, &[password])
     }
 
@@ -425,16 +431,16 @@ impl std::fmt::Display for Received {
 }
 
 /// The server's own error, from preparing or executing.
-fn db_error(error: &anyhow::Error) -> Option<&DbError> {
-    if let Some(ExecutionError::LastAttemptError(RequestAttemptError::DbError(db, _))) =
+fn db_error(error: &anyhow::Error) -> Option<(&DbError, &str)> {
+    if let Some(ExecutionError::LastAttemptError(RequestAttemptError::DbError(db, message))) =
         error.downcast_ref::<ExecutionError>()
     {
-        return Some(db);
+        return Some((db, message));
     }
     match error.downcast_ref::<PrepareError>() {
         Some(PrepareError::AllAttemptsFailed {
-            first_attempt: RequestAttemptError::DbError(db, _),
-        }) => Some(db),
+            first_attempt: RequestAttemptError::DbError(db, message),
+        }) => Some((db, message)),
         _ => None,
     }
 }
@@ -448,7 +454,7 @@ fn answered(error: &anyhow::Error) -> bool {
 /// failures are excluded: some replicas may already hold the write, so its outcome is
 /// unknown, and retrying a counter or list append would apply it twice.
 fn refused(error: &anyhow::Error) -> bool {
-    db_error(error).is_some_and(|db| {
+    db_error(error).is_some_and(|(db, _)| {
         !matches!(
             db,
             DbError::ReadTimeout { .. }
@@ -615,6 +621,20 @@ mod tests {
         ] {
             assert!(refused(&error) && answered(&error), "{error}");
         }
+        // The shown error is the server's code and message, not the driver's wrapping.
+        let prepared = executor().diagnostic(anyhow::Error::new(PrepareError::AllAttemptsFailed {
+            first_attempt: RequestAttemptError::DbError(
+                DbError::SyntaxError,
+                "line 1:7 no viable alternative at input 'FROM'".into(),
+            ),
+        }));
+        assert_eq!(
+            prepared.to_string(),
+            format!(
+                "{}: line 1:7 no viable alternative at input 'FROM'",
+                DbError::SyntaxError
+            )
+        );
         // The coordinator answered, but replicas may hold the write: outcome unknown.
         let timeout = executed(DbError::WriteTimeout {
             consistency: Consistency::One,
