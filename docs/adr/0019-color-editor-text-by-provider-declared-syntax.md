@@ -49,7 +49,7 @@ The TUI depends on `sqlparser` and `jsonc-parser`. Both are used as tokenizers o
 
 PartiQL inside a DynamoDB `"statement"` JSON string stays one string color. Coloring it means running the SQL tokenizer over that string's range. This is out of scope here.
 
-`syntax.rs` tests cover multibyte text before tokens, unterminated strings, comments and quoted names, JSON keys versus values, raw bodies, unknown and indented verbs. A render test checks the colors on screen and that the `highlight` setting turns them off. `docs/assets/demo/query.svg` shows the result.
+`syntax.rs` tests cover multibyte text before tokens, unterminated strings, comments and quoted names, JSON keys versus values, raw bodies, unknown and indented verbs. A render test checks the colors on screen and that the `highlight` setting turns them off.
 
 ## Alternatives
 

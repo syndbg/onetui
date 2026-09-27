@@ -26,7 +26,7 @@ make workflow-lint
 
 Integration tests require fresh disposable fixtures and refuse an existing development setup. Use `make dev-down` first only when its data can be deleted. Never run write-dependent tests against real datasources.
 
-PRs should state the problem, changes, checks and any compatibility risks. Report unrun checks; do not weaken tests to pass. Docs-only changes need content/link checks and `git diff --check`. See [performance checks](hack/performance.md) when investigating latency. Use `make theme-gallery` after UI or palette changes to regenerate the theme previews.
+PRs should state the problem, changes, checks and any compatibility risks. Report unrun checks; do not weaken tests to pass. Docs-only changes need content/link checks and `git diff --check`. See [performance checks](hack/performance.md) when investigating latency.
 
 Put `[skip-ci]` in the head commit message to skip PR and main CI jobs. Manual runs and published releases still run.
 
