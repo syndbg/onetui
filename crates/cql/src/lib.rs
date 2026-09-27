@@ -95,8 +95,10 @@ pub(crate) fn capabilities() -> serde_json::Value {
         "configuration": {
             "kind": {"required": true, "values": ["cql"], "purpose": "Apache Cassandra or ScyllaDB over the CQL native protocol"},
             "nodes": {"required": true, "type": "1..32 host:port contact points", "purpose": "Initial contact points; the driver discovers the rest of the cluster from them", "example": ["127.0.0.1:9042"]},
-            "username_env": {"default": null, "purpose": "Environment variable containing the username; paired with password_env"},
-            "password_env": {"default": null, "purpose": "Environment variable containing the password; requires tls = true except on loopback contact points"},
+            "username": {"default": null, "purpose": "Literal username; use instead of username_env and pair with a password source"},
+            "password": {"default": null, "purpose": "Literal password; use instead of password_env and protect the config file"},
+            "username_env": {"default": null, "purpose": "Environment variable containing the username; use instead of username"},
+            "password_env": {"default": null, "purpose": "Environment variable containing the password; use instead of password"},
             "tls": {"default": false, "purpose": "Verify node certificates with rustls; certificates must name the addresses the driver connects to"},
             "ca_file": {"default": null, "purpose": "Absolute path to PEM trust roots replacing native trust; requires tls = true"},
             "keyspace": {"default": null, "purpose": "Default keyspace for unqualified names in the editor, used case-sensitively; the driver reports a name it cannot use when connecting"}

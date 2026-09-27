@@ -9,8 +9,10 @@ pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "configuration": {
             "url": {"required": true, "purpose": "Management HTTP API origin, without /api; HTTPS except loopback HTTP"},
-            "username_env": {"required": true, "purpose": "Environment variable containing the management username"},
-            "password_env": {"required": true, "purpose": "Environment variable containing the management password"},
+            "username": {"required": "unless username_env is set", "purpose": "Literal management username"},
+            "password": {"required": "unless password_env is set", "purpose": "Literal management password; protect the config file"},
+            "username_env": {"required": "unless username is set", "purpose": "Environment variable containing the management username"},
+            "password_env": {"required": "unless password is set", "purpose": "Environment variable containing the management password"},
             "ca_file": {"default": null, "purpose": "Optional PEM trust roots; otherwise use native system trust"}
         },
         "paths": {

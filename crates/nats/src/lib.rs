@@ -42,8 +42,10 @@ fn capabilities() -> serde_json::Value {
             "credentials_env": {"required": false, "type": "environment variable name", "purpose": "Complete standard .creds text containing user JWT and NKEY seed, max 65536 bytes; multiline allowed; excludes other authentication modes"},
             "domain": {"required": false, "default": "default $JS.API prefix", "type": "1..255 ASCII letters, digits, underscores or hyphens", "purpose": "Route JetStream requests to $JS.<domain>.API; requires jetstream=true"},
             "token_env": {"required": false, "type": "environment variable name", "purpose": "Token secret reference, resolved on selection; excludes username/password"},
-            "username_env": {"required": "with password_env", "type": "environment variable name", "purpose": "Username reference, resolved on selection"},
-            "password_env": {"required": "with username_env", "type": "environment variable name", "purpose": "Password reference, resolved on selection"}
+            "username": {"required": "with a password source", "type": "nonempty string", "purpose": "Literal username; use instead of username_env"},
+            "password": {"required": "with a username source", "type": "nonempty string", "purpose": "Literal password; use instead of password_env and protect the config file"},
+            "username_env": {"required": "with a password source", "type": "environment variable name", "purpose": "Username reference, resolved on selection; use instead of username"},
+            "password_env": {"required": "with a username source", "type": "environment variable name", "purpose": "Password reference, resolved on selection; use instead of password"}
         },
         "permissions": "JetStream browsing: publish on read API subjects and subscribe to private _INBOX replies. JetStream publishing additionally needs publish on the chosen application subject. Core: subscribe only to the chosen configured subject. Consumer creation, pull, ACK and delete permissions are not needed.",
         "unsupported": ["consumer administration", "Core publishing", "arbitrary JetStream API prefixes", "encrypted client private keys"]

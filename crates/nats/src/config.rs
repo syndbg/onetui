@@ -19,6 +19,8 @@ pub(crate) struct Config {
     #[serde(default)]
     pub decoders: Vec<crate::decoding::Binding>,
     pub token_env: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
     pub username_env: Option<String>,
     pub password_env: Option<String>,
     #[serde(default)]
@@ -132,8 +134,26 @@ impl Config {
             );
         }
         ensure!(
-            config.username_env.is_some() == config.password_env.is_some(),
-            "NATS username_env and password_env must be paired"
+            !(config.username.is_some() && config.username_env.is_some())
+                && !(config.password.is_some() && config.password_env.is_some()),
+            "NATS username and password each need one source: a value or an _env reference"
+        );
+        ensure!(
+            config
+                .username
+                .as_deref()
+                .is_none_or(|value| !value.is_empty())
+                && config
+                    .password
+                    .as_deref()
+                    .is_none_or(|value| !value.is_empty()),
+            "NATS username and password cannot be empty"
+        );
+        let has_username = config.username.is_some() || config.username_env.is_some();
+        let has_password = config.password.is_some() || config.password_env.is_some();
+        ensure!(
+            has_username == has_password,
+            "NATS username and password must be paired"
         );
         ensure!(
             [
@@ -145,6 +165,7 @@ impl Config {
             .iter()
             .filter(|v| v.is_some())
             .count()
+                + usize::from(config.username.is_some())
                 <= 1,
             "NATS token, username/password, NKEY and JWT credentials are mutually exclusive"
         );
@@ -178,9 +199,15 @@ impl Config {
             options = options.token(token.clone());
             secrets.push(token);
         }
-        if let Some(name) = &self.username_env {
-            let username = secret(name, env)?;
-            let password = secret(self.password_env.as_deref().unwrap(), env)?;
+        if self.username.is_some() || self.username_env.is_some() {
+            let username = match &self.username {
+                Some(value) => value.clone(),
+                None => secret(self.username_env.as_deref().unwrap(), env)?,
+            };
+            let password = match &self.password {
+                Some(value) => value.clone(),
+                None => secret(self.password_env.as_deref().unwrap(), env)?,
+            };
             options = options.user_and_password(username.clone(), password.clone());
             secrets.extend([username, password]);
         }
@@ -253,6 +280,9 @@ mod tests {
             "servers=['nats://localhost:4222']\ndomain='other.API'",
             "servers=['nats://localhost:4222']\njetstream=false\ndomain='OTHER'",
             "servers=['nats://localhost:4222']\nnkey_env='KEY'\ncredentials_env='CREDS'",
+            "servers=['nats://localhost:4222']\nusername='user'",
+            "servers=['nats://localhost:4222']\nusername='user'\nusername_env='U'\npassword='secret'",
+            "servers=['nats://localhost:4222']\ntoken_env='TOKEN'\nusername='user'\npassword='secret'",
         ] {
             assert!(Config::parse(&toml::from_str(invalid).unwrap()).is_err());
         }
@@ -267,6 +297,15 @@ mod tests {
             ["fixture-only"]
         );
         assert!(config.options(&|_| Some("secret\ncontrol".into())).is_err());
+        let direct = Config::parse(
+            &toml::from_str("servers=['tls://localhost:4222']\nusername='user'\npassword_env='P'")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            direct.options(&|_| Some("secret".into())).unwrap().1,
+            ["user", "secret"]
+        );
         let jwt = Config::parse(
             &toml::from_str("servers=['tls://localhost:4222']\ncredentials_env='CREDS'").unwrap(),
         )

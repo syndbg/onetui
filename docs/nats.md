@@ -8,12 +8,14 @@ Browse JetStream messages, consumer state, KV history and object contents, follo
 [connections.events]
 kind = "nats"
 servers = ["tls://nats.example.net:4222"]
-username_env = "NATS_USERNAME"
-password_env = "NATS_PASSWORD"
+username = "user" # or username_env = "NATS_USERNAME"
+password = "..." # or password_env = "NATS_PASSWORD"
 subjects = ["demo.live", "orders.*"]
 ```
 
-Set the referenced environment variables, then run `onetui --connection events`. Use `onetui schema --datasource nats` for TLS, authentication, domains and decoder settings.
+Run `onetui --connection events`. Use `onetui schema --datasource nats` for TLS, authentication, domains and decoder settings.
+
+Use `username_env` or `password_env` instead to read either value from an environment variable. Protect the config file if it contains a password.
 
 Choose one authentication mode: token, username/password, NKEY, or JWT credentials. For JWT credentials, `credentials_env` names a variable containing the complete `.creds` text. Set `jetstream = false` for a Core-only server. TLS is enabled by default; plaintext is restricted to local development.
 

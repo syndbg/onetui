@@ -8,12 +8,14 @@ Browse keyspaces, tables, column metadata and rows, and run CQL statements. One 
 [connections.cluster]
 kind = "cql"
 nodes = ["db1.example.com:9042", "db2.example.com:9042"]
-username_env = "CQL_USERNAME"
-password_env = "CQL_PASSWORD"
+username = "user" # or username_env = "CQL_USERNAME"
+password = "..." # or password_env = "CQL_PASSWORD"
 tls = true
 ```
 
 `nodes` are contact points; the driver discovers the rest of the cluster from them and connects to each node at the address and port it advertises. Credentials require `tls = true` except on loopback contact points. TLS verifies certificates against the addresses the driver connects to. Use `onetui schema --datasource cql` for settings, including `ca_file` and a default `keyspace`.
+
+Use `username_env` or `password_env` instead to read either value from an environment variable. Protect the config file if it contains a password.
 
 Browsing needs `SELECT` on `system_schema` and on each table you open.
 
