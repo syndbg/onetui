@@ -40,7 +40,7 @@ pub fn capabilities() -> serde_json::Value {
             "result": "Reads return a page. Writes report applied or rejected with the native status and reason; a publish the broker routed nowhere says so. Responses are bounded to the display limit and have no continuation.",
             "safety": "Requests stay on the configured origin using its credentials and TLS settings. No redirects or automatic retries. A lost write response has an unknown outcome; inspect the target before retrying."
         },
-        "limits": {"page_rows": 100, "response_and_page_bytes": 1048576},
+        "limits": {"page_rows": 100, "response_and_page_bytes": 1_048_576},
         "paging": "Native pagination when returned, otherwise bounded local pages. Each page rereads current state, not a snapshot.",
         "lifecycle": "Lazy HTTP connection pool; cancellation drops the request and retires the pool. No background heartbeat or discovered-node connections.",
         "browsing": "GET metadata and metrics only. Editor requests can publish, retrieve messages or administer resources as permitted by RabbitMQ."

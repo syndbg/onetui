@@ -13,5 +13,5 @@ fn named_writer_references_keep_bounds_and_raw_bytes() {
     assert!(Decoder::with_references(root, &vec![child; 33]).is_err());
     assert!(decoder.decode(&[14, 0]).is_err());
     assert!(decoder.decode(&[255]).is_err());
-    assert!(Decoder::with_references(root, &[&"x".repeat(262144)]).is_err());
+    assert!(Decoder::with_references(root, &[&"x".repeat(262_144)]).is_err());
 }
