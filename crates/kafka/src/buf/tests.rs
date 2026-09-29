@@ -174,7 +174,7 @@ fn response_bounds_redirect_timeout_cancellation_and_failure_cache() {
     for (status, body) in [
         (302, b"redirect".to_vec()),
         (404, b"commit not found".to_vec()),
-        (200, vec![0; 262145]),
+        (200, vec![0; 262_145]),
         (200, vec![255]),
     ] {
         let server = Server::start_bytes(false, move |_| (status, body.clone()));
@@ -382,7 +382,7 @@ fn label_failures_are_bounded_cached_and_never_fetch_an_unresolved_reference() {
         r#"{"commits":[]}"#.to_owned(),
         r#"{"commits":[{"id":"main"}]}"#.into(),
         serde_json::json!({"commits":[{"id":COMMIT},{"id":COMMIT}]}).to_string(),
-        "x".repeat(262145),
+        "x".repeat(262_145),
     ] {
         let server = Server::start(false, move |request| {
             assert!(request.starts_with("POST /buf.registry.module.v1.CommitService/GetCommits "));

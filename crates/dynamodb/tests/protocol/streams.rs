@@ -388,7 +388,7 @@ async fn empty_follow_pages_advance_iterators_and_expiry_never_resets_latest() {
 #[tokio::test]
 async fn display_byte_limit_restarts_after_last_retained_sequence_without_skipping() {
     let mut large = record("10");
-    large["dynamodb"]["NewImage"] = json!({"text":{"S":"x".repeat(360000)}});
+    large["dynamodb"]["NewImage"] = json!({"text":{"S":"x".repeat(360_000)}});
     let mut second = large.clone();
     second["dynamodb"]["SequenceNumber"] = json!("20");
     let mut third = large.clone();

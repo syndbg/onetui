@@ -163,7 +163,7 @@ fn text(page: &Page, row: usize, column: usize) -> Option<&str> {
 }
 
 fn cluster() -> Value {
-    json!({"status":"enabled", "peer_id":18446744073709551615u64, "peers":{"18446744073709551615":{"uri":"http://do-not-contact.invalid:6335"},"2":{"uri":"http://other.invalid:6335"}}, "raft_info":{"leader":2,"term":42,"commit":9007199254740993u64,"role":"Follower","pending_operations":0}, "consensus_thread_status":{"consensus_thread_status":"working"}, "message_send_failures":{"2":{"count":3}}})
+    json!({"status":"enabled", "peer_id":18_446_744_073_709_551_615u64, "peers":{"18446744073709551615":{"uri":"http://do-not-contact.invalid:6335"},"2":{"uri":"http://other.invalid:6335"}}, "raft_info":{"leader":2,"term":42,"commit":9_007_199_254_740_993u64,"role":"Follower","pending_operations":0}, "consensus_thread_status":{"consensus_thread_status":"working"}, "message_send_failures":{"2":{"count":3}}})
 }
 
 #[tokio::test]
@@ -303,7 +303,7 @@ async fn topology_paging_binds_bookmarks_to_session_resource_and_path() {
 
 #[tokio::test]
 async fn shards_transfers_and_resharding_keep_native_fields_and_escape_paths() {
-    let server = Server::new(json!({"peer_id":7,"shard_count":2,"local_shards":[{"shard_id":1,"state":"Active","points_count":9007199254740993u64,"shard_key":"София"}],"remote_shards":[{"shard_id":1,"peer_id":9,"state":"Resharding"}],"shard_transfers":[{"shard_id":1,"from":7,"to":9,"sync":true,"method":"wal_delta","to_shard_id":2,"comment":"in progress","future_field":true}],"resharding_operations":[{"direction":"up","shard_id":2,"peer_id":9}]})).await;
+    let server = Server::new(json!({"peer_id":7,"shard_count":2,"local_shards":[{"shard_id":1,"state":"Active","points_count":9_007_199_254_740_993u64,"shard_key":"София"}],"remote_shards":[{"shard_id":1,"peer_id":9,"state":"Resharding"}],"shard_transfers":[{"shard_id":1,"from":7,"to":9,"sync":true,"method":"wal_delta","to_shard_id":2,"comment":"in progress","future_field":true}],"resharding_operations":[{"direction":"up","shard_id":2,"peer_id":9}]})).await;
     let executor = server.executor();
     let page = fetch(&executor, "qdrant.shards", &["a/b?#"], None)
         .await

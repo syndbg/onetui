@@ -289,7 +289,7 @@ mod tests {
         else {
             panic!("expected replay")
         };
-        assert_eq!(replay.timestamp_ms, Some(1750000000369));
+        assert_eq!(replay.timestamp_ms, Some(1_750_000_000_369));
         assert_eq!((replay.offset, replay.end_offset), (None, Some(250)));
 
         // Either side may be omitted, and so may the range itself.

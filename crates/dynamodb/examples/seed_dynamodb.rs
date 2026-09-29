@@ -91,7 +91,7 @@ fn item(i: usize, wide: bool) -> HashMap<String, A> {
                 .into(),
             ),
         ),
-        ("created".into(), A::N((1750000000 + i).to_string())),
+        ("created".into(), A::N((1_750_000_000 + i).to_string())),
         (
             "title".into(),
             A::S(format!("Synthetic item {i}: София / 東京 / São Paulo")),

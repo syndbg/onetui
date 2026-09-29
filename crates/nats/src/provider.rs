@@ -187,7 +187,7 @@ impl NatsExecutor {
         {
             let meta = tokio::fs::metadata(path).await?;
             ensure!(
-                meta.is_file() && meta.len() <= 1048576,
+                meta.is_file() && meta.len() <= 1_048_576,
                 "NATS certificate/key must be a regular PEM file no larger than 1 MiB"
             );
         }

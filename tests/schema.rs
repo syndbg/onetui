@@ -35,11 +35,11 @@ fn nats_catalog_is_offline_and_exposes_operations() {
         catalog["fields"]["references"]["default"],
         serde_json::json!([])
     );
-    assert_eq!(catalog["limits"]["bundle_bytes"], 262144);
+    assert_eq!(catalog["limits"]["bundle_bytes"], 262_144);
     assert_eq!(catalog["limits"]["schemas"], 64);
     let sources = &nats["configuration"]["decoders"]["fields"];
     assert_eq!(sources["registry"]["limits"]["cached_ids_per_binding"], 8);
-    assert_eq!(sources["buf"]["limits"]["response_bytes"], 262144);
+    assert_eq!(sources["buf"]["limits"]["response_bytes"], 262_144);
     assert!(
         sources["framing"]
             .as_str()
@@ -114,7 +114,7 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
     assert_eq!(schema["browsing_limits"]["page_bookmarks_per_view"], 4096);
     assert_eq!(
         schema["browsing_limits"]["page_bookmark_token_bytes_per_view"],
-        1048576
+        1_048_576
     );
     assert_eq!(
         schema["configuration"]["theme"]["enum"],
@@ -211,7 +211,7 @@ fn postgres_catalog_filter() {
     assert!(schema["datasources"][0]["session"].is_string());
     assert_eq!(
         schema["datasources"][0]["configuration"]["ca_file"]["max_bytes"],
-        1048576
+        1_048_576
     );
 }
 
@@ -233,7 +233,7 @@ fn qdrant_catalog_filter() {
             .len(),
         14
     );
-    assert_eq!(schema["datasources"][0]["limits"]["rpc_bytes"], 1048576);
+    assert_eq!(schema["datasources"][0]["limits"]["rpc_bytes"], 1_048_576);
     assert!(schema["datasources"][0]["session"].is_string());
     assert_eq!(
         schema["datasources"][0]["query"]["resource"],
@@ -293,7 +293,7 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
     );
     assert_eq!(kafka["following"]["poll_interval_ms"], 1000);
     assert_eq!(kafka["following"]["buffer_rows"], 100);
-    assert_eq!(kafka["following"]["buffer_bytes"], 1048576);
+    assert_eq!(kafka["following"]["buffer_bytes"], 1_048_576);
     assert_eq!(kafka["resources"].as_array().unwrap().len(), 13);
     assert_eq!(
         kafka["configuration"]["security_protocol"]["default"],
@@ -337,7 +337,7 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
     assert_eq!(kafka["limits"]["topic_partitions"], 32);
     assert_eq!(kafka["limits"]["topic_cursor_bytes"], 4096);
     let buf = &kafka["configuration"]["decoders"]["fields"]["buf"];
-    assert_eq!(buf["limits"]["response_bytes"], 262144);
+    assert_eq!(buf["limits"]["response_bytes"], 262_144);
     assert_eq!(
         buf["fields"]["revision"]["type"],
         "32 lowercase hex characters"

@@ -172,7 +172,7 @@ pub fn capabilities() -> serde_json::Value {
             "token_env": {"required": false, "default": "anonymous", "type": "ASCII environment-variable name", "purpose": "Buf Bearer token, independent of datasource credentials and other bindings; 1..4096 UTF-8 bytes without controls, resolved only for the selected alias."},
             "ca_file": {"required": false, "default": "platform TLS verification", "type": "absolute regular-file PEM path, at most 4096 UTF-8 bytes without controls", "purpose": "HTTPS-only trust bundle, at most 1 MiB; replaces system trust. No path expansion."}
         },
-        "limits": {"response_bytes": 262144, "header_bytes": 16384, "request_timeout_ms": 2000, "cached_schemas_per_binding": 1},
+        "limits": {"response_bytes": 262_144, "header_bytes": 16384, "request_timeout_ms": 2000, "cached_schemas_per_binding": 1},
         "behavior": "Fetch a binary FileDescriptorSet with imports on the native worker; message_name selects the exact message. --check resolves and validates it. Label resolution and descriptor fetching share a two-second I/O deadline; each response is bounded. Successes and failures stay cached until reconnect. Source, resolved commit and descriptor fingerprint accompany decoded values. Raw bytes survive failures. Foreground cancellation/deadline checked between requests and before returning; native request may finish later. No external buf/protoc executable."
     })
 }

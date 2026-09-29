@@ -37,7 +37,7 @@ pub fn capabilities() -> serde_json::Value {
             "token_env": {"required": false, "default": "none", "type": "ASCII environment-variable name", "purpose": "Bearer token instead of Basic authentication; never broker OAuth"}
         },
         "credentials": "Resolved only for the selected connection, nonempty, at most 4096 UTF-8 bytes without controls; no credentials means anonymous access.",
-        "limits": {"resolution_timeout_ms": 2000, "response_bytes": 262144, "header_bytes": 16384, "bundle_bytes": 262144, "references": 32, "reference_depth": 8, "cached_ids_per_binding": 8, "protobuf_message_index_depth": 32, "protobuf_source_nesting": 32, "protobuf_source_declarations": 4096},
+        "limits": {"resolution_timeout_ms": 2000, "response_bytes": 262_144, "header_bytes": 16384, "bundle_bytes": 262_144, "references": 32, "reference_depth": 8, "cached_ids_per_binding": 8, "protobuf_message_index_depth": 32, "protobuf_source_nesting": 32, "protobuf_source_declarations": 4096},
         "behavior": "Read-only exact-ID and versioned-reference requests. FIFO cache includes lookup failures; eviction or reopening permits a new lookup. Two-second bound per uncached schema and its references, with foreground deadline/cancellation checks between requests. Source compilation is in-memory with protox, supplied imports and embedded Google types only; no filesystem lookup. Source and compiled descriptors each have a 256 KiB cap. Native cleanup may outlive foreground cancellation; compilation has input/work bounds, not a preemptive CPU deadline. No RSS guarantee. --check requests schemas/types, not every record schema."
     })
 }

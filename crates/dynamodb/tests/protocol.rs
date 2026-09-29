@@ -82,7 +82,7 @@ impl Server {
                             .then(|| value.trim().parse().unwrap())
                     })
                     .unwrap();
-                assert!(end + length < 131072);
+                assert!(end + length < 131_072);
                 let mut request = vec![0; length];
                 stream.read_exact(&mut request).unwrap();
                 sender

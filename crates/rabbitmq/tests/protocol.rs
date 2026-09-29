@@ -233,7 +233,7 @@ fn literal_credentials_can_replace_environment_references() {
 
 #[tokio::test]
 async fn native_pages_preserve_json_nulls_bytes_and_bound_bookmarks() {
-    let first = json!({"page":1,"page_count":2,"items":[{"name":"q / София","vhost":"/","messages_ready":9007199254740993_u64,"future":{"flag":true},"state":null}]}).to_string();
+    let first = json!({"page":1,"page_count":2,"items":[{"name":"q / София","vhost":"/","messages_ready":9_007_199_254_740_993_u64,"future":{"flag":true},"state":null}]}).to_string();
     let second = json!({"page":2,"page_count":2,"items":[{"name":"last","vhost":"/"}]}).to_string();
     let server = Server::start(vec![
         response("200 OK", &first),
