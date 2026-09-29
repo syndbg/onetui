@@ -180,7 +180,7 @@ impl Pty {
     }
 }
 
-pub(super) fn assert_avro_projection(mut options: toml::Table, topic: &str) {
+pub fn assert_avro_projection(mut options: toml::Table, topic: &str) {
     options.insert("kind".into(), "kafka".into());
     let mut config = tempfile::NamedTempFile::new().unwrap();
     let document = toml::Table::from_iter([(

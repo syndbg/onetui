@@ -4,7 +4,7 @@ use base64::Engine;
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub(crate) fn item(value: &Value) -> Result<HashMap<String, AttributeValue>> {
+pub fn item(value: &Value) -> Result<HashMap<String, AttributeValue>> {
     let object = value
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("DynamoDB item must be an attribute map"))?;
@@ -14,7 +14,7 @@ pub(crate) fn item(value: &Value) -> Result<HashMap<String, AttributeValue>> {
         .collect()
 }
 
-pub(crate) fn attribute(value: &Value, depth: usize) -> Result<AttributeValue> {
+pub fn attribute(value: &Value, depth: usize) -> Result<AttributeValue> {
     ensure!(depth <= 32, "DynamoDB attribute nesting exceeds 32");
     let object = value
         .as_object()

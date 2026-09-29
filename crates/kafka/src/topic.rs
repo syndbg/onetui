@@ -5,11 +5,11 @@ use onetui_core::provider::PageRequest;
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
 use serde::{Deserialize, Serialize};
 
-pub(crate) const PARTITIONS: usize = 32;
+pub const PARTITIONS: usize = 32;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Cursor {
+pub struct Cursor {
     executor: u64,
     topic: String,
     turn: usize,
@@ -24,11 +24,7 @@ struct Partition {
     end: i64,
 }
 
-pub(crate) fn validate(
-    request: &PageRequest,
-    identity: u64,
-    following: bool,
-) -> Result<Option<Cursor>> {
+pub fn validate(request: &PageRequest, identity: u64, following: bool) -> Result<Option<Cursor>> {
     ensure!(
         request.resource.id == "kafka.records"
             && request.resource.path.len() == 1
@@ -70,7 +66,7 @@ fn token(cursor: &Cursor, following: bool) -> Result<String> {
     Ok(token)
 }
 
-pub(crate) fn page(
+pub fn page(
     request: &PageRequest,
     identity: u64,
     following: bool,

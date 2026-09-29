@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
-pub(crate) const CA_BYTES: u64 = 1024 * 1024;
+pub const CA_BYTES: u64 = 1024 * 1024;
 // ponytail: one trust load per process; a stalled OS read cannot spawn more jobs on retry.
 static TRUST_LOAD: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
@@ -26,7 +26,7 @@ async fn load_trust(
     .map_err(|_| anyhow!("PostgreSQL trust loading failed"))?
 }
 
-pub(crate) fn postgres_config(dsn: &str, deadline: Duration) -> Result<tokio_postgres::Config> {
+pub fn postgres_config(dsn: &str, deadline: Duration) -> Result<tokio_postgres::Config> {
     let mut config: tokio_postgres::Config = dsn.parse()
         .map_err(|_| anyhow!("invalid PostgreSQL connection string; supported sslmode values are disable, prefer and require"))?;
     ensure!(
@@ -117,7 +117,7 @@ fn client_config() -> Result<rustls::ConfigBuilder<rustls::ClientConfig, rustls:
     )
 }
 
-pub(crate) async fn postgres_tls(
+pub async fn postgres_tls(
     config: &tokio_postgres::Config,
     ca_file: Option<&Path>,
 ) -> Result<MakeRustlsConnect> {

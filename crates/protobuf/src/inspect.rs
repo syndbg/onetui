@@ -4,7 +4,7 @@ use serde::{
     ser::{SerializeMap, SerializeSeq},
 };
 
-pub(crate) struct Message<'a>(pub &'a DynamicMessage);
+pub struct Message<'a>(pub &'a DynamicMessage);
 
 impl Serialize for Message<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

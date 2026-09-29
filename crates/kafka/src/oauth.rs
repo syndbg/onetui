@@ -14,7 +14,7 @@ use tokio::time::Instant;
 
 const RESPONSE_BYTES: usize = 64 * 1024;
 
-pub(crate) fn capabilities() -> serde_json::Value {
+pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "required": "with OAUTHBEARER; forbidden otherwise", "type": "table", "default": null,
         "purpose": "OAuth client-credentials grant over verified HTTPS; signed JWT bearer tokens only. Broker verifies signatures, issuer, audience and ACLs.",
@@ -33,7 +33,7 @@ pub(crate) fn capabilities() -> serde_json::Value {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub token_url: String,
     pub client_id_env: String,
     pub client_secret_env: String,
@@ -111,7 +111,7 @@ impl Config {
     }
 }
 
-pub(crate) struct Session {
+pub struct Session {
     config: Config,
     agent: Option<ureq::Agent>,
     authorization: String,

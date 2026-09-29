@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub url: String,
     pub username: Option<String>,
     pub password: Option<String>,
@@ -54,7 +54,7 @@ impl Config {
     }
 }
 
-pub(crate) fn endpoint(value: &str) -> Result<url::Url> {
+pub fn endpoint(value: &str) -> Result<url::Url> {
     let url = url::Url::parse(value).map_err(|_| anyhow!("Invalid RabbitMQ management URL"))?;
     ensure!(
         url.host().is_some()

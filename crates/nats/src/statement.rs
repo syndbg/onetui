@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::{Resource, Row};
 
-pub(crate) enum Statement<'a> {
+pub enum Statement<'a> {
     Consume {
         stream: &'a str,
         replay: crate::replay::Replay,
@@ -19,7 +19,7 @@ pub(crate) enum Statement<'a> {
 /// `Content-Encoding`, which is an ordinary header a publisher may need to send as-is.
 const ENCODING: &str = "onetui-encoding";
 
-pub(crate) fn parse(text: &str) -> Result<Statement<'_>> {
+pub fn parse(text: &str) -> Result<Statement<'_>> {
     let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
     let mut parts = line.split_whitespace();
     let verb = parts
@@ -133,7 +133,7 @@ fn decode(payload: &str, encoding: Option<&str>) -> Result<Vec<u8>> {
     }
 }
 
-pub(crate) fn watermark(resource: &Resource, row: Option<&Row>) -> String {
+pub fn watermark(resource: &Resource, row: Option<&Row>) -> String {
     let stream = resource
         .path
         .first()

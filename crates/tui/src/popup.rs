@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 /// Draw a modal centered over `area`: the cells under it are cleared, then `lines` are
 /// wrapped inside `block`. The height fits the wrapped lines, the borders and one spare
 /// row, and never exceeds `area`; the width is `max_width` capped the same way.
-pub(crate) fn render(
+pub fn render(
     frame: &mut Frame,
     area: Rect,
     block: Block,

@@ -40,14 +40,14 @@ async fn object_info(api: &Api<'_>, resource: &Resource) -> Result<Json> {
     Ok(info)
 }
 
-pub(crate) struct MessageScope {
+pub struct MessageScope {
     pub stream: String,
     pub subject: String,
     pub version: String,
     pub object_size: Option<(u64, u64)>,
 }
 
-pub(crate) async fn message_scope(api: &Api<'_>, resource: &Resource) -> Result<MessageScope> {
+pub async fn message_scope(api: &Api<'_>, resource: &Resource) -> Result<MessageScope> {
     match resource.id {
         "nats.kv_history" => Ok(MessageScope {
             stream: format!("KV_{}", resource.path[0]),
@@ -91,7 +91,7 @@ pub(crate) async fn message_scope(api: &Api<'_>, resource: &Resource) -> Result<
     }
 }
 
-pub(crate) async fn page(
+pub async fn page(
     api: &Api<'_>,
     resource: &Resource,
     cursor: &mut Cursor,

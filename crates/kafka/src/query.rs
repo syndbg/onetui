@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::statement::{Replay, Statement};
 
-pub(crate) const RESOURCE: ResourceDescriptor = ResourceDescriptor {
+pub const RESOURCE: ResourceDescriptor = ResourceDescriptor {
     id: "kafka.query",
     description: "Partition records from an offset or timestamp, or a publish delivery report",
     columns: &["offset", "timestamp_ms", "key", "value", "headers"],
@@ -22,7 +22,7 @@ struct Position {
 }
 
 /// Prefill the editor with a verb line naming whatever the current view has open.
-pub(crate) fn watermark(resource: &Resource, _: Option<&onetui_core::Row>) -> String {
+pub fn watermark(resource: &Resource, _: Option<&onetui_core::Row>) -> String {
     match resource.path.as_slice() {
         [topic, partition, ..] => format!("CONSUME {topic}/{partition}"),
         [topic] => format!("PRODUCE {topic}\n\n{{\"value\":\"\"}}"),
@@ -32,7 +32,7 @@ pub(crate) fn watermark(resource: &Resource, _: Option<&onetui_core::Row>) -> St
 
 /// Resolve a replay submission to the partition read it describes. Produce submissions do
 /// not page or browse, so they never reach this path.
-pub(crate) fn prepare(request: &QueryRequest, identity: u64) -> Result<(Replay, PageRequest)> {
+pub fn prepare(request: &QueryRequest, identity: u64) -> Result<(Replay, PageRequest)> {
     request.validate()?;
     ensure!(
         request.page.resource.id == RESOURCE.id,
@@ -77,7 +77,7 @@ pub(crate) fn prepare(request: &QueryRequest, identity: u64) -> Result<(Replay, 
     Ok((replay, page))
 }
 
-pub(crate) fn finish(mut page: Page, query: String) -> Result<Page> {
+pub fn finish(mut page: Page, query: String) -> Result<Page> {
     page.continuation = page
         .continuation
         .map(|inner| serde_json::to_string(&Position { query, inner }))

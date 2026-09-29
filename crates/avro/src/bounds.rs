@@ -2,7 +2,7 @@ use anyhow::{Result, ensure};
 use std::io::Write;
 
 #[derive(Default)]
-pub(crate) struct Budget {
+pub struct Budget {
     nodes: usize,
     names: usize,
 }
@@ -39,7 +39,7 @@ impl Budget {
     }
 }
 
-pub(crate) fn take<'a>(input: &mut &'a [u8], len: usize) -> Result<&'a [u8]> {
+pub fn take<'a>(input: &mut &'a [u8], len: usize) -> Result<&'a [u8]> {
     ensure!(len <= input.len(), "Truncated message");
     let (part, rest) = input.split_at(len);
     *input = rest;
@@ -61,17 +61,13 @@ impl Write for Output {
     }
 }
 
-pub(crate) fn json(value: &impl serde::Serialize) -> Result<String> {
+pub fn json(value: &impl serde::Serialize) -> Result<String> {
     let mut output = Output(Vec::new());
     serde_json::to_writer(&mut output, value)?;
     Ok(String::from_utf8(output.0)?)
 }
 
-pub(crate) fn schema_json(
-    value: &serde_json::Value,
-    budget: &mut Budget,
-    depth: usize,
-) -> Result<()> {
+pub fn schema_json(value: &serde_json::Value, budget: &mut Budget, depth: usize) -> Result<()> {
     budget.node(depth)?;
     match value {
         serde_json::Value::Array(values) => {

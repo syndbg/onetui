@@ -7,13 +7,13 @@ use onetui_core::provider::{
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
 
-pub(crate) enum WorkerEvent {
+pub enum WorkerEvent {
     Execution(Result<QueryExecution>),
     Status(ConnectionStatus),
     Finished(Result<()>),
 }
 
-pub(crate) struct Worker {
+pub struct Worker {
     pub alias: String,
     pub session: u64,
     pub request: Option<Request>,

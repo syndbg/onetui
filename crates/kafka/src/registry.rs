@@ -1,4 +1,4 @@
-pub(crate) use onetui_schema_source::registry::*;
+pub use onetui_schema_source::registry::*;
 
 #[cfg(test)]
 mod tests {

@@ -6,12 +6,12 @@ use anyhow::{Result, bail, ensure};
 
 use onetui_core::config::Config;
 
-pub(crate) const LIMIT: usize = 100;
+pub const LIMIT: usize = 100;
 const MAX_BYTES: u64 = 12 * 1024 * 1024;
 
-pub(crate) type Entries = VecDeque<(String, String)>;
+pub type Entries = VecDeque<(String, String)>;
 
-pub(crate) fn path(config: &Config) -> Option<PathBuf> {
+pub fn path(config: &Config) -> Option<PathBuf> {
     if !config.persist_query_history {
         return None;
     }
@@ -21,7 +21,7 @@ pub(crate) fn path(config: &Config) -> Option<PathBuf> {
         .map(|path| path.with_extension("history.json"))
 }
 
-pub(crate) fn load(path: &Path) -> Result<Entries> {
+pub fn load(path: &Path) -> Result<Entries> {
     let file = match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
             ensure!(
@@ -43,7 +43,7 @@ pub(crate) fn load(path: &Path) -> Result<Entries> {
     Ok(entries)
 }
 
-pub(crate) fn save(path: &Path, entries: &Entries) -> Result<()> {
+pub fn save(path: &Path, entries: &Entries) -> Result<()> {
     let bytes = serde_json::to_vec(entries)?;
     if bytes.len() as u64 > MAX_BYTES {
         bail!("History file would be too large");

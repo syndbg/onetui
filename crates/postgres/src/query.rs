@@ -7,7 +7,7 @@ use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::browse::pg_error;
 
-pub(crate) const RESOURCE: ResourceDescriptor = ResourceDescriptor {
+pub const RESOURCE: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.query",
     description: "SQL results; dynamic columns, independent OFFSET pages",
     columns: &[],
@@ -15,7 +15,7 @@ pub(crate) const RESOURCE: ResourceDescriptor = ResourceDescriptor {
     actions: &[],
 };
 
-pub(crate) async fn fetch(client: &Client, sql: &str, offset: i64) -> Result<Page> {
+pub async fn fetch(client: &Client, sql: &str, offset: i64) -> Result<Page> {
     client
         .batch_execute("BEGIN READ ONLY")
         .await
@@ -120,7 +120,7 @@ pub(crate) async fn fetch(client: &Client, sql: &str, offset: i64) -> Result<Pag
     Ok(page)
 }
 
-pub(crate) async fn execute_once(client: &Client, sql: &str) -> Result<QueryExecution> {
+pub async fn execute_once(client: &Client, sql: &str) -> Result<QueryExecution> {
     let stream = client.simple_query_raw(sql).await?;
     tokio::pin!(stream);
     let mut page = Page::default();

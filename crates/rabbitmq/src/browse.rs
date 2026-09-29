@@ -18,7 +18,7 @@ const fn descriptor(
     }
 }
 
-pub(crate) const RESOURCES: &[&ResourceDescriptor] = &[
+pub const RESOURCES: &[&ResourceDescriptor] = &[
     &descriptor(
         "rabbitmq.resources",
         "RabbitMQ management resources",
@@ -142,7 +142,7 @@ pub(crate) const RESOURCES: &[&ResourceDescriptor] = &[
     },
 ];
 
-pub(crate) fn descriptor_for(id: &str) -> Result<&'static ResourceDescriptor> {
+pub fn descriptor_for(id: &str) -> Result<&'static ResourceDescriptor> {
     RESOURCES
         .iter()
         .copied()
@@ -159,7 +159,7 @@ struct Position {
     page: u32,
 }
 
-pub(crate) fn position(resource: &Resource, continuation: Option<&str>, owner: u64) -> Result<u32> {
+pub fn position(resource: &Resource, continuation: Option<&str>, owner: u64) -> Result<u32> {
     descriptor_for(resource.id)?;
     let depth = resource.path.len();
     let valid = match resource.id {
@@ -199,7 +199,7 @@ pub(crate) fn position(resource: &Resource, continuation: Option<&str>, owner: u
     Ok(position.page)
 }
 
-pub(crate) fn menu(resource: &Resource) -> Option<Page> {
+pub fn menu(resource: &Resource) -> Option<Page> {
     let start = match resource.id {
         "rabbitmq.resources" => 1,
         "rabbitmq.vhost" => 5,
@@ -220,7 +220,7 @@ pub(crate) fn menu(resource: &Resource) -> Option<Page> {
     })
 }
 
-pub(crate) fn request_url(base: &str, resource: &Resource, page: u32) -> Result<url::Url> {
+pub fn request_url(base: &str, resource: &Resource, page: u32) -> Result<url::Url> {
     let mut url = crate::config::endpoint(base)?;
     let kind = resource
         .id
@@ -270,7 +270,7 @@ fn columns(descriptor: &ResourceDescriptor) -> Vec<Column> {
         .collect()
 }
 
-pub(crate) fn page(resource: &Resource, value: Json, number: u32, owner: u64) -> Result<Page> {
+pub fn page(resource: &Resource, value: Json, number: u32, owner: u64) -> Result<Page> {
     let descriptor = descriptor_for(resource.id)?;
     let (values, next) = if resource.id == "rabbitmq.overview" {
         ensure!(value.is_object(), "RabbitMQ overview is not an object");

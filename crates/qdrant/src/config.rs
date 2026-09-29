@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub url: String,
     pub rest_url: Option<String>,
     pub api_key_env: Option<String>,

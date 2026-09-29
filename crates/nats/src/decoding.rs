@@ -11,12 +11,12 @@ const PREVIEW_BYTES: usize = 64 * 1024;
 // Cancelled filesystem/parser work retains its permit until it exits.
 static WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
-pub(crate) use onetui_schema_source::Format;
+pub use onetui_schema_source::Format;
 use onetui_schema_source::{Preview, registry::Registry};
 
 #[derive(Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Framing {
+pub enum Framing {
     #[default]
     Raw,
     Confluent,
@@ -24,7 +24,7 @@ pub(crate) enum Framing {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Binding {
+pub struct Binding {
     pub subject: String,
     pub format: Format,
     #[serde(default)]
@@ -37,7 +37,7 @@ pub(crate) struct Binding {
     pub message_name: Option<String>,
 }
 
-pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
+pub fn validate(bindings: &[Binding]) -> Result<()> {
     ensure!(
         bindings.len() <= 32,
         "NATS supports at most 32 decoder bindings"
@@ -288,7 +288,7 @@ impl Entry {
     }
 }
 
-pub(crate) struct Cache(Mutex<Vec<Entry>>);
+pub struct Cache(Mutex<Vec<Entry>>);
 
 struct Cancel(Arc<AtomicBool>);
 impl Drop for Cancel {

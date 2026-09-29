@@ -34,12 +34,12 @@ pub struct Request {
     reset: bool,
 }
 
-pub(crate) struct ConnectError {
+pub struct ConnectError {
     pub(crate) alias: String,
     pub(crate) message: String,
 }
 
-pub(crate) struct QueryConfirmation {
+pub struct QueryConfirmation {
     pub(crate) alias: String,
     pub(crate) resource: Resource,
     pub(crate) text: String,

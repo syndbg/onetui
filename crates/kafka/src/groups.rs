@@ -9,7 +9,7 @@ use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 
 // The SDK's GroupInfo omits the broker's per-group error. Own the native list so
 // those errors survive, and free partial responses as well as successful ones.
-pub(crate) struct Groups(*const native::rd_kafka_group_list);
+pub struct Groups(*const native::rd_kafka_group_list);
 
 impl Drop for Groups {
     fn drop(&mut self) {
@@ -140,12 +140,12 @@ fn check_error(error: native::rd_kafka_resp_err_t) -> Result<()> {
 }
 
 // Callers provide pointers from a still-owned librdkafka response (or a test buffer).
-pub(crate) unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str> {
+pub unsafe fn text<'a>(ptr: *const c_char) -> Result<&'a str> {
     ensure!(!ptr.is_null(), "Kafka returned a null metadata string");
     Ok(unsafe { CStr::from_ptr(ptr) }.to_str()?)
 }
 
-pub(crate) unsafe fn slice<'a, T>(ptr: *const T, count: i32) -> Result<&'a [T]> {
+pub unsafe fn slice<'a, T>(ptr: *const T, count: i32) -> Result<&'a [T]> {
     let count = usize::try_from(count)?;
     ensure!(
         count

@@ -137,7 +137,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Position {
+pub struct Position {
     pub executor: u64,
     pub resource: String,
     pub path: Vec<String>,
@@ -145,11 +145,7 @@ pub(crate) struct Position {
     pub end: Option<i64>,
 }
 
-pub(crate) fn validate(
-    request: &PageRequest,
-    identity: u64,
-    following: bool,
-) -> Result<Option<Position>> {
+pub fn validate(request: &PageRequest, identity: u64, following: bool) -> Result<Option<Position>> {
     if request.resource.id == "kafka.records" && request.resource.path.len() == 1 {
         return crate::topic::validate(request, identity, following).map(|_| None);
     }
@@ -203,7 +199,7 @@ pub(crate) fn validate(
     Ok(Some(position))
 }
 
-pub(crate) fn valid_topic(topic: &str) -> bool {
+pub fn valid_topic(topic: &str) -> bool {
     !matches!(topic, "" | "." | "..")
         && topic.len() <= 249
         && topic
@@ -211,11 +207,11 @@ pub(crate) fn valid_topic(topic: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-pub(crate) fn valid_group(group: &str) -> bool {
+pub fn valid_group(group: &str) -> bool {
     !group.is_empty() && group.len() <= 1024 && !group.chars().any(char::is_control)
 }
 
-pub(crate) fn resources(resource: &Resource, offset: i64, identity: u64) -> Result<Page> {
+pub fn resources(resource: &Resource, offset: i64, identity: u64) -> Result<Page> {
     let mut page = page(resource, "Choose a Kafka resource.");
     let rows: &[(&str, &str)] = match resource.id {
         "kafka.topic" => &[
@@ -249,7 +245,7 @@ pub(crate) fn resources(resource: &Resource, offset: i64, identity: u64) -> Resu
     finish(page, resource, identity, None, false)
 }
 
-pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
+pub fn page(resource: &Resource, notice: &str) -> Page {
     let descriptor = RESOURCES
         .iter()
         .find(|d| d.id == resource.id)
@@ -285,7 +281,7 @@ pub(crate) fn page(resource: &Resource, notice: &str) -> Page {
     }
 }
 
-pub(crate) fn finish(
+pub fn finish(
     mut page: Page,
     resource: &Resource,
     identity: u64,
@@ -312,7 +308,7 @@ pub(crate) fn finish(
     Ok(page)
 }
 
-pub(crate) fn metadata(
+pub fn metadata(
     resource: &Resource,
     metadata: &Metadata,
     offset: i64,
@@ -414,7 +410,7 @@ pub(crate) fn metadata(
     )
 }
 
-pub(crate) fn record(message: &impl Message) -> Result<Row> {
+pub fn record(message: &impl Message) -> Result<Row> {
     let header_bytes = message.headers().map_or(0, |headers| {
         headers
             .iter()

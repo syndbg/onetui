@@ -6,7 +6,7 @@ use prost_reflect::{
 
 use crate::bounds::{Budget, take};
 
-pub(crate) fn schema(bytes: &[u8], name: &str) -> Result<MessageDescriptor> {
+pub fn schema(bytes: &[u8], name: &str) -> Result<MessageDescriptor> {
     let descriptor = DescriptorPool::global()
         .get_message_by_name("google.protobuf.FileDescriptorSet")
         .ok_or_else(|| anyhow!("Built-in descriptor schema unavailable"))?;
@@ -22,7 +22,7 @@ pub(crate) fn schema(bytes: &[u8], name: &str) -> Result<MessageDescriptor> {
         .ok_or_else(|| anyhow!("Protobuf message not found in descriptor set"))
 }
 
-pub(crate) fn decode(descriptor: &MessageDescriptor, bytes: &[u8]) -> Result<DynamicMessage> {
+pub fn decode(descriptor: &MessageDescriptor, bytes: &[u8]) -> Result<DynamicMessage> {
     scan(
         Some(descriptor),
         &mut &bytes[..],
@@ -105,7 +105,7 @@ fn scan(
     Ok(())
 }
 
-pub(crate) fn check_json(message: &DynamicMessage) -> Result<()> {
+pub fn check_json(message: &DynamicMessage) -> Result<()> {
     // prost-reflect's Any JSON mapping recursively decodes embedded bytes.
     // Those bytes have not passed our schema-aware budget scan.
     ensure!(

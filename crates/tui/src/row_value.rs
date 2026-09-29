@@ -6,7 +6,7 @@ use crate::value::{BYTE_CHUNK, Prepared, byte_chunk};
 
 /// A viewport over one retained value, never a second full hex/binary allocation.
 // ponytail: wrapping scans the bounded value; cache line offsets if profiling shows input lag.
-pub(crate) fn viewport(
+pub fn viewport(
     prepared: &Prepared,
     bytes: &[u8],
     width: usize,

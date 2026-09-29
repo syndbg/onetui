@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow, ensure};
 use serde::Deserialize;
 
 /// A query editor submission: a verb line naming the target, then an optional body.
-pub(crate) enum Statement {
+pub enum Statement {
     Replay {
         target: Target,
         replay: Replay,
@@ -14,13 +14,13 @@ pub(crate) enum Statement {
 }
 
 /// The topic, and optionally the partition, named on the verb line.
-pub(crate) struct Target {
+pub struct Target {
     pub topic: String,
     pub partition: Option<i32>,
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Replay {
+pub struct Replay {
     pub offset: Option<i64>,
     pub timestamp_ms: Option<i64>,
     pub end_offset: Option<i64>,
@@ -28,7 +28,7 @@ pub(crate) struct Replay {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Record {
+pub struct Record {
     #[serde(default)]
     pub key: Option<String>,
     // An explicit null value is a tombstone, which differs from omitting the field, so
@@ -47,7 +47,7 @@ pub(crate) struct Record {
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Encoding {
+pub enum Encoding {
     #[serde(rename = "utf-8", alias = "utf8")]
     Utf8,
     Base64,
@@ -112,9 +112,9 @@ impl Record {
 }
 
 /// A produce submission sends every record or none; librdkafka accepts a bounded batch.
-pub(crate) const PRODUCE_RECORDS: usize = 100;
+pub const PRODUCE_RECORDS: usize = 100;
 
-pub(crate) fn parse(text: &str) -> Result<Statement> {
+pub fn parse(text: &str) -> Result<Statement> {
     let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
     let mut parts = line.split_whitespace();
     let verb = parts

@@ -15,9 +15,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// One delivery outcome per submitted record, indexed by its position in the batch.
 /// The native callback runs on the polling thread, so a plain mutex is enough.
 #[derive(Default)]
-pub(crate) struct Reports(Mutex<Vec<Option<Outcome>>>);
+pub struct Reports(Mutex<Vec<Option<Outcome>>>);
 
-pub(crate) enum Outcome {
+pub enum Outcome {
     Delivered { partition: i32, offset: i64 },
     Failed(String),
 }
@@ -42,7 +42,7 @@ impl Reports {
 /// Producing shares the connection settings but never the consumer's fetch and group
 /// behavior. Retries stay off: ADR-0014 leaves resubmission to the user, because a
 /// retried produce can duplicate a record that the first attempt already appended.
-pub(crate) fn config(base: &ClientConfig) -> ClientConfig {
+pub fn config(base: &ClientConfig) -> ClientConfig {
     let mut config = base.clone();
     for consumer_only in [
         "group.id",
@@ -73,7 +73,7 @@ pub(crate) fn config(base: &ClientConfig) -> ClientConfig {
 }
 
 /// Send every record, then wait for all delivery reports within the request deadline.
-pub(crate) fn send<C>(
+pub fn send<C>(
     producer: &BaseProducer<C>,
     reports: &Reports,
     target: &Target,
@@ -199,7 +199,7 @@ fn result(target: &Target, reports: Vec<Option<Outcome>>) -> WriteResult {
 }
 
 /// Flush before dropping a producer so an abandoned request cannot append later.
-pub(crate) fn flush<C>(producer: &BaseProducer<C>, wait: Duration)
+pub fn flush<C>(producer: &BaseProducer<C>, wait: Duration)
 where
     C: rdkafka::producer::ProducerContext<
             rdkafka::producer::NoCustomPartitioner,

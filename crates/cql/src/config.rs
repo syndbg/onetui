@@ -10,7 +10,7 @@ const MAX_NODES: usize = 32;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub nodes: Vec<String>,
     #[serde(default)]
     pub username: Option<String>,
@@ -129,7 +129,7 @@ fn loopback(node: &str) -> Result<bool> {
 /// Quote a keyspace, table or column name for interpolation. Unquoted CQL names fold to
 /// lower case; a quoted name keeps its case and may hold any character with `"` doubled,
 /// so quoting reaches every name the server has while keeping it one token.
-pub(crate) fn quote(name: &str) -> String {
+pub fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
