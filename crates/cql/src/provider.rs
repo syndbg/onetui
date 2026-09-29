@@ -304,32 +304,35 @@ impl Executor for CqlExecutor {
 
     async fn check(&self, mut context: RequestContext) -> Result<CheckResult> {
         let deadline = context.deadline;
-        self.run(&mut context, async {
-            let resource = Resource::new("cql.query", vec![]);
-            let Outcome::Rows(page) = self
-                .page(
-                    "SELECT release_version FROM system.local",
-                    &[],
-                    None,
-                    &resource,
-                    None,
-                    deadline,
-                )
-                .await?
-            else {
-                bail!("CQL node returned no release version");
-            };
-            let version = page
-                .rows
-                .first()
-                .and_then(|row| row.cells.first())
-                .and_then(Option::as_ref)
-                .and_then(onetui_core::Value::text)
-                .unwrap_or("unknown");
-            Ok(CheckResult {
-                summary: format!("CQL node readable, release {version}"),
-            })
-        })
+        self.run(
+            &mut context,
+            Box::pin(async {
+                let resource = Resource::new("cql.query", vec![]);
+                let Outcome::Rows(page) = self
+                    .page(
+                        "SELECT release_version FROM system.local",
+                        &[],
+                        None,
+                        &resource,
+                        None,
+                        deadline,
+                    )
+                    .await?
+                else {
+                    bail!("CQL node returned no release version");
+                };
+                let version = page
+                    .rows
+                    .first()
+                    .and_then(|row| row.cells.first())
+                    .and_then(Option::as_ref)
+                    .and_then(onetui_core::Value::text)
+                    .unwrap_or("unknown");
+                Ok(CheckResult {
+                    summary: format!("CQL node readable, release {version}"),
+                })
+            }),
+        )
         .await
         .map_err(|error| self.diagnostic(error))
     }
@@ -342,16 +345,19 @@ impl Executor for CqlExecutor {
         let (text, values) = statement(&request.resource)?;
         let state = self.resume(&request.resource, None, request.continuation.as_deref())?;
         let deadline = context.deadline;
-        self.run(&mut context, async {
-            let values = values.iter().map(String::as_str).collect::<Vec<_>>();
-            match self
-                .page(&text, &values, state, &request.resource, None, deadline)
-                .await?
-            {
-                Outcome::Rows(page) => Ok(page),
-                Outcome::Applied => bail!("CQL metadata read returned no rows"),
-            }
-        })
+        self.run(
+            &mut context,
+            Box::pin(async {
+                let values = values.iter().map(String::as_str).collect::<Vec<_>>();
+                match self
+                    .page(&text, &values, state, &request.resource, None, deadline)
+                    .await?
+                {
+                    Outcome::Rows(page) => Ok(page),
+                    Outcome::Applied => bail!("CQL metadata read returned no rows"),
+                }
+            }),
+        )
         .await
         .map_err(|error| self.diagnostic(error))
     }
@@ -385,20 +391,23 @@ impl Executor for CqlExecutor {
         let deadline = context.deadline;
         let mut dispatched = false;
         let result = self
-            .run(&mut context, async {
-                // Connecting first keeps a connection failure out of the unknown-outcome path.
-                self.session().await?;
-                dispatched = true;
-                self.page(
-                    text,
-                    &[],
-                    state,
-                    &request.page.resource,
-                    Some(text),
-                    deadline,
-                )
-                .await
-            })
+            .run(
+                &mut context,
+                Box::pin(async {
+                    // Connecting first keeps a connection failure out of the unknown-outcome path.
+                    self.session().await?;
+                    dispatched = true;
+                    self.page(
+                        text,
+                        &[],
+                        state,
+                        &request.page.resource,
+                        Some(text),
+                        deadline,
+                    )
+                    .await
+                }),
+            )
             .await;
         match result {
             Ok(Outcome::Rows(page)) => Ok(QueryExecution::Page(page)),
