@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 #[derive(Clone, Deserialize)]
 #[serde(tag = "operation", deny_unknown_fields)]
-pub(crate) enum Read {
+pub enum Read {
     ExecuteStatement {
         statement: String,
         parameters: Option<Vec<Value>>,
@@ -83,13 +83,13 @@ pub(crate) enum Read {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Get {
+pub struct Get {
     pub key: Value,
     pub projection_expression: Option<String>,
     pub expression_attribute_names: Option<HashMap<String, String>>,
 }
 
-pub(crate) fn validate_keys(keys: &[Value]) -> Result<()> {
+pub fn validate_keys(keys: &[Value]) -> Result<()> {
     ensure!(
         (1..=100).contains(&keys.len()),
         "DynamoDB requires 1..100 keys"
@@ -110,10 +110,7 @@ fn forward() -> bool {
     true
 }
 
-pub(crate) fn watermark(
-    resource: &onetui_core::Resource,
-    row: Option<&onetui_core::Row>,
-) -> String {
+pub fn watermark(resource: &onetui_core::Resource, row: Option<&onetui_core::Row>) -> String {
     let first = row
         .and_then(|row| row.cells.first())
         .and_then(Option::as_ref)

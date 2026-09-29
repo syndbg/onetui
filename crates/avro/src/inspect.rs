@@ -1,7 +1,7 @@
 use apache_avro::types::Value;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
-pub(crate) struct Native<'a>(pub &'a Value);
+pub struct Native<'a>(pub &'a Value);
 
 impl Serialize for Native<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

@@ -3,7 +3,7 @@ use tokio_postgres::{Client, types::ToSql};
 
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
 
-pub(crate) fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
+pub fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
     if let Some(db) = error.as_db_error() {
         let mut message = format!("PostgreSQL [{}] {db}", db.code().code());
         if let Some(context) = db.where_() {
@@ -15,7 +15,7 @@ pub(crate) fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
     }
 }
 
-pub(crate) async fn metadata(client: &Client, resource: &Resource, offset: i64) -> Result<Page> {
+pub async fn metadata(client: &Client, resource: &Resource, offset: i64) -> Result<Page> {
     ensure!(offset >= 0, "invalid metadata page offset");
     let limit = PAGE_SIZE + 1;
     let rows = match (resource.id, resource.path.as_slice()) {

@@ -9,7 +9,7 @@ use scylla::value::{CqlDuration, CqlValue};
 /// Nothing is rounded: `decimal` and `varint` are arbitrary-precision on the wire, so both
 /// are converted exactly rather than through a float. Temporal values render in UTC the
 /// way cqlsh shows them, computed with integer arithmetic over their full range.
-pub(crate) fn cell(value: Option<&CqlValue>) -> Option<Value> {
+pub fn cell(value: Option<&CqlValue>) -> Option<Value> {
     Some(match value? {
         // An empty value is a legacy distinction from null; showing it as empty text
         // rather than None keeps it distinguishable in the table.
@@ -99,7 +99,7 @@ fn json_of(value: Option<&CqlValue>) -> serde_json::Value {
 }
 
 /// A column type in CQL syntax, as `DESCRIBE` writes it.
-pub(crate) fn type_name(typ: &ColumnType) -> String {
+pub fn type_name(typ: &ColumnType) -> String {
     let frozen = |frozen: bool, inner: String| {
         if frozen {
             format!("frozen<{inner}>")

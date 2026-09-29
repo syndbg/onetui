@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Debug)]
-pub(crate) struct Failure(pub WriteResult);
+pub struct Failure(pub WriteResult);
 
 impl Failure {
     pub(crate) fn error(outcome: WriteOutcome, summary: impl Into<String>) -> anyhow::Error {
@@ -27,13 +27,13 @@ impl std::error::Error for Failure {}
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Statement {
+pub struct Statement {
     pub statement: String,
     pub parameters: Option<Vec<Value>>,
     pub consistent_read: Option<bool>,
 }
 
-pub(crate) fn parameters(values: Option<&[Value]>) -> Result<Option<Vec<AttributeValue>>> {
+pub fn parameters(values: Option<&[Value]>) -> Result<Option<Vec<AttributeValue>>> {
     values
         .map(|values| {
             ensure!(
@@ -48,7 +48,7 @@ pub(crate) fn parameters(values: Option<&[Value]>) -> Result<Option<Vec<Attribut
         .transpose()
 }
 
-pub(crate) fn page(body: Value, limit: usize) -> Result<(onetui_core::Page, Option<Value>)> {
+pub fn page(body: Value, limit: usize) -> Result<(onetui_core::Page, Option<Value>)> {
     if let Some(items) = body.get("Items") {
         ensure!(
             items.as_array().is_some_and(|items| items.len() <= limit),

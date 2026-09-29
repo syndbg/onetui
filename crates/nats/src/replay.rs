@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Replay {
+pub struct Replay {
     #[serde(default = "all_subjects")]
     pub subject: String,
     pub start_sequence: Option<u64>,

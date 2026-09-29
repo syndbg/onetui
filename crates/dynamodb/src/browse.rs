@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
 macro_rules! resources {
-    ($(($id:literal,$description:literal)),* $(,)?)=>{pub(crate) static RESOURCES:&[&ResourceDescriptor]=&[$(&ResourceDescriptor{id:$id,description:$description,columns:&[],paging:true,actions:&[]}),*];};
+    ($(($id:literal,$description:literal)),* $(,)?)=>{pub static RESOURCES:&[&ResourceDescriptor]=&[$(&ResourceDescriptor{id:$id,description:$description,columns:&[],paging:true,actions:&[]}),*];};
 }
 resources![
     (
@@ -82,7 +82,7 @@ resources![
     ),
 ];
 
-pub(crate) fn depth(id: &str) -> usize {
+pub fn depth(id: &str) -> usize {
     match id {
         "dynamodb.resources"
         | "dynamodb.streams"
@@ -109,7 +109,7 @@ struct Bookmark {
     token: Json,
 }
 
-pub(crate) fn position(request: &PageRequest, session: u64, query: &str) -> Result<Option<Json>> {
+pub fn position(request: &PageRequest, session: u64, query: &str) -> Result<Option<Json>> {
     ensure!(
         RESOURCES.iter().any(|r| r.id == request.resource.id),
         "Unknown DynamoDB resource"
@@ -144,7 +144,7 @@ pub(crate) fn position(request: &PageRequest, session: u64, query: &str) -> Resu
         .transpose()
 }
 
-pub(crate) fn continuation(
+pub fn continuation(
     page: &mut Page,
     request: &PageRequest,
     session: u64,
@@ -182,7 +182,7 @@ fn columns(names: &[&str]) -> Vec<Column> {
         .collect()
 }
 
-pub(crate) fn menu(id: &str, path: &[String]) -> Page {
+pub fn menu(id: &str, path: &[String]) -> Page {
     let choices: &[(&str, &str)] = if id == "dynamodb.resources" {
         &[
             ("dynamodb.tables", "Tables"),
@@ -243,7 +243,7 @@ pub(crate) fn menu(id: &str, path: &[String]) -> Page {
     }
 }
 
-pub(crate) fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)> {
+pub fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)> {
     let mut page = Page::default();
     let (array, next, target, key) = match id {
         "dynamodb.tables" => (
@@ -344,7 +344,7 @@ pub(crate) fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)>
     Ok((page, body.get(next).cloned()))
 }
 
-pub(crate) fn multi_items(body: Json, table: &str, batch: bool) -> Result<(Page, Option<Json>)> {
+pub fn multi_items(body: Json, table: &str, batch: bool) -> Result<(Page, Option<Json>)> {
     let next = if batch {
         let keys = body
             .get("UnprocessedKeys")
@@ -373,7 +373,7 @@ pub(crate) fn multi_items(body: Json, table: &str, batch: bool) -> Result<(Page,
     Ok((page, next))
 }
 
-pub(crate) fn items(body: Json) -> Result<(Page, Option<Json>)> {
+pub fn items(body: Json) -> Result<(Page, Option<Json>)> {
     let values = if let Some(items) = body.get("Items") {
         items
             .as_array()

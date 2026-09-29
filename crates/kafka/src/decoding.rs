@@ -1,6 +1,6 @@
 use anyhow::{Result, ensure};
 use onetui_core::{Column, PAGE_BYTES, Page, Value};
-pub(crate) use onetui_schema_source::{Preview, read_file, validate_path};
+pub use onetui_schema_source::{Preview, read_file, validate_path};
 use serde::Deserialize;
 
 const SCHEMA_BYTES: usize = 256 * 1024;
@@ -9,7 +9,7 @@ const ERROR_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Field {
+pub enum Field {
     Key,
     Value,
 }
@@ -23,18 +23,18 @@ impl Field {
     }
 }
 
-pub(crate) use onetui_schema_source::Format;
+pub use onetui_schema_source::Format;
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Framing {
+pub enum Framing {
     Raw,
     Confluent,
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Binding {
+pub struct Binding {
     pub topic: String,
     pub field: Field,
     pub format: Format,
@@ -47,7 +47,7 @@ pub(crate) struct Binding {
     pub buf: Option<crate::buf::Config>,
 }
 
-pub(crate) fn validate(bindings: &[Binding]) -> Result<()> {
+pub fn validate(bindings: &[Binding]) -> Result<()> {
     ensure!(
         bindings.len() <= 32,
         "Kafka supports at most 32 decoder bindings"
@@ -308,7 +308,7 @@ impl Entry {
     }
 }
 
-pub(crate) struct Bindings(Vec<Entry>);
+pub struct Bindings(Vec<Entry>);
 
 impl Bindings {
     pub fn new(mut bindings: Vec<Binding>) -> Self {

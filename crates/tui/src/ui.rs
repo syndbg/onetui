@@ -811,7 +811,7 @@ fn table_widths(app: &App, body: Rect) -> Vec<u16> {
     widths
 }
 
-pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
+pub fn page_step(app: &App, down: bool, half: bool) -> usize {
     let body = query_panels(panels(app.viewport, app)[2], app)[1];
     let mut budget = usize::from(body.height.saturating_sub(if app.detail { 2 } else { 3 }));
     if half {
@@ -875,7 +875,7 @@ pub(crate) fn page_step(app: &App, down: bool, half: bool) -> usize {
     steps
 }
 
-pub(crate) fn row_value_extent(app: &App) -> (usize, usize) {
+pub fn row_value_extent(app: &App) -> (usize, usize) {
     let body = query_panels(panels(app.viewport, app)[2], app)[1];
     let available = body.width.saturating_sub(6);
     let width = usize::from(available - available / 4 * 2).max(1);

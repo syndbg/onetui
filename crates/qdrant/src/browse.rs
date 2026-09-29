@@ -68,7 +68,7 @@ pub static RESOURCES: &[&ResourceDescriptor] = &[
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum Id {
+pub enum Id {
     Num(u64),
     Uuid(String),
 }
@@ -120,7 +120,7 @@ fn valid_uuid(s: &str) -> bool {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum Offset {
+pub enum Offset {
     Collections(usize),
     Topology(usize),
     Point(Id),
@@ -134,7 +134,7 @@ struct Position {
     offset: Offset,
 }
 
-pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Offset>> {
+pub fn validate(request: &PageRequest, executor: u64) -> Result<Option<Offset>> {
     let valid = match (request.resource.id, request.resource.path.as_slice()) {
         ("qdrant.resources" | "qdrant.collections" | "qdrant.cluster" | "qdrant.peers", []) => true,
         ("qdrant.shards" | "qdrant.transfers" | "qdrant.collection_cluster", [name]) => {
@@ -181,7 +181,7 @@ pub(crate) fn validate(request: &PageRequest, executor: u64) -> Result<Option<Of
     Ok(Some(position.offset))
 }
 
-pub(crate) fn continuation(executor: u64, resource: &Resource, offset: Offset) -> Result<String> {
+pub fn continuation(executor: u64, resource: &Resource, offset: Offset) -> Result<String> {
     Ok(serde_json::to_string(&Position {
         executor,
         resource: resource.id.into(),
@@ -197,7 +197,7 @@ fn row(cells: impl IntoIterator<Item = String>, target: Option<Resource>) -> Row
     }
 }
 
-pub(crate) fn page(resource: &Resource, rows: Vec<Row>, notice: &str) -> Page {
+pub fn page(resource: &Resource, rows: Vec<Row>, notice: &str) -> Page {
     let descriptor = RESOURCES
         .iter()
         .find(|d| d.id == resource.id)
@@ -217,7 +217,7 @@ pub(crate) fn page(resource: &Resource, rows: Vec<Row>, notice: &str) -> Page {
     }
 }
 
-pub(crate) fn bounded(page: Page) -> Result<Page> {
+pub fn bounded(page: Page) -> Result<Page> {
     ensure!(
         page.rows.len() <= PAGE_SIZE as usize,
         "Qdrant page exceeds the 100-row limit; current page retained"
@@ -229,7 +229,7 @@ pub(crate) fn bounded(page: Page) -> Result<Page> {
     Ok(page)
 }
 
-pub(crate) fn menu(resource: &Resource) -> Option<Page> {
+pub fn menu(resource: &Resource) -> Option<Page> {
     let choices: &[(&str, &'static str, &str)] = match resource.id {
         "qdrant.resources" => &[
             (
@@ -296,7 +296,7 @@ pub(crate) fn menu(resource: &Resource) -> Option<Page> {
     ))
 }
 
-pub(crate) fn collections(
+pub fn collections(
     resource: &Resource,
     mut names: Vec<String>,
     offset: usize,
@@ -329,7 +329,7 @@ pub(crate) fn collections(
     bounded(page)
 }
 
-pub(crate) fn points(
+pub fn points(
     resource: &Resource,
     records: Vec<RetrievedPoint>,
     next: Option<PointId>,
@@ -374,7 +374,7 @@ pub(crate) fn points(
     bounded(page)
 }
 
-pub(crate) fn metadata(resource: &Resource, info: CollectionInfo) -> Result<Page> {
+pub fn metadata(resource: &Resource, info: CollectionInfo) -> Result<Page> {
     let status = qdrant_client::qdrant::CollectionStatus::try_from(info.status)
         .map(|s| s.as_str_name().to_owned())
         .unwrap_or_else(|_| format!("unknown ({})", info.status));
@@ -406,11 +406,11 @@ pub(crate) fn metadata(resource: &Resource, info: CollectionInfo) -> Result<Page
     ))
 }
 
-pub(crate) fn point_id(resource: &Resource) -> Result<PointId> {
+pub fn point_id(resource: &Resource) -> Result<PointId> {
     Ok(Id::parse(&resource.path[1])?.native())
 }
 
-pub(crate) fn detail(resource: &Resource, mut records: Vec<RetrievedPoint>) -> Result<Page> {
+pub fn detail(resource: &Resource, mut records: Vec<RetrievedPoint>) -> Result<Page> {
     ensure!(
         !records.is_empty(),
         "Qdrant point disappeared; refresh the points page"

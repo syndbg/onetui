@@ -6,7 +6,7 @@ use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
-pub(crate) const RESOURCES: &[&ResourceDescriptor] = &[
+pub const RESOURCES: &[&ResourceDescriptor] = &[
     &crate::discovery::RESOURCE,
     &ResourceDescriptor {
         id: "nats.query",
@@ -175,7 +175,7 @@ pub(crate) const RESOURCES: &[&ResourceDescriptor] = &[
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Cursor {
+pub struct Cursor {
     pub session: u64,
     pub resource: String,
     pub path: Vec<String>,
@@ -187,17 +187,17 @@ pub(crate) struct Cursor {
     pub read_bytes: u64,
 }
 
-pub(crate) fn number(value: &Json, key: &str) -> Result<u64> {
+pub fn number(value: &Json, key: &str) -> Result<u64> {
     value[key]
         .as_u64()
         .ok_or_else(|| anyhow!("NATS response missing integer {key}"))
 }
-pub(crate) fn string<'a>(value: &'a Json, key: &str) -> Result<&'a str> {
+pub fn string<'a>(value: &'a Json, key: &str) -> Result<&'a str> {
     value[key]
         .as_str()
         .ok_or_else(|| anyhow!("NATS response missing string {key}"))
 }
-pub(crate) fn columns(names: &[(&str, &str)]) -> Vec<Column> {
+pub fn columns(names: &[(&str, &str)]) -> Vec<Column> {
     names
         .iter()
         .map(|(name, datatype)| Column {
@@ -206,7 +206,7 @@ pub(crate) fn columns(names: &[(&str, &str)]) -> Vec<Column> {
         })
         .collect()
 }
-pub(crate) fn validate(request: &PageRequest, live: bool) -> Result<()> {
+pub fn validate(request: &PageRequest, live: bool) -> Result<()> {
     let resource = &request.resource;
     ensure!(
         RESOURCES.iter().any(|r| r.id == resource.id),
@@ -283,10 +283,7 @@ pub(crate) fn validate(request: &PageRequest, live: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn local_page(
-    config: &crate::config::Config,
-    request: &PageRequest,
-) -> Result<Option<Page>> {
+pub fn local_page(config: &crate::config::Config, request: &PageRequest) -> Result<Option<Page>> {
     let mut page = Page::default();
     match request.resource.id {
         "nats.resources" => {
@@ -355,7 +352,7 @@ pub(crate) fn local_page(
     Ok(Some(page))
 }
 
-pub(crate) struct Api<'a> {
+pub struct Api<'a> {
     pub client: &'a async_nats::Client,
     pub prefix: &'a str,
 }
@@ -400,7 +397,7 @@ fn success(value: Json) -> Result<Json> {
 }
 
 #[derive(Debug)]
-pub(crate) struct ApiError(String);
+pub struct ApiError(String);
 
 impl std::fmt::Display for ApiError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -409,7 +406,7 @@ impl std::fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
-pub(crate) async fn page(
+pub async fn page(
     api: &Api<'_>,
     session: u64,
     request: PageRequest,
@@ -665,7 +662,7 @@ pub(crate) async fn page(
     Ok(page)
 }
 
-pub(crate) fn message_row(message: &Json) -> Result<Row> {
+pub fn message_row(message: &Json) -> Result<Row> {
     let decode = |name| -> Result<Option<Value>> {
         message
             .get(name)

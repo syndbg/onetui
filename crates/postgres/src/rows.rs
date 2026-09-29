@@ -29,7 +29,7 @@ fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-pub(crate) async fn fetch(
+pub async fn fetch(
     client: &Client,
     resource: &Resource,
     offset: i64,

@@ -2,21 +2,21 @@ use anyhow::{Result, ensure};
 use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::{Column, Page, Resource, Row};
 
-pub(crate) const ROOT: ResourceDescriptor = ResourceDescriptor {
+pub const ROOT: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.resources",
     description: "Schemas and replication state",
     columns: &["resource", "description"],
     paging: true,
     actions: &[],
 };
-pub(crate) const REPLICAS: ResourceDescriptor = ResourceDescriptor {
+pub const REPLICAS: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.replication",
     description: "Connected WAL senders from pg_stat_replication; columns follow the server version",
     columns: &[],
     paging: true,
     actions: &[],
 };
-pub(crate) const RECEIVER: ResourceDescriptor = ResourceDescriptor {
+pub const RECEIVER: ResourceDescriptor = ResourceDescriptor {
     id: "postgres.wal_receiver",
     description: "Upstream WAL receiver from pg_stat_wal_receiver; columns follow the server version",
     columns: &[],
@@ -24,7 +24,7 @@ pub(crate) const RECEIVER: ResourceDescriptor = ResourceDescriptor {
     actions: &[],
 };
 
-pub(crate) fn root(resource: &Resource, continuation: Option<&str>) -> Result<Page> {
+pub fn root(resource: &Resource, continuation: Option<&str>) -> Result<Page> {
     ensure!(
         resource.path.is_empty() && continuation.is_none(),
         "PostgreSQL resource menu has no path or continuation"
@@ -60,7 +60,7 @@ pub(crate) fn root(resource: &Resource, continuation: Option<&str>) -> Result<Pa
     })
 }
 
-pub(crate) async fn fetch(
+pub async fn fetch(
     client: &tokio_postgres::Client,
     resource: &Resource,
     offset: i64,

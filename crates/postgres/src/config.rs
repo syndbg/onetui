@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub url_env: String,
     pub ca_file: Option<PathBuf>,
 }

@@ -7,8 +7,8 @@ use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Row, Value};
 use serde_json::Value as Json;
 
-pub(crate) const SUBJECT: &str = "$SYS.REQ.SERVER.PING.STATSZ";
-pub(crate) const RESOURCE: ResourceDescriptor = ResourceDescriptor {
+pub const SUBJECT: &str = "$SYS.REQ.SERVER.PING.STATSZ";
+pub const RESOURCE: ResourceDescriptor = ResourceDescriptor {
     id: "nats.servers",
     description: "System-account servers observed during a one-second request window; opt-in, not complete membership",
     columns: &[
@@ -95,7 +95,7 @@ impl Observation {
     }
 }
 
-pub(crate) async fn page(client: &async_nats::Client) -> Result<Page> {
+pub async fn page(client: &async_nats::Client) -> Result<Page> {
     let inbox = client.new_inbox();
     let mut replies = client.subscribe(inbox.clone()).await?;
     client.flush().await?;

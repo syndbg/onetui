@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub servers: Vec<String>,
     #[serde(default = "tls_default")]
     pub tls: bool,

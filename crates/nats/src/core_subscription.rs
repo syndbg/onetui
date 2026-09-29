@@ -3,7 +3,7 @@ use futures_util::{FutureExt, StreamExt};
 use onetui_core::provider::PageRequest;
 use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Row, Value};
 
-pub(crate) fn validate_subject(subject: &str) -> Result<()> {
+pub fn validate_subject(subject: &str) -> Result<()> {
     ensure!(
         !subject.is_empty()
             && subject.len() <= 1024
@@ -23,7 +23,7 @@ pub(crate) fn validate_subject(subject: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn empty() -> Page {
+pub fn empty() -> Page {
     Page {
         columns: [
             ("subject", "text"), ("reply", "text (never answered)"), ("data", "bytes"),
@@ -35,7 +35,7 @@ pub(crate) fn empty() -> Page {
     }
 }
 
-pub(crate) struct Subscription {
+pub struct Subscription {
     subscriber: async_nats::Subscriber,
     subject: String,
     identity: u64,

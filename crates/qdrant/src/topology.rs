@@ -3,14 +3,14 @@ use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
 use serde_json::{Value as Json, json};
 
-pub(crate) const ROOT: ResourceDescriptor = ResourceDescriptor {
+pub const ROOT: ResourceDescriptor = ResourceDescriptor {
     id: "qdrant.resources",
     description: "Collections and cluster topology",
     columns: &["resource", "description"],
     paging: true,
     actions: &[],
 };
-pub(crate) const CLUSTER: ResourceDescriptor = ResourceDescriptor {
+pub const CLUSTER: ResourceDescriptor = ResourceDescriptor {
     id: "qdrant.cluster",
     description: "Cluster status and local consensus state; requires rest_url",
     columns: &[
@@ -26,14 +26,14 @@ pub(crate) const CLUSTER: ResourceDescriptor = ResourceDescriptor {
     paging: true,
     actions: &[],
 };
-pub(crate) const PEERS: ResourceDescriptor = ResourceDescriptor {
+pub const PEERS: ResourceDescriptor = ResourceDescriptor {
     id: "qdrant.peers",
     description: "Peers reported by the configured REST node; addresses are never contacted",
     columns: &["peer_id", "uri", "is_self", "is_leader", "details"],
     paging: true,
     actions: &[],
 };
-pub(crate) const SHARDS: ResourceDescriptor = ResourceDescriptor {
+pub const SHARDS: ResourceDescriptor = ResourceDescriptor {
     id: "qdrant.shards",
     description: "Local and remote shard replicas reported by the REST node",
     columns: &[
@@ -48,7 +48,7 @@ pub(crate) const SHARDS: ResourceDescriptor = ResourceDescriptor {
     paging: true,
     actions: &[],
 };
-pub(crate) const TRANSFERS: ResourceDescriptor = ResourceDescriptor {
+pub const TRANSFERS: ResourceDescriptor = ResourceDescriptor {
     id: "qdrant.transfers",
     description: "Active shard transfers; observation only",
     columns: &[
@@ -64,7 +64,7 @@ pub(crate) const TRANSFERS: ResourceDescriptor = ResourceDescriptor {
     paging: true,
     actions: &[],
 };
-pub(crate) const COLLECTION_CLUSTER: ResourceDescriptor = ResourceDescriptor {
+pub const COLLECTION_CLUSTER: ResourceDescriptor = ResourceDescriptor {
     id: "qdrant.collection_cluster",
     description: "Complete collection topology, including resharding operations",
     columns: &["details"],
@@ -72,7 +72,7 @@ pub(crate) const COLLECTION_CLUSTER: ResourceDescriptor = ResourceDescriptor {
     actions: &[],
 };
 
-pub(crate) fn is_resource(id: &str) -> bool {
+pub fn is_resource(id: &str) -> bool {
     matches!(
         id,
         "qdrant.cluster"
@@ -83,7 +83,7 @@ pub(crate) fn is_resource(id: &str) -> bool {
     )
 }
 
-pub(crate) async fn read(
+pub async fn read(
     client: &reqwest::Client,
     base: &str,
     key: Option<&str>,
@@ -164,7 +164,7 @@ fn array<'a>(value: &'a Json, key: &str) -> Result<&'a Vec<Json>> {
     Ok(array)
 }
 
-pub(crate) fn page(resource: &Resource, value: Json, offset: usize, executor: u64) -> Result<Page> {
+pub fn page(resource: &Resource, value: Json, offset: usize, executor: u64) -> Result<Page> {
     let mut notice =
         "Topology observed by the REST node; re-read per page, not a snapshot".to_owned();
     let rows = match resource.id {

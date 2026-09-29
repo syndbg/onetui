@@ -20,10 +20,10 @@ use std::sync::{
 };
 
 // DynamoDB's item-byte limit excludes JSON escaping and base64 expansion.
-pub(crate) const RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+pub const RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Default)]
-pub(crate) struct Capture {
+pub struct Capture {
     response: Arc<Mutex<Option<HttpResponse>>>,
     limit_exceeded: Arc<AtomicBool>,
 }

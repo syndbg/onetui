@@ -20,7 +20,7 @@ macro_rules! send {
     }};
 }
 
-pub(crate) fn is_resource(id: &str) -> bool {
+pub fn is_resource(id: &str) -> bool {
     matches!(
         id,
         "dynamodb.streams"
@@ -49,7 +49,7 @@ enum Cursor {
     Closed,
 }
 
-pub(crate) fn closed(token: &Json) -> bool {
+pub fn closed(token: &Json) -> bool {
     token["position"] == "Closed"
 }
 
@@ -80,7 +80,7 @@ fn column(name: &str, datatype: &str) -> Column {
     }
 }
 
-pub(crate) async fn read(
+pub async fn read(
     client: &Client,
     resource: &Resource,
     position: Option<&Json>,
@@ -416,7 +416,7 @@ fn decimal_order(left: &str, right: &str) -> std::cmp::Ordering {
     (left.len(), left).cmp(&(right.len(), right))
 }
 
-pub(crate) async fn replay(
+pub async fn replay(
     client: &Client,
     arn: &str,
     shard: &str,

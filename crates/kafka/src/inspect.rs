@@ -27,7 +27,7 @@ impl<T> Drop for Owned<T> {
     }
 }
 
-pub(crate) fn page<C: ConsumerContext>(
+pub fn page<C: ConsumerContext>(
     client: &BaseConsumer<C>,
     resource: &Resource,
     offset: i64,

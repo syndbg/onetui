@@ -41,7 +41,7 @@ macro_rules! send {
     }};
 }
 
-pub(crate) async fn metadata(
+pub async fn metadata(
     client: &Client,
     id: &str,
     path: &[String],
@@ -139,7 +139,7 @@ pub(crate) async fn metadata(
     }
 }
 
-pub(crate) async fn query(
+pub async fn query(
     client: &Client,
     table: &str,
     query: Read,

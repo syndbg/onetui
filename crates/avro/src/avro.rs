@@ -5,7 +5,7 @@ use apache_avro::{
     schema::{InnerDecimalSchema, NamesRef, ResolvedSchema, UuidSchema},
 };
 
-pub(crate) fn schema(text: &str) -> Result<Schema> {
+pub fn schema(text: &str) -> Result<Schema> {
     let json: serde_json::Value = serde_json::from_str(text)?;
     crate::bounds::schema_json(&json, &mut Budget::default(), 0)?;
     let schema = Schema::parse(&json)?;
@@ -13,7 +13,7 @@ pub(crate) fn schema(text: &str) -> Result<Schema> {
     Ok(schema)
 }
 
-pub(crate) fn decode(
+pub fn decode(
     schema: &Schema,
     references: &[Schema],
     bytes: &[u8],

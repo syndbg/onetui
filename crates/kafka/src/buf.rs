@@ -1,4 +1,4 @@
-pub(crate) use onetui_schema_source::buf::*;
+pub use onetui_schema_source::buf::*;
 
 #[cfg(test)]
 mod tests;

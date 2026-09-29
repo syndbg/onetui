@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn subscriptions(subject: &str) -> usize {
+pub fn subscriptions(subject: &str) -> usize {
     let output = docker(&[
         "exec",
         "-T",

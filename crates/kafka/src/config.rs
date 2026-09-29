@@ -6,7 +6,7 @@ use std::path::Path;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub bootstrap_servers: Vec<String>,
     #[serde(default = "default_security")]
     pub security_protocol: String,

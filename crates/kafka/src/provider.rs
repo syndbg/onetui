@@ -20,8 +20,8 @@ use tokio::sync::{Mutex, Semaphore, oneshot, watch};
 use tokio::time::Instant;
 
 pub struct KafkaProvider;
-pub(crate) const NATIVE_ERROR_COUNT: usize = 4;
-pub(crate) const NATIVE_ERROR_BYTES: usize = 2048;
+pub const NATIVE_ERROR_COUNT: usize = 4;
+pub const NATIVE_ERROR_BYTES: usize = 2048;
 static NEXT_EXECUTOR: AtomicU64 = AtomicU64::new(1);
 // Native destruction and certificate/DNS reads cannot be aborted by dropping an async future.
 // Keep the slot until the native owner exits, including after a timed-out shutdown.

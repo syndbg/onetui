@@ -6,7 +6,7 @@ use sqlparser::tokenizer::{Location, Token, Tokenizer, Whitespace};
 
 /// What a byte of editor text is, for coloring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
+pub enum Kind {
     Plain,
     Keyword,
     String,
@@ -99,7 +99,7 @@ const SQL_KEYWORDS: &[&str] = &[
 
 /// One kind per byte of `text`. The text is re-lexed on every draw. It is bounded by the
 /// query size limit, so this costs microseconds and needs no incremental state.
-pub(crate) fn kinds(syntax: Syntax, text: &str) -> Vec<Kind> {
+pub fn kinds(syntax: Syntax, text: &str) -> Vec<Kind> {
     let mut kinds = vec![Kind::Plain; text.len()];
     match syntax {
         Syntax::Sql { keywords } => sql(text, 0, keywords, &mut kinds),

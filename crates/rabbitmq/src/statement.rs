@@ -5,7 +5,7 @@ use reqwest::Method;
 
 /// What a submitted statement asks the management API to do. Every variant but `Raw`
 /// names its vhost as a literal, so the default vhost is typed as `/` rather than `%2F`.
-pub(crate) enum Statement<'a> {
+pub enum Statement<'a> {
     /// Publish through an exchange. The body is the payload, taken literally.
     Publish {
         vhost: &'a str,
@@ -73,7 +73,7 @@ const ENCODING: &str = "onetui-encoding";
 /// given; the management API rejects one it will not serve.
 const GET_COUNT: u32 = 1;
 
-pub(crate) fn parse(text: &str) -> Result<Statement<'_>> {
+pub fn parse(text: &str) -> Result<Statement<'_>> {
     let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
     let mut parts = line.split_whitespace();
     let verb = parts.next().ok_or_else(|| {
@@ -290,7 +290,7 @@ fn decode(payload: &str, encoding: Option<&str>) -> Result<Vec<u8>> {
 
 /// Prefill the editor from whatever the current view has open. The vhost is a literal
 /// here, which is the point: the default vhost reads as `/`, not `%2F`.
-pub(crate) fn watermark(resource: &Resource, row: Option<&Row>) -> String {
+pub fn watermark(resource: &Resource, row: Option<&Row>) -> String {
     let vhost = resource.path.first().map(String::as_str).unwrap_or("/");
     let name = row
         .and_then(|row| row.cells.first())
@@ -311,7 +311,7 @@ pub(crate) fn watermark(resource: &Resource, row: Option<&Row>) -> String {
 
 /// The management request a statement describes: where it goes, and what it carries.
 /// Path segments are pushed as literals, so `url` percent-encodes a vhost named `/`.
-pub(crate) struct Outbound {
+pub struct Outbound {
     pub method: Method,
     pub url: url::Url,
     pub body: Option<String>,
@@ -527,12 +527,12 @@ fn segments<'a>(url: &mut url::Url, parts: impl IntoIterator<Item = &'a str>) ->
 }
 
 /// The status and bounded body of one management response.
-pub(crate) struct Response {
+pub struct Response {
     pub status: reqwest::StatusCode,
     pub body: Vec<u8>,
 }
 
-pub(crate) async fn send(pending: reqwest::RequestBuilder) -> Result<Response> {
+pub async fn send(pending: reqwest::RequestBuilder) -> Result<Response> {
     let mut response = pending
         .send()
         .await
@@ -563,7 +563,7 @@ pub(crate) async fn send(pending: reqwest::RequestBuilder) -> Result<Response> {
 
 /// A read renders the response as a page; a write reports an outcome. The native status
 /// decides applied or rejected, so a permission error stays a rejection, not an error.
-pub(crate) fn outcome(
+pub fn outcome(
     statement: &Statement<'_>,
     response: Response,
 ) -> Result<onetui_core::provider::QueryExecution> {

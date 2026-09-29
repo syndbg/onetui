@@ -27,7 +27,7 @@ async fn load_tls_capable_http_client(
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub struct Config {
     pub region: String,
     pub profile: Option<String>,
     pub endpoint_url: Option<String>,
