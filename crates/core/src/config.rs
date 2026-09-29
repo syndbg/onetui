@@ -54,10 +54,16 @@ impl Config {
         self.connections.get(alias).map(|c| c.descriptor)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read, is not valid TOML or fails provider validation.
     pub fn load<P: Provider>(path: &Path, catalog: &[P]) -> Result<Self> {
         Self::load_for_startup(path, catalog, false)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read, is not valid TOML or fails provider validation. A missing file is not an error when `allow_missing` is set.
     pub fn load_for_startup<P: Provider>(
         path: &Path,
         catalog: &[P],
@@ -80,6 +86,13 @@ impl Config {
         self.source.as_ref().map(|(path, _)| path.as_path())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the alias is invalid or taken, the kind is unknown, the options fail validation or the file cannot be written.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration has no source path, which cannot happen after the file was located.
     pub fn add_connection<P: Provider>(
         &mut self,
         alias: &str,
@@ -151,6 +164,9 @@ impl Config {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the text is not valid TOML or a connection fails provider validation.
     pub fn parse<P: Provider>(text: &str, catalog: &[P]) -> Result<Self> {
         validate_catalog(catalog)?;
         let raw: RawConfig = toml::from_str(text).map_err(|_| {
@@ -189,6 +205,9 @@ impl Config {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the alias is unknown or the provider rejects its options or secrets.
     pub fn configure<P: Provider>(
         &self,
         alias: &str,
@@ -225,6 +244,9 @@ fn read_config(path: &Path) -> Result<Option<String>> {
     })
 }
 
+/// # Errors
+///
+/// Returns an error when the name has unsupported characters or the variable is missing, empty or not Unicode.
 pub fn secret(name: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<String> {
     ensure!(
         safe_name(name),
@@ -245,6 +267,9 @@ pub fn safe_name(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
 }
 
+/// # Errors
+///
+/// Returns an error when no explicit path is given and no config directory can be derived from the environment.
 pub fn config_path(explicit: Option<PathBuf>) -> Result<PathBuf> {
     default_path(
         explicit,

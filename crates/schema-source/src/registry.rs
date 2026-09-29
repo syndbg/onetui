@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow, ensure};
 use base64::Engine;
 use onetui_core::config::{safe_name, secret};
 use serde::Deserialize;
+use std::fmt::Write as _;
 use std::{
     collections::{HashMap, VecDeque},
     io::Read,
@@ -73,6 +74,9 @@ impl Config {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the URL, credentials or subject settings are invalid.
     pub fn validate(&self) -> Result<()> {
         let url = url::Url::parse(&self.url)?;
         ensure!(
@@ -114,6 +118,13 @@ impl Config {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when a referenced secret cannot be resolved or the username contains a colon.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a username is configured without a password reference, which validation prevents.
     pub fn resolve(&mut self, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<String>> {
         let mut resolve = |name: &str| -> Result<String> {
             let value = secret(name, env)?;
@@ -172,6 +183,9 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// # Errors
+    ///
+    /// Returns an error when the configuration is invalid.
     pub fn new(config: Config, format: Format) -> Result<Self> {
         let agent = config.agent()?;
         Ok(Self {
@@ -200,6 +214,9 @@ impl Registry {
     }
 }
 
+/// # Errors
+///
+/// Returns an error when the CA file cannot be read or parsed.
 pub fn http_agent(ca_file: Option<&str>) -> Result<ureq::Agent> {
     let roots = if let Some(path) = ca_file {
         let pem = crate::read_file(path, 1024 * 1024)?;
@@ -294,7 +311,7 @@ impl Config {
 
     pub fn diagnostic(&self, error: anyhow::Error) -> String {
         onetui_core::diagnostic(
-            error,
+            &error,
             &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
         )
         .to_string()
@@ -302,6 +319,9 @@ impl Config {
 }
 
 impl Registry {
+    /// # Errors
+    ///
+    /// Returns an error when the registry request fails or the deadline passes.
     pub fn check(&self, remaining: &impl Fn() -> Result<()>) -> Result<()> {
         let bytes = self.request(
             &["schemas", "types"],
@@ -419,6 +439,9 @@ impl Registry {
         Ok(decoder)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the payload is shorter than the five-byte envelope, which the earlier length check prevents.
     pub fn preview(
         &mut self,
         raw: &[u8],
@@ -444,10 +467,7 @@ impl Registry {
         };
         let mut identity = Some(format!("confluent:{}#id={id}", self.config.url));
         if let Some(reader) = &self.reader {
-            identity
-                .as_mut()
-                .unwrap()
-                .push_str(&format!("&reader={}", reader.schema_id()));
+            let _ = write!(identity.as_mut().unwrap(), "&reader={}", reader.schema_id());
         }
         let indexes = if self.format == Format::Protobuf {
             match message_indexes(&mut payload) {
@@ -460,7 +480,7 @@ impl Registry {
         if !self.cache.iter().any(|(cached, _)| *cached == id) {
             let loaded = self.load(id, remaining).map_err(|error| {
                 onetui_core::diagnostic(
-                    error,
+                    &error,
                     &self
                         .config
                         .secrets
@@ -492,10 +512,7 @@ impl Registry {
                 Compiled::Protobuf(schema) => {
                     let decoder = schema.decoder(&indexes)?;
                     let message = decoder.message_name();
-                    identity
-                        .as_mut()
-                        .unwrap()
-                        .push_str(&format!("&message={message}"));
+                    let _ = write!(identity.as_mut().unwrap(), "&message={message}");
                     Preview::protobuf(&decoder, payload)
                 }
             });

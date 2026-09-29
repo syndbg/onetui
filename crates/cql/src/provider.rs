@@ -187,7 +187,7 @@ impl CqlExecutor {
             Some((db, message)) => anyhow!("{db}: {message}"),
             None => error,
         };
-        onetui_core::diagnostic(error, &[password])
+        onetui_core::diagnostic(&error, &[password])
     }
 
     /// Execute one page of a prepared statement. Preparing first means a statement the
@@ -433,12 +433,12 @@ impl Executor for CqlExecutor {
         }
     }
 
-    async fn shutdown(&mut self, _context: ShutdownContext) -> Result<()> {
+    fn shutdown(&mut self, _context: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
         self.closed = true;
         self.status.send_replace(ConnectionStatus::Closing);
         self.session.get_mut().take();
         self.status.send_replace(ConnectionStatus::Closed);
-        Ok(())
+        std::future::ready(Ok(()))
     }
 }
 

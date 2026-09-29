@@ -5,7 +5,7 @@ use serde_json::{Value as Json, json};
 
 use crate::browse::{Api, Cursor, columns, message_row, number, string};
 
-fn json_page(value: Json) -> Page {
+fn json_page(value: &Json) -> Page {
     Page {
         columns: columns(&[("info", "json")]),
         rows: vec![Row {
@@ -124,10 +124,7 @@ pub async fn page(
                     json!({"offset": cursor.next}),
                 )
                 .await?;
-            let consumers = info["consumers"]
-                .as_array()
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
+            let consumers = info["consumers"].as_array().map_or(&[][..], Vec::as_slice);
             let mut page = Page {
                 columns: columns(&[
                     ("name", "text"),
@@ -173,7 +170,7 @@ pub async fn page(
             page
         }
         "nats.consumer_info" => json_page(
-            api.call(
+            &api.call(
                 &format!("CONSUMER.INFO.{}.{}", resource.path[0], resource.path[1]),
                 json!({}),
             )
@@ -289,7 +286,7 @@ pub async fn page(
             .collect(),
             ..Page::default()
         },
-        "nats.object_info" => json_page(object_info(api, resource).await?),
+        "nats.object_info" => json_page(&object_info(api, resource).await?),
         _ => unreachable!(),
     };
     page.notice = "Metadata; independent reads, no snapshot".into();

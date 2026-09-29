@@ -17,6 +17,9 @@ pub struct Preview {
 }
 
 impl Preview {
+    /// # Errors
+    ///
+    /// Returns an error when the payload cannot be decoded.
     pub fn avro(decoder: &onetui_avro::Decoder, raw: &[u8]) -> Result<Self> {
         let decoded = decoder.decode(raw)?;
         Ok(Self {
@@ -25,6 +28,9 @@ impl Preview {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the payload cannot be decoded.
     pub fn protobuf(decoder: &onetui_protobuf::Decoder, raw: &[u8]) -> Result<Self> {
         let decoded = decoder.decode(raw)?;
         Ok(Self {
@@ -34,6 +40,9 @@ impl Preview {
     }
 }
 
+/// # Errors
+///
+/// Returns an error when the path is not a safe file path.
 pub fn validate_path(path: &str) -> Result<()> {
     ensure!(
         path.len() <= 4096 && !path.chars().any(char::is_control) && Path::new(path).is_absolute(),
@@ -42,6 +51,9 @@ pub fn validate_path(path: &str) -> Result<()> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error when the file cannot be read or exceeds the limit.
 pub fn read_file(path: &str, limit: usize) -> Result<Vec<u8>> {
     let mut options = OpenOptions::new();
     options.read(true);
@@ -92,6 +104,9 @@ fn valid_id(id: &str) -> bool {
 }
 
 impl Config {
+    /// # Errors
+    ///
+    /// Returns an error when the source is invalid for the format.
     pub fn validate(&self, format: Format) -> Result<()> {
         ensure!(cfg!(unix), "Directory catalogs require Unix");
         ensure!(
@@ -120,6 +135,13 @@ impl Config {
         format!("directory:{}#schema={}", self.directory, self.schema)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the catalog cannot be read or holds an invalid schema.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a catalog file name has no extension, which the extension filter prevents.
     #[cfg(unix)]
     pub fn load(&self, format: Format, remaining: &impl Fn() -> Result<()>) -> Result<Bundle> {
         use nix::{dir::Dir, fcntl::OFlag, sys::stat::Mode};

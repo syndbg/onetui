@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+use std::fmt::Write as _;
 mod bounds;
 mod inspect;
 mod protobuf;
@@ -29,6 +30,10 @@ pub struct Decoded {
 
 impl Decoder {
     /// Load a binary `FileDescriptorSet` including imports and select an exact full name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the descriptor set is invalid or the message name is not found.
     pub fn new(descriptor_set: &[u8], message_name: &str) -> Result<Self> {
         ensure!(
             descriptor_set.len() <= MAX_SCHEMA_BYTES,
@@ -60,6 +65,10 @@ impl Decoder {
 
     /// Decode one raw payload without guessing framing or substituting another format.
     /// On error the caller still owns the unchanged input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not match the message or exceeds a decoding bound.
     pub fn decode(&self, raw: &[u8]) -> Result<Decoded> {
         ensure!(
             raw.len() <= MAX_PAYLOAD_BYTES,
@@ -77,8 +86,10 @@ impl Decoder {
 fn fingerprint(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 impl Decoded {
@@ -97,12 +108,20 @@ impl Decoded {
 
     /// Bounded, unformatted JSON presentation. Call outside rendering.
     /// Errors here do not discard the decoded value or original bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the JSON presentation exceeds its bound.
     pub fn json(&self) -> Result<String> {
         protobuf::check_json(&self.value)?;
         bounds::json(&self.value)
     }
 
     /// Typed inspection, including unknown field wire types and re-encoded bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the inspection output exceeds its bound.
     pub fn native(&self) -> Result<String> {
         bounds::json(&inspect::Message(&self.value))
     }

@@ -4,15 +4,14 @@ use tokio_postgres::{Client, types::ToSql};
 use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
 
 pub fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
-    if let Some(db) = error.as_db_error() {
-        let mut message = format!("PostgreSQL [{}] {db}", db.code().code());
-        if let Some(context) = db.where_() {
-            message.push_str(&format!("\nCONTEXT: {context}"));
-        }
-        anyhow!(message)
-    } else {
-        anyhow::Error::new(error).context("PostgreSQL")
+    let Some(db) = error.as_db_error() else {
+        return anyhow::Error::new(error).context("PostgreSQL");
+    };
+    let mut message = format!("PostgreSQL [{}] {db}", db.code().code());
+    if let Some(context) = db.where_() {
+        message = format!("{message}\nCONTEXT: {context}");
     }
+    anyhow!(message)
 }
 
 pub async fn metadata(client: &Client, resource: &Resource, offset: i64) -> Result<Page> {

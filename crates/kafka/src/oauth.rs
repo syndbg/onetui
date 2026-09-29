@@ -271,7 +271,7 @@ impl Session {
         // Replace complete tokens before any shorter credential that overlaps them.
         secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
         onetui_core::diagnostic(
-            error,
+            &error,
             &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
         )
     }

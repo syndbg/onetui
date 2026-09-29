@@ -96,7 +96,7 @@ pub fn display(value: &str) -> String {
 
 /// Preserve native error wording and causes without echoing configured secrets or controls.
 #[must_use]
-pub fn diagnostic(error: anyhow::Error, secrets: &[&str]) -> anyhow::Error {
+pub fn diagnostic(error: &anyhow::Error, secrets: &[&str]) -> anyhow::Error {
     let mut message = format!("{error:#}");
     for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
         message = message.replace(secret, "[REDACTED]");
@@ -113,7 +113,7 @@ mod tests {
         let error = anyhow::anyhow!("certificate rejected: secret\nvalue\x1b[31m")
             .context("transport error");
         assert_eq!(
-            diagnostic(error, &["", "secret\nvalue"]).to_string(),
+            diagnostic(&error, &["", "secret\nvalue"]).to_string(),
             "transport error: certificate rejected: [REDACTED]\\u{1b}[31m"
         );
     }

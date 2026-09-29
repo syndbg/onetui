@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+use std::fmt::Write as _;
 mod avro;
 mod bounds;
 mod inspect;
@@ -33,6 +34,10 @@ pub struct Decoded {
 
 impl Decoder {
     /// Parse a self-contained writer schema. Reader-schema resolution is not implicit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the text is not a valid Avro schema.
     pub fn new(writer_schema: &str) -> Result<Self> {
         ensure!(
             writer_schema.len() <= MAX_SCHEMA_BYTES,
@@ -48,6 +53,14 @@ impl Decoder {
     }
 
     /// Resolve named writer dependencies without substituting a reader schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the writer schema or a reference is invalid, or a named dependency is missing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the parser returns no schema for the writer text, which cannot happen after a successful parse.
     pub fn with_references(writer_schema: &str, references: &[&str]) -> Result<Self> {
         if references.is_empty() {
             return Self::new(writer_schema);
@@ -78,8 +91,10 @@ impl Decoder {
                 identity
                     .finalize()
                     .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
+                    .fold(String::new(), |mut hex, b| {
+                        let _ = write!(hex, "{b:02x}");
+                        hex
+                    })
             ),
             schema,
             references: schemas,
@@ -104,6 +119,10 @@ impl Decoder {
 
     /// Decode one raw payload without guessing framing or substituting another format.
     /// On error the caller still owns the unchanged input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not match the writer schema or exceeds a decoding bound.
     pub fn decode(&self, raw: &[u8]) -> Result<Decoded> {
         ensure!(
             raw.len() <= MAX_PAYLOAD_BYTES,
@@ -134,8 +153,10 @@ impl Decoder {
 fn fingerprint(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 impl Decoded {
@@ -158,6 +179,10 @@ impl Decoded {
 
     /// Bounded, unformatted JSON presentation. Call outside rendering.
     /// Errors here do not discard the decoded value or original bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the JSON presentation exceeds its bound.
     pub fn json(&self) -> Result<String> {
         let value = match &self.resolved {
             Some(Ok(value)) => value,
@@ -169,6 +194,10 @@ impl Decoded {
     }
 
     /// Typed inspection, including union branches and logical types. Not wire bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the inspection output exceeds its bound.
     pub fn native(&self) -> Result<String> {
         if let Some(resolved) = &self.resolved {
             #[derive(serde::Serialize)]

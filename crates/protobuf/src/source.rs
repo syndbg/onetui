@@ -17,14 +17,17 @@ struct Sources(HashMap<String, String>);
 
 impl FileResolver for Sources {
     fn open_file(&self, name: &str) -> Result<File, protox::Error> {
-        match self.0.get(name) {
-            Some(source) => File::from_source(name, source),
-            None => GoogleFileResolver::new().open_file(name),
-        }
+        self.0.get(name).map_or_else(
+            || GoogleFileResolver::new().open_file(name),
+            |source| File::from_source(name, source),
+        )
     }
 }
 
 impl SourceSchema {
+    /// # Errors
+    ///
+    /// Returns an error when a source fails to compile or an import is missing.
     pub fn compile(root: &str, imports: &[(&str, &str)]) -> Result<Self> {
         ensure!(imports.len() <= 32, "Protobuf imports exceed 32");
         let mut bytes = root.len();
@@ -81,6 +84,10 @@ impl SourceSchema {
     }
 
     /// Select a root-to-nested declaration index path from a Confluent envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the indexes do not name a declaration.
     pub fn decoder(&self, indexes: &[usize]) -> Result<Decoder> {
         ensure!(
             !indexes.is_empty() && indexes.len() <= MAX_DEPTH,

@@ -183,7 +183,7 @@ impl QdrantExecutor {
                     &request.resource,
                 )
                 .await?;
-                crate::topology::page(&request.resource, value, offset, self.identity)
+                crate::topology::page(&request.resource, &value, offset, self.identity)
             })
             .await?;
         let result = context.run(std::future::ready(result)).await?;
@@ -191,7 +191,7 @@ impl QdrantExecutor {
             lease.clean = true;
             self.status.send_replace(ConnectionStatus::Connected);
         }
-        result.map_err(|error| onetui_core::diagnostic(error, &[key.unwrap_or("")]))
+        result.map_err(|error| onetui_core::diagnostic(&error, &[key.unwrap_or("")]))
     }
 
     fn request<T>(&self, message: T, deadline: Instant) -> tonic::Request<T> {
@@ -249,7 +249,7 @@ impl QdrantExecutor {
         }
         result.map_err(|error| {
             onetui_core::diagnostic(
-                error,
+                &error,
                 &[self
                     .api_key
                     .as_ref()
@@ -318,7 +318,7 @@ impl Executor for QdrantExecutor {
                 Ok(QueryExecution::Page(page))
             }
             Ok(Err(error)) | Err(error) if dispatched => {
-                let error = onetui_core::diagnostic(error, &[key.unwrap_or("")]);
+                let error = onetui_core::diagnostic(&error, &[key.unwrap_or("")]);
                 if matches!(input.method, reqwest::Method::GET | reqwest::Method::HEAD) {
                     Err(error)
                 } else {
@@ -344,7 +344,7 @@ impl Executor for QdrantExecutor {
                 .max_decoding_message_size(PAGE_BYTES)
                 .list(self.request(ListCollectionsRequest {}, deadline))
                 .await
-                .map_err(crate::rpc_error)?
+                .map_err(|status| crate::rpc_error(&status))?
                 .into_inner();
             Ok(CheckResult {
                 summary: format!(
@@ -384,7 +384,7 @@ impl Executor for QdrantExecutor {
                     let result = client
                         .list(self.request(ListCollectionsRequest {}, deadline))
                         .await
-                        .map_err(crate::rpc_error)?
+                        .map_err(|status| crate::rpc_error(&status))?
                         .into_inner();
                     let offset = match offset {
                         Some(crate::browse::Offset::Collections(n)) => n,
@@ -408,11 +408,11 @@ impl Executor for QdrantExecutor {
                             deadline,
                         ))
                         .await
-                        .map_err(crate::rpc_error)?
+                        .map_err(|status| crate::rpc_error(&status))?
                         .into_inner();
                     crate::browse::metadata(
                         resource,
-                        result.result.ok_or_else(|| {
+                        &result.result.ok_or_else(|| {
                             anyhow!("Qdrant collection metadata missing; refresh its parent")
                         })?,
                     )
@@ -430,7 +430,7 @@ impl Executor for QdrantExecutor {
                     let result = client
                         .scroll(self.request(scroll.build(), deadline))
                         .await
-                        .map_err(crate::rpc_error)?
+                        .map_err(|status| crate::rpc_error(&status))?
                         .into_inner();
                     crate::browse::points(
                         resource,
@@ -452,7 +452,7 @@ impl Executor for QdrantExecutor {
                     let result = client
                         .get(self.request(get, deadline))
                         .await
-                        .map_err(crate::rpc_error)?
+                        .map_err(|status| crate::rpc_error(&status))?
                         .into_inner();
                     crate::browse::detail(resource, result.result)
                 }
@@ -462,13 +462,13 @@ impl Executor for QdrantExecutor {
         .await
     }
 
-    async fn shutdown(&mut self, _context: ShutdownContext) -> Result<()> {
+    fn shutdown(&mut self, _context: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
         self.closed = true;
         self.status.send_replace(ConnectionStatus::Closing);
         self.client.get_mut().take();
         self.rest_client.get_mut().take();
         self.status.send_replace(ConnectionStatus::Closed);
-        Ok(())
+        std::future::ready(Ok(()))
     }
 }
 

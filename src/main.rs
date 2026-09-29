@@ -58,15 +58,12 @@ fn main() -> ExitCode {
     // every connector configures explicitly.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let args = Args::parse();
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-    {
-        Ok(runtime) => runtime,
-        Err(_) => {
-            eprintln!("error: cannot initialize async runtime");
-            return ExitCode::FAILURE;
-        }
+    else {
+        eprintln!("error: cannot initialize async runtime");
+        return ExitCode::FAILURE;
     };
     let result = runtime.block_on(run(args));
     // Sessions have finished bounded cleanup. OS certificate reads cannot be aborted;

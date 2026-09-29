@@ -183,7 +183,7 @@ impl ClientContext for NativeContext {
     fn log(&self, _: RDKafkaLogLevel, _: &str, _: &str) {}
     fn error(&self, error: KafkaError, reason: &str) {
         let secrets: Vec<_> = self.secrets.iter().map(String::as_str).collect();
-        let mut error = onetui_core::diagnostic(anyhow!("{error}: {reason}"), &secrets);
+        let mut error = onetui_core::diagnostic(&anyhow!("{error}: {reason}"), &secrets);
         if let Some(session) = &self.oauth {
             error = session
                 .lock()
@@ -226,7 +226,7 @@ impl rdkafka::producer::ProducerContext for NativeContext {
             Err((error, _)) => {
                 let secrets: Vec<_> = self.secrets.iter().map(String::as_str).collect();
                 crate::produce::Outcome::Failed(
-                    onetui_core::diagnostic(anyhow!("{error}"), &secrets).to_string(),
+                    onetui_core::diagnostic(&anyhow!("{error}"), &secrets).to_string(),
                 )
             }
         };
@@ -374,7 +374,7 @@ impl KafkaExecutor {
                         let result = result.map_err(|error| {
                             let error = request_error(error, &job.errors);
                             let error = onetui_core::diagnostic(
-                                error,
+                                &error,
                                 &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
                             );
                             match &oauth {

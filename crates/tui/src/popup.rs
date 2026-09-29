@@ -106,7 +106,7 @@ mod tests {
                     vec![Line::raw("x")],
                     10,
                     Alignment::Center,
-                )
+                );
             })
             .unwrap();
     }

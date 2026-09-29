@@ -33,8 +33,8 @@ pub struct Record {
     pub key: Option<String>,
     // An explicit null value is a tombstone, which differs from omitting the field, so
     // the two cases must stay distinguishable after deserializing.
-    #[serde(default, deserialize_with = "present")]
-    pub value: Option<Option<String>>,
+    #[serde(default)]
+    pub value: Payload,
     #[serde(default)]
     pub partition: Option<i32>,
     #[serde(default)]
@@ -54,11 +54,21 @@ pub enum Encoding {
     Hex,
 }
 
-fn present<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer).map(Some)
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum Payload {
+    #[default]
+    Absent,
+    Null,
+    Text(String),
+}
+
+impl<'de> Deserialize<'de> for Payload {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Option::<String>::deserialize(deserializer)?.map_or(Self::Null, Self::Text))
+    }
 }
 
 impl Encoding {
@@ -103,11 +113,14 @@ impl Record {
     /// The value bytes. None is a tombstone: an explicit null, or a record with only a
     /// key, both of which Kafka stores as a null value.
     pub fn value(&self) -> Result<Option<Vec<u8>>> {
-        self.value
-            .as_ref()
-            .and_then(Option::as_deref)
-            .map(|value| self.value_encoding.unwrap_or(Encoding::Utf8).decode(value))
-            .transpose()
+        match &self.value {
+            Payload::Text(value) => self
+                .value_encoding
+                .unwrap_or(Encoding::Utf8)
+                .decode(value)
+                .map(Some),
+            Payload::Absent | Payload::Null => Ok(None),
+        }
     }
 }
 
@@ -153,13 +166,13 @@ pub fn parse(text: &str) -> Result<Statement> {
             for line in body.lines().filter(|line| !line.trim().is_empty()) {
                 let record: Record = serde_json::from_str(line)?;
                 ensure!(
-                    record.key.is_some() || record.value.is_some(),
+                    record.key.is_some() || record.value != Payload::Absent,
                     "Each record needs a key or a value"
                 );
                 // A tombstone is keyed by definition: the broker needs the key to know
                 // which record the deletion marker retires.
                 ensure!(
-                    !(record.key.is_none() && record.value == Some(None)),
+                    !(record.key.is_none() && record.value == Payload::Null),
                     "A null value is a tombstone and needs a key"
                 );
                 // Decoding here rejects a malformed payload before anything is sent.

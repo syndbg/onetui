@@ -187,10 +187,10 @@ impl Decoder {
     }
     fn identity(&self) -> String {
         match self {
-            Self::Avro(d) => match d.reader_schema_id() {
-                Some(reader) => format!("{}&reader={reader}", d.schema_id()),
-                None => d.schema_id().into(),
-            },
+            Self::Avro(d) => d.reader_schema_id().map_or_else(
+                || d.schema_id().into(),
+                |reader| format!("{}&reader={reader}", d.schema_id()),
+            ),
             Self::Protobuf(d) => d.schema_id().into(),
         }
     }
@@ -418,7 +418,7 @@ impl Cache {
 }
 
 fn short(value: &str) -> String {
-    let value = onetui_core::diagnostic(anyhow!("{value}"), &[]).to_string();
+    let value = onetui_core::diagnostic(&anyhow!("{value}"), &[]).to_string();
     if value.len() <= 512 {
         value
     } else {

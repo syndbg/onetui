@@ -45,7 +45,7 @@ fn qdrant_url(value: &str) -> Result<url::Url> {
     Ok(url)
 }
 
-fn rpc_error(status: tonic::Status) -> anyhow::Error {
+fn rpc_error(status: &tonic::Status) -> anyhow::Error {
     // Status Display/Debug includes metadata; only the code and message belong in diagnostics.
     anyhow!(
         "Qdrant [gRPC {:?} ({})] {}",

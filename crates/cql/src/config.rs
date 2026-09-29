@@ -50,8 +50,8 @@ impl Config {
             "CQL username and password cannot be empty"
         );
         ensure!(
-            !(config.username.is_some() && config.username_env.is_some())
-                && !(config.password.is_some() && config.password_env.is_some()),
+            !(config.username.is_some() && config.username_env.is_some()
+                || config.password.is_some() && config.password_env.is_some()),
             "CQL username and password each need one source: a value or an _env reference"
         );
         ensure!(

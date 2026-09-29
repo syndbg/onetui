@@ -9,6 +9,9 @@ pub struct Request<'a> {
     pub body: &'a str,
 }
 
+/// # Errors
+///
+/// Returns an error when the text is not a valid HTTP request line.
 pub fn parse(text: &str) -> Result<Request<'_>> {
     let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
     let mut parts = line.split_whitespace();
@@ -33,6 +36,9 @@ pub fn parse(text: &str) -> Result<Request<'_>> {
     Ok(Request { method, path, body })
 }
 
+/// # Errors
+///
+/// Returns an error when the request path does not resolve against the base URL.
 pub fn target(base: &Url, request: &Request<'_>) -> Result<Url> {
     let target = base.join(request.path)?;
     ensure!(
@@ -45,6 +51,9 @@ pub fn target(base: &Url, request: &Request<'_>) -> Result<Url> {
     Ok(target)
 }
 
+/// # Errors
+///
+/// Returns an error when the request fails or the response exceeds its size limit.
 pub async fn send(mut outbound: reqwest::RequestBuilder, request: &Request<'_>) -> Result<Page> {
     if !request.body.is_empty() {
         outbound = outbound

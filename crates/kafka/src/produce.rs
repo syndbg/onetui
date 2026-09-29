@@ -4,6 +4,7 @@ use rdkafka::ClientConfig;
 use rdkafka::message::{Header, OwnedHeaders};
 use rdkafka::producer::{BaseProducer, BaseRecord, Producer};
 use rdkafka::util::Timeout;
+use std::fmt::Write as _;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -156,10 +157,10 @@ fn result(target: &Target, reports: Vec<Option<Outcome>>) -> WriteResult {
             None => unknown += 1,
         }
     }
-    let target = match target.partition {
-        Some(partition) => format!("{}/{partition}", target.topic),
-        None => target.topic.clone(),
-    };
+    let target = target.partition.map_or_else(
+        || target.topic.clone(),
+        |partition| format!("{}/{partition}", target.topic),
+    );
     let outcome = match (delivered.is_empty(), failures.is_empty(), unknown) {
         (false, true, 0) => WriteOutcome::Applied,
         (true, false, 0) => WriteOutcome::Rejected,
@@ -183,10 +184,11 @@ fn result(target: &Target, reports: Vec<Option<Outcome>>) -> WriteResult {
             .iter()
             .map(|(partition, offset)| format!("{partition}:{offset}"))
             .collect();
-        summary.push_str(&format!(
+        let _ = write!(
+            summary,
             "; delivered at partition:offset {}",
             offsets.join(", ")
-        ));
+        );
     }
     if !failures.is_empty() {
         // Repeated broker errors collapse to one mention each.
@@ -196,7 +198,8 @@ fn result(target: &Target, reports: Vec<Option<Outcome>>) -> WriteResult {
                 distinct.push(error);
             }
         }
-        summary.push_str(&format!(
+        let _ = write!(
+            summary,
             "; {} failed: {}",
             failures.len(),
             distinct
@@ -204,7 +207,7 @@ fn result(target: &Target, reports: Vec<Option<Outcome>>) -> WriteResult {
                 .map(|error| error.as_str())
                 .collect::<Vec<_>>()
                 .join("; ")
-        ));
+        );
     }
     WriteResult { outcome, summary }
 }

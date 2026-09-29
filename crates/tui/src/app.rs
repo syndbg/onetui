@@ -279,20 +279,21 @@ pub struct App {
 impl App {
     #[must_use]
     pub fn new(config: Config, alias: Option<&str>) -> Self {
-        let (history_path, query_history, history_error) = match crate::history::path(&config) {
-            Some(path) => match crate::history::load(&path) {
-                Ok(entries) => (Some(path), entries, None),
-                Err(error) => (
-                    None,
-                    VecDeque::new(),
-                    Some(format!(
-                        "Could not load query history: {}",
-                        display(&error.to_string())
-                    )),
-                ),
-            },
-            None => (None, VecDeque::new(), None),
-        };
+        let (history_path, query_history, history_error) = crate::history::path(&config)
+            .map_or_else(
+                || (None, VecDeque::new(), None),
+                |path| match crate::history::load(&path) {
+                    Ok(entries) => (Some(path), entries, None),
+                    Err(error) => (
+                        None,
+                        VecDeque::new(),
+                        Some(format!(
+                            "Could not load query history: {}",
+                            display(&error.to_string())
+                        )),
+                    ),
+                },
+            );
         let mut app = Self {
             connection_form: None,
             providers: Vec::new(),
@@ -531,8 +532,8 @@ impl App {
             Ok(page) if page.bytes() <= PAGE_BYTES => {
                 if request.query != self.view.query {
                     let mut view = View::new(Some(request.alias.clone()), request.resource.clone());
-                    view.query = request.query.clone();
-                    view.query_draft = request.query.clone();
+                    view.query.clone_from(&request.query);
+                    view.query_draft.clone_from(&request.query);
                     let parent = std::mem::replace(&mut self.view, view);
                     if parent.query.is_none() {
                         self.parents.push(parent);
@@ -569,7 +570,7 @@ impl App {
                         self.view.previous[count - 3].page = None;
                     }
                 }
-                self.view.position = request.continuation.clone();
+                self.view.position.clone_from(&request.continuation);
                 self.view.page = page;
                 self.view.offset = request.offset;
                 self.view.selected = 0;
@@ -722,6 +723,9 @@ impl App {
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the current view has no datasource alias or its provider does not list the resource.
     #[must_use]
     pub fn descriptor(&self) -> &'static ResourceDescriptor {
         if self.view.resource.id == "connections" {
@@ -1030,6 +1034,9 @@ impl App {
             .filter(|entry| entry.id != Action::History)
     }
 
+    /// # Panics
+    ///
+    /// Panics if a confirmation is pending without its query, which the confirmation state prevents.
     pub fn act(&mut self, action: Action) {
         if self.confirm_quit {
             match action {
@@ -1487,6 +1494,9 @@ impl App {
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the query editor is active without an editor, which the mode prevents.
     pub fn key(&mut self, key: KeyEvent) {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return;
@@ -1681,6 +1691,9 @@ impl App {
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the configured theme is missing from the built-in list.
     #[must_use]
     pub fn theme_index(&self) -> usize {
         Theme::ALL
@@ -1725,12 +1738,10 @@ impl App {
                     "word-wrap" => Some(&mut self.config.display.word_wrap),
                     _ => None,
                 };
-                if let Some(target) = target {
+                target.is_some_and(|target| {
                     *target = *value == "on";
                     true
-                } else {
-                    false
-                }
+                })
             }
             _ => false,
         };
@@ -1782,14 +1793,16 @@ mod tests {
     #[test]
     fn add_connection_saves_without_connecting_and_cancel_leaves_no_file() {
         use crate::test_provider::CATALOG;
-        use onetui_core::provider::Provider;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         let mut app = App::new(
             Config::load_for_startup(&path, CATALOG, true).unwrap(),
             None,
         );
-        app.providers = CATALOG.iter().map(|p| p.descriptor()).collect();
+        app.providers = CATALOG
+            .iter()
+            .map(onetui_core::provider::Provider::descriptor)
+            .collect();
         command(&mut app, "add");
         assert!(app.connection_form.is_some());
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

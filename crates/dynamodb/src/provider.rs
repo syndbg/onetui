@@ -283,7 +283,7 @@ impl DynamoDbExecutor {
                         }
                         (page, token)
                     } else {
-                        crate::browse::items(body)?
+                        crate::browse::items(&body)?
                     }
                 } else {
                     crate::browse::metadata(
@@ -338,7 +338,7 @@ impl DynamoDbExecutor {
                 .downcast_ref::<crate::partiql::Failure>()
                 .map(|failure| failure.0.outcome);
             let error = onetui_core::diagnostic(
-                error,
+                &error,
                 &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
             );
             match outcome {
@@ -393,7 +393,7 @@ impl Executor for DynamoDbExecutor {
         }
         result.map_err(|e| {
             onetui_core::diagnostic(
-                e,
+                &e,
                 &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
             )
         })

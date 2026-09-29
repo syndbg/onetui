@@ -200,7 +200,7 @@ fn sql(text: &str, base: usize, keywords: &[&str], kinds: &mut [Kind]) {
 /// SQL, an unterminated string colors the rest of the text as that string.
 fn json(text: &str, base: usize, kinds: &mut [Kind]) {
     use jsonc_parser::tokens::Token as Json;
-    let mut scanner = jsonc_parser::Scanner::new(text, &Default::default());
+    let mut scanner = jsonc_parser::Scanner::new(text, &jsonc_parser::ScannerOptions::default());
     let mut tokens: Vec<(Range<usize>, Kind, bool)> = Vec::new();
     loop {
         match scanner.scan() {

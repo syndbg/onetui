@@ -210,10 +210,10 @@ impl Decoder {
 
     fn schema_id(&self) -> String {
         match self {
-            Self::Avro(decoder) => match decoder.reader_schema_id() {
-                Some(reader) => format!("{}&reader={reader}", decoder.schema_id()),
-                None => decoder.schema_id().to_owned(),
-            },
+            Self::Avro(decoder) => decoder.reader_schema_id().map_or_else(
+                || decoder.schema_id().to_owned(),
+                |reader| format!("{}&reader={reader}", decoder.schema_id()),
+            ),
             Self::Protobuf(decoder) => decoder.schema_id().to_owned(),
         }
     }
@@ -435,27 +435,27 @@ impl Bindings {
             for (index, entry, identity) in &mut selected {
                 remaining()?;
                 let mut schema_identity = identity.clone();
-                let (decoded, error, native, native_error) = if let Some(value) = &row.cells[*index]
-                {
-                    let result = if available == 0 {
-                        Err(anyhow::anyhow!(
-                            "Decoded preview exceeds remaining page budget"
-                        ))
-                    } else {
-                        let (resolved, result) = entry.preview(value.bytes(), &remaining);
-                        schema_identity = resolved;
-                        result
-                    };
-                    let (json, native) = match result {
-                        Ok(preview) => (preview.json, preview.native),
-                        Err(error) => (Err(anyhow::anyhow!("{error:#}")), Err(error)),
-                    };
-                    let (decoded, error) = preview_cell(json, &mut available);
-                    let (native, native_error) = preview_cell(native, &mut available);
-                    (decoded, error, native, native_error)
-                } else {
-                    (None, None, None, None)
-                };
+                let (decoded, error, native, native_error) =
+                    row.cells[*index]
+                        .as_ref()
+                        .map_or((None, None, None, None), |value| {
+                            let result = if available == 0 {
+                                Err(anyhow::anyhow!(
+                                    "Decoded preview exceeds remaining page budget"
+                                ))
+                            } else {
+                                let (resolved, result) = entry.preview(value.bytes(), &remaining);
+                                schema_identity = resolved;
+                                result
+                            };
+                            let (json, native) = match result {
+                                Ok(preview) => (preview.json, preview.native),
+                                Err(error) => (Err(anyhow::anyhow!("{error:#}")), Err(error)),
+                            };
+                            let (decoded, error) = preview_cell(json, &mut available);
+                            let (native, native_error) = preview_cell(native, &mut available);
+                            (decoded, error, native, native_error)
+                        });
                 row.cells.extend([
                     decoded,
                     schema_identity.map(Value::Text),

@@ -95,14 +95,18 @@ impl Executor for FakeExecutor {
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.0.subscribe()
     }
-    async fn check(&self, _: RequestContext) -> Result<CheckResult> {
-        Err(anyhow!("fake connection failure"))
+    fn check(&self, _: RequestContext) -> impl Future<Output = Result<CheckResult>> + Send {
+        std::future::ready(Err(anyhow!("fake connection failure")))
     }
-    async fn fetch_page(&self, _: PageRequest, _: RequestContext) -> Result<Page> {
-        Err(anyhow!("fake connection failure"))
+    fn fetch_page(
+        &self,
+        _: PageRequest,
+        _: RequestContext,
+    ) -> impl Future<Output = Result<Page>> + Send {
+        std::future::ready(Err(anyhow!("fake connection failure")))
     }
-    async fn shutdown(&mut self, _: ShutdownContext) -> Result<()> {
+    fn shutdown(&mut self, _: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
         self.0.send_replace(ConnectionStatus::Closed);
-        Ok(())
+        std::future::ready(Ok(()))
     }
 }

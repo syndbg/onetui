@@ -39,13 +39,13 @@ enum Source {
 }
 
 async fn exercise_binding(source: Source) {
-    let topic = format!("onetui_protobuf_{}_{source:?}", std::process::id());
-    let dir = tempfile::tempdir().unwrap();
-    let schema = dir.path().join("event.pb");
     use prost::Message;
     use prost_types::{
         DescriptorProto, FieldDescriptorProto, FileDescriptorProto, FileDescriptorSet,
     };
+    let topic = format!("onetui_protobuf_{}_{source:?}", std::process::id());
+    let dir = tempfile::tempdir().unwrap();
+    let schema = dir.path().join("event.pb");
     let descriptor = FileDescriptorSet {
         file: vec![FileDescriptorProto {
             name: Some("event.proto".into()),

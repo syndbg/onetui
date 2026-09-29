@@ -4,11 +4,10 @@ use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
 fn binary() -> Command {
-    let path = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-        });
+    let path = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     assert!(
         path.is_file(),
         "Build the CLI first with make build, or set ONETUI_TEST_BIN"
