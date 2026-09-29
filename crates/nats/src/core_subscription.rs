@@ -103,7 +103,7 @@ impl Subscription {
                 );
                 let headers = message.headers.as_ref().map(|headers| {
                     Value::Json(serde_json::Value::Array(headers.iter().map(|(name, values)| {
-                        serde_json::json!({"name": name.to_string(), "values": values.iter().map(|v| v.as_str()).collect::<Vec<_>>()})
+                        serde_json::json!({"name": name.to_string(), "values": values.iter().map(async_nats::HeaderValue::as_str).collect::<Vec<_>>()})
                     }).collect()).to_string())
                 });
                 page.rows.push(Row {

@@ -69,7 +69,7 @@ async fn create(client: &Client, name: &str, indexes: bool) -> Result<()> {
     if let Err(error) = request.send().await
         && !error
             .as_service_error()
-            .is_some_and(|e| e.is_resource_in_use_exception())
+            .is_some_and(aws_sdk_dynamodb::operation::create_table::CreateTableError::is_resource_in_use_exception)
     {
         return Err(error.into());
     }

@@ -52,7 +52,7 @@ impl Pty {
         unsafe {
             command.pre_exec(|| {
                 if nix::libc::setsid() == -1
-                    || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
+                    || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
                 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -192,9 +192,10 @@ pub fn assert_avro_projection(mut options: toml::Table, topic: &str) {
     )]);
     write!(config, "{}", toml::to_string(&document).unwrap()).unwrap();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || root.join("target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     let checked = Command::new(&binary)
         .arg("--config")
         .arg(config.path())
@@ -259,9 +260,10 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
     );
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(config, "[connections.kafka]\nkind='kafka'\nbootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'").unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || root.join("target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     let mut command = Command::new(binary);
     command
         .arg("--config")
@@ -336,11 +338,10 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
 fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(config, "[connections.kafka]\nkind='kafka'\nbootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'\n[connections.second]\nkind='kafka'\nbootstrap_servers=['127.0.0.1:19092']\nsecurity_protocol='PLAINTEXT'").unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-        });
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     let mut command = Command::new(binary);
     command.arg("--config").arg(config.path());
     let (mut pty, slave) = Pty::spawn(command);

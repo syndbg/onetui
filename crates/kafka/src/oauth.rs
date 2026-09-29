@@ -234,7 +234,7 @@ impl Session {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
         let mut expires = claims
             .get("exp")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .and_then(|s| s.checked_mul(1000))
             .ok_or_else(|| anyhow!("Invalid OAuth JWT exp"))?;
         if let Some(ttl) = json.get("expires_in") {

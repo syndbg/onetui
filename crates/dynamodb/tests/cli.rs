@@ -18,11 +18,10 @@ fn certificate_child(timeout: u64) -> (tempfile::TempDir, Child) {
     );
     let mut config = std::fs::File::create(directory.path().join("onetui.toml")).unwrap();
     writeln!(config, "[connections.test]\nkind='dynamodb'\nregion='us-east-1'\nendpoint_url='https://127.0.0.1:9'\naccess_key_id_env='ONETUI_TEST_KEY'\nsecret_access_key_env='ONETUI_TEST_SECRET'").unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-        });
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     assert!(binary.is_file(), "Use make build first");
     let child = Command::new(binary)
         .args(["--check", "--connection", "test", "--config"])

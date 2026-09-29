@@ -115,6 +115,7 @@ impl Config {
         Ok(())
     }
 
+    #[must_use]
     pub fn identity(&self) -> String {
         format!("directory:{}#schema={}", self.directory, self.schema)
     }
@@ -227,6 +228,7 @@ fn read_at(directory: &nix::dir::Dir, name: &str, budget: usize) -> Result<Vec<u
     Ok(bytes)
 }
 
+#[must_use]
 pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "required": false, "default": "none", "type": "table; raw framing only; mutually exclusive with other writer-schema sources",

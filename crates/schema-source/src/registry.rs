@@ -13,7 +13,7 @@ const CACHE_ENTRIES: usize = 8;
 
 use crate::{Format, Preview};
 
-fn registry_type(format: Format) -> &'static str {
+const fn registry_type(format: Format) -> &'static str {
     match format {
         Format::Avro => "AVRO",
         Format::Protobuf => "PROTOBUF",
@@ -25,6 +25,7 @@ enum Compiled {
     Protobuf(onetui_protobuf::SourceSchema),
 }
 
+#[must_use]
 pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "required": "confluent only; forbidden with raw", "type": "table", "default": "none; no registry requests without a binding",
@@ -56,7 +57,11 @@ pub struct Config {
 }
 
 impl Config {
-    pub(crate) fn bearer(url: String, ca_file: Option<String>, token_env: Option<String>) -> Self {
+    pub(crate) const fn bearer(
+        url: String,
+        ca_file: Option<String>,
+        token_env: Option<String>,
+    ) -> Self {
         Self {
             url,
             ca_file,
@@ -178,6 +183,7 @@ impl Registry {
         })
     }
 
+    #[must_use]
     pub fn with_reader(mut self, reader: Option<onetui_avro::ReaderSchema>) -> Self {
         self.reader = reader;
         self
@@ -240,7 +246,7 @@ impl Config {
             .ok_or_else(|| anyhow!("Registry resolution exceeded two seconds"))?;
         let mut url = url::Url::parse(&self.url)?;
         url.path_segments_mut()
-            .map_err(|_| anyhow!("Invalid registry base URL"))?
+            .map_err(|()| anyhow!("Invalid registry base URL"))?
             .pop_if_empty()
             .extend(segments);
         let mut response = if let Some(body) = body {
@@ -346,7 +352,7 @@ impl Registry {
             ensure!(depth <= 8, "Registry reference depth exceeds 8");
             ensure!(
                 reference.version > 0
-                    && reference.version <= i32::MAX as u32
+                    && i32::try_from(reference.version).is_ok()
                     && !reference.name.is_empty()
                     && reference.name.len() <= 1024
                     && !reference.subject.is_empty()
@@ -427,7 +433,7 @@ impl Registry {
             );
             let id = u32::from_be_bytes(raw[1..5].try_into().unwrap());
             ensure!(
-                id > 0 && id <= i32::MAX as u32,
+                id > 0 && i32::try_from(id).is_ok(),
                 "Invalid Confluent schema ID"
             );
             Ok((id, &raw[5..]))

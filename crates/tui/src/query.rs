@@ -11,7 +11,7 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new(text: String) -> Self {
+    pub const fn new(text: String) -> Self {
         Self {
             cursor: text.len(),
             text,
@@ -63,12 +63,12 @@ impl Editor {
             KeyCode::Left => self.cursor = previous,
             KeyCode::Right => self.cursor = next,
             KeyCode::Home => {
-                self.cursor = self.text[..self.cursor].rfind('\n').map_or(0, |i| i + 1)
+                self.cursor = self.text[..self.cursor].rfind('\n').map_or(0, |i| i + 1);
             }
             KeyCode::End => {
                 self.cursor += self.text[self.cursor..]
                     .find('\n')
-                    .unwrap_or(self.text.len() - self.cursor)
+                    .unwrap_or(self.text.len() - self.cursor);
             }
             KeyCode::Up | KeyCode::Down => {
                 let start = self.text[..self.cursor].rfind('\n').map_or(0, |i| i + 1);

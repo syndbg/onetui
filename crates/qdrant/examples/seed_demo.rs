@@ -28,7 +28,7 @@ impl Dataset {
         Self::Empty,
     ];
 
-    fn name(self) -> &'static str {
+    const fn name(self) -> &'static str {
         match self {
             Self::Products => "demo_products",
             Self::Documents => "demo_documents",
@@ -38,7 +38,7 @@ impl Dataset {
         }
     }
 
-    fn count(self) -> u64 {
+    const fn count(self) -> u64 {
         match self {
             Self::Products => 1500,
             Self::Documents => 1200,

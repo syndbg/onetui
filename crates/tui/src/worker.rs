@@ -37,7 +37,7 @@ impl Worker {
             tokio::select! {
                 biased;
                 result = &mut self.task => return WorkerEvent::Finished(result.map_err(|_| anyhow!("browsing worker failed; terminal restored")).and_then(|r| r)),
-                _ = async { tokio::time::sleep_until(self.closing_deadline.expect("closing deadline")).await }, if self.closing_deadline.is_some() => {
+                () = async { tokio::time::sleep_until(self.closing_deadline.expect("closing deadline")).await }, if self.closing_deadline.is_some() => {
                     self.task.abort();
                     let _ = (&mut self.task).await;
                     return WorkerEvent::Finished(Err(anyhow!("browsing worker shutdown timed out; connections discarded")));

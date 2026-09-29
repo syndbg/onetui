@@ -53,7 +53,7 @@ fn luminance(rgb: [u8; 3]) -> f64 {
             ((c + 0.055) / 1.055).powf(2.4)
         }
     });
-    0.2126 * r + 0.7152 * g + 0.0722 * b
+    0.0722f64.mul_add(b, 0.7152f64.mul_add(g, 0.2126 * r))
 }
 
 fn contrast(fg: [u8; 3], bg: [u8; 3]) -> f64 {

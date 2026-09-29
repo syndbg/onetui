@@ -224,14 +224,15 @@ async fn batch(
         .as_ref()
         .err()
         .and_then(|e| e.as_service_error())
-        .is_some_and(|e| e.is_expired_iterator_exception());
+        .is_some_and(aws_sdk_dynamodbstreams::operation::get_records::GetRecordsError::is_expired_iterator_exception);
     let model_error = result
         .as_ref()
         .err()
         .filter(|e| e.raw_response().is_some_and(|r| r.status().is_success()))
         .and_then(|e| e.as_service_error())
         .map(|e| {
-            std::error::Error::source(e).map_or_else(|| e.to_string(), |source| source.to_string())
+            std::error::Error::source(e)
+                .map_or_else(|| e.to_string(), std::string::ToString::to_string)
         });
     (
         capture.finish_json(

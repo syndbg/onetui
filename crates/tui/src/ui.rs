@@ -18,7 +18,7 @@ use onetui_core::{PAGE_SIZE, display};
 
 use onetui_theme::Palette;
 
-fn color([r, g, b]: [u8; 3]) -> Color {
+const fn color([r, g, b]: [u8; 3]) -> Color {
     Color::Rgb(r, g, b)
 }
 
@@ -335,7 +335,7 @@ where
     use crate::worker::{Worker, WorkerEvent};
     app.providers = catalog
         .iter()
-        .map(|provider| provider.descriptor())
+        .map(onetui_core::provider::Provider::descriptor)
         .collect();
     let (_guard, mut terminal) = terminal()?;
     let mut events = EventStream::new();
@@ -374,7 +374,7 @@ where
                 draw(frame, &app);
             }).map_err(|_| anyhow!("cannot draw terminal"))?;
             tokio::select! {
-                _ = async { tokio::time::sleep_until(app.follow_due.expect("follow deadline")).await }, if app.follow_due.is_some() => app.follow_tick(),
+                () = async { tokio::time::sleep_until(app.follow_due.expect("follow deadline")).await }, if app.follow_due.is_some() => app.follow_tick(),
                 event = events.next() => match event {
                     Some(Ok(Event::Key(key))) => app.key(key),
                     Some(Ok(Event::Paste(text))) => {
@@ -413,17 +413,16 @@ where
     }.await;
     let cleanup = if let Some(active) = &mut worker {
         active.stop();
-        match tokio::time::timeout(Duration::from_secs(2), &mut active.task).await {
-            Ok(result) => result
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut active.task).await {
+            result
                 .map_err(|_| anyhow!("browsing worker failed; terminal restored"))
-                .and_then(|r| r),
-            Err(_) => {
-                active.task.abort();
-                let _ = (&mut active.task).await;
-                Err(anyhow!(
-                    "browsing worker shutdown timed out; connections discarded"
-                ))
-            }
+                .and_then(|r| r)
+        } else {
+            active.task.abort();
+            let _ = (&mut active.task).await;
+            Err(anyhow!(
+                "browsing worker shutdown timed out; connections discarded"
+            ))
         }
     } else {
         Ok(())
@@ -568,7 +567,7 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn wrapping<'a>(paragraph: Paragraph<'a>, app: &App) -> Paragraph<'a> {
+const fn wrapping<'a>(paragraph: Paragraph<'a>, app: &App) -> Paragraph<'a> {
     if app.config.display.word_wrap {
         paragraph.wrap(Wrap { trim: false })
     } else {
@@ -693,7 +692,13 @@ fn detail_spans(app: &App) -> Vec<Line<'_>> {
             let mut start = 0;
             for (i, c) in line.char_indices() {
                 if c == '"' && !escaped {
-                    if !quoted {
+                    if quoted {
+                        spans.push(Span::styled(
+                            &line[start..=i],
+                            Style::new().fg(color(p.identifier)),
+                        ));
+                        start = i + 1;
+                    } else {
                         if start < i {
                             spans.push(Span::styled(
                                 &line[start..i],
@@ -701,12 +706,6 @@ fn detail_spans(app: &App) -> Vec<Line<'_>> {
                             ));
                         }
                         start = i;
-                    } else {
-                        spans.push(Span::styled(
-                            &line[start..i + 1],
-                            Style::new().fg(color(p.identifier)),
-                        ));
-                        start = i + 1;
                     }
                     quoted = !quoted;
                 }
@@ -1415,12 +1414,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .map(|path| format!("Config: {}", display(&path.display().to_string())));
     let scope = if app.view.resource.id == "connections" {
         config_path.as_deref().unwrap_or("configured aliases")
+    } else if app.view.page.notice.is_empty() {
+        "metadata; offset pages, no cross-request snapshot"
     } else {
-        if app.view.page.notice.is_empty() {
-            "metadata; offset pages, no cross-request snapshot"
-        } else {
-            &app.view.page.notice
-        }
+        &app.view.page.notice
     };
     let version_text = concat!("v", env!("CARGO_PKG_VERSION"));
     let [status, version] = Layout::horizontal([

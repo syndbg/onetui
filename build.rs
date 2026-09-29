@@ -7,8 +7,7 @@ fn main() {
         .ok()
         .filter(|output| output.status.success())
         .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|hash| hash.trim().to_owned())
-        .unwrap_or_else(|| "unknown".into());
+        .map_or_else(|| "unknown".into(), |hash| hash.trim().to_owned());
 
     println!("cargo:rustc-env=ONETUI_GIT_HASH={git_hash}");
     println!("cargo:rerun-if-changed=.git/HEAD");

@@ -246,12 +246,12 @@ async fn browsing_bytes_metadata_bookmarks_and_session_binding() {
     );
     assert_eq!(binary.rows[3].cells[3], Some(Value::Bytes(vec![])));
     let headers = binary.rows[0].cells[4].as_ref().unwrap().bytes();
-    assert!(
+    assert_eq!(
         headers
             .windows(b"X-Demo:".len())
             .filter(|s| *s == b"X-Demo:")
-            .count()
-            == 2
+            .count(),
+        2
     );
     let empty = read(&executor, "nats.messages", &["DEMO_EMPTY"], None, false)
         .await

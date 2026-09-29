@@ -67,14 +67,14 @@ impl Encoding {
         // Whitespace lets a long encoded payload stay readable.
         let compact: String = text.split_whitespace().collect();
         match self {
-            Encoding::Utf8 => Ok(text.as_bytes().to_vec()),
-            Encoding::Base64 => {
+            Self::Utf8 => Ok(text.as_bytes().to_vec()),
+            Self::Base64 => {
                 use base64::Engine;
                 base64::engine::general_purpose::STANDARD
                     .decode(&compact)
                     .map_err(|error| anyhow!("Invalid base64 payload: {error}"))
             }
-            Encoding::Hex => {
+            Self::Hex => {
                 ensure!(
                     compact.len().is_multiple_of(2),
                     "Hex payload must have an even number of digits"

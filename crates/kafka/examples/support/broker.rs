@@ -49,7 +49,7 @@ pub fn register(subject: &str, body: serde_json::Value) -> Result<u32> {
         .as_u64()
         .ok_or_else(|| anyhow::anyhow!("Missing registry schema ID"))?;
     ensure!(
-        id > 0 && id <= i32::MAX as u64,
+        id > 0 && i32::try_from(id).is_ok(),
         "Invalid registry schema ID"
     );
     Ok(id as u32)

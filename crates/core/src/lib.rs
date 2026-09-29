@@ -16,9 +16,11 @@ pub struct Resource {
 }
 
 impl Resource {
-    pub fn new(id: &'static str, path: Vec<String>) -> Self {
+    #[must_use]
+    pub const fn new(id: &'static str, path: Vec<String>) -> Self {
         Self { id, path }
     }
+    #[must_use]
     pub fn breadcrumb(&self) -> String {
         self.path
             .iter()
@@ -77,6 +79,7 @@ impl Page {
 }
 
 // Escape terminal controls and bidirectional overrides once, before storing display data.
+#[must_use]
 pub fn display(value: &str) -> String {
     let mut text = String::with_capacity(value.len());
     for c in value.chars() {
@@ -92,6 +95,7 @@ pub fn display(value: &str) -> String {
 }
 
 /// Preserve native error wording and causes without echoing configured secrets or controls.
+#[must_use]
 pub fn diagnostic(error: anyhow::Error, secrets: &[&str]) -> anyhow::Error {
     let mut message = format!("{error:#}");
     for secret in secrets.iter().filter(|secret| !secret.is_empty()) {

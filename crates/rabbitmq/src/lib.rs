@@ -5,6 +5,7 @@ mod statement;
 
 pub use provider::{RabbitMqExecutor, RabbitMqProvider};
 
+#[must_use]
 pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "configuration": {

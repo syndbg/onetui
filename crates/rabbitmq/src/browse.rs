@@ -229,7 +229,7 @@ pub fn request_url(base: &str, resource: &Resource, page: u32) -> Result<url::Ur
     {
         let mut path = url
             .path_segments_mut()
-            .map_err(|_| anyhow!("Invalid RabbitMQ URL"))?;
+            .map_err(|()| anyhow!("Invalid RabbitMQ URL"))?;
         path.clear().push("api");
         match (kind, resource.path.first()) {
             ("connections" | "channels", Some(vhost)) => {
@@ -296,14 +296,14 @@ pub fn page(resource: &Resource, value: Json, number: u32, owner: u64) -> Result
             .as_u64()
             .ok_or_else(|| anyhow!("RabbitMQ list has no page_count"))?;
         ensure!(
-            value["page"].as_u64() == Some(number as u64) && values.len() <= PAGE_SIZE as usize,
+            value["page"].as_u64() == Some(u64::from(number)) && values.len() <= PAGE_SIZE as usize,
             "Invalid RabbitMQ page envelope"
         );
         ensure!(
-            total >= number as u64 || (total == 0 && number == 1 && values.is_empty()),
+            total >= u64::from(number) || (total == 0 && number == 1 && values.is_empty()),
             "RabbitMQ page no longer exists; refresh the list"
         );
-        (values.clone(), (number as u64) < total)
+        (values.clone(), u64::from(number) < total)
     };
     ensure!(
         values.iter().all(Json::is_object),

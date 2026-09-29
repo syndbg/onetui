@@ -331,12 +331,10 @@ pub fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)> {
                 .transpose()?
         };
         page.rows.push(Row {
-            cells: vec![Some(
-                value
-                    .as_str()
-                    .map(|s| Value::from(s.to_owned()))
-                    .unwrap_or_else(|| Value::Json(value.to_string())),
-            )],
+            cells: vec![Some(value.as_str().map_or_else(
+                || Value::Json(value.to_string()),
+                |s| Value::from(s.to_owned()),
+            ))],
             target: destination,
         });
     }

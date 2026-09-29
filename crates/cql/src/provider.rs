@@ -180,8 +180,7 @@ impl CqlExecutor {
         let password = self
             .credentials
             .as_ref()
-            .map(|(_, password)| password.as_str())
-            .unwrap_or("");
+            .map_or("", |(_, password)| password.as_str());
         // A server answer carries its own code and message; the driver's wrapping
         // ("Preparation failed on every connection ...") only buries it.
         let error = match db_error(&error).or_else(|| setup_db_error(&error)) {
@@ -507,7 +506,7 @@ fn remaining(deadline: tokio::time::Instant) -> Duration {
 }
 
 /// The statement and bind values a browse resource reads. Metadata comes from
-/// `system_schema`, present on Cassandra 3+ and ScyllaDB.
+/// `system_schema`, present on Cassandra 3+ and `ScyllaDB`.
 fn statement(resource: &Resource) -> Result<(String, Vec<String>)> {
     ensure!(
         resource

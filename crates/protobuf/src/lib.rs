@@ -28,7 +28,7 @@ pub struct Decoded {
 }
 
 impl Decoder {
-    /// Load a binary FileDescriptorSet including imports and select an exact full name.
+    /// Load a binary `FileDescriptorSet` including imports and select an exact full name.
     pub fn new(descriptor_set: &[u8], message_name: &str) -> Result<Self> {
         ensure!(
             descriptor_set.len() <= MAX_SCHEMA_BYTES,
@@ -48,10 +48,12 @@ impl Decoder {
         })
     }
 
+    #[must_use]
     pub fn schema_id(&self) -> &str {
         &self.schema_id
     }
 
+    #[must_use]
     pub fn message_name(&self) -> &str {
         self.descriptor.full_name()
     }
@@ -80,13 +82,16 @@ fn fingerprint(bytes: &[u8]) -> String {
 }
 
 impl Decoded {
+    #[must_use]
     pub fn raw(&self) -> &[u8] {
         &self.raw
     }
+    #[must_use]
     pub fn schema_id(&self) -> &str {
         &self.schema_id
     }
-    pub fn value(&self) -> &prost_reflect::DynamicMessage {
+    #[must_use]
+    pub const fn value(&self) -> &prost_reflect::DynamicMessage {
         &self.value
     }
 

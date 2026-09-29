@@ -14,7 +14,7 @@ static WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 pub use onetui_schema_source::Format;
 use onetui_schema_source::{Preview, registry::Registry};
 
-#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Framing {
     #[default]
@@ -273,12 +273,12 @@ impl Entry {
             .binding
             .buf
             .as_ref()
-            .map(|buf| buf.identity())
+            .map(onetui_schema_source::buf::Config::identity)
             .or_else(|| {
                 self.binding
                     .catalog
                     .as_ref()
-                    .map(|catalog| catalog.identity())
+                    .map(onetui_schema_source::Config::identity)
             });
         let identity = match (source, fingerprint) {
             (Some(source), Some(fingerprint)) => Some(format!("{source}:{fingerprint}")),
@@ -457,7 +457,7 @@ mod tests {
             validate(&[Binding {
                 format: Format::Protobuf,
                 message_name: Some("demo.Event".into()),
-                ..binding.clone()
+                ..binding
             }])
             .is_err()
         );

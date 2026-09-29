@@ -122,11 +122,10 @@ fn verb_statement(text: &str, verbs: &[(&str, Body)], kinds: &mut [Kind]) {
     let body = verbs
         .iter()
         .find(|(verb, _)| *verb == &text[verb_start..verb_end])
-        .map(|&(_, body)| {
+        .map_or(Body::Raw, |&(_, body)| {
             kinds[verb_start..verb_end].fill(Kind::Keyword);
             body
-        })
-        .unwrap_or(Body::Raw);
+        });
     let mut offset = first;
     while offset < text.len() {
         // `offset` sits on the newline that ends the previous line.
@@ -146,7 +145,7 @@ fn verb_statement(text: &str, verbs: &[(&str, Body)], kinds: &mut [Kind]) {
     }
 }
 
-/// SQL, CQL and PartiQL through `sqlparser`'s tokenizer. It stops at an unterminated
+/// SQL, CQL and `PartiQL` through `sqlparser`'s tokenizer. It stops at an unterminated
 /// string or comment, which is the normal state while typing one: the tokens before it
 /// are kept, and everything after the error reads as the open string or comment.
 fn sql(text: &str, base: usize, keywords: &[&str], kinds: &mut [Kind]) {

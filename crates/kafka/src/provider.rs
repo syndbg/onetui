@@ -168,8 +168,13 @@ impl ClientContext for NativeContext {
         _: Option<&str>,
     ) -> Result<rdkafka::client::OAuthToken, Box<dyn std::error::Error>> {
         let session = self.oauth.as_ref().ok_or("OAuth is not configured")?;
-        let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
-        let deadline = *self.deadline.lock().unwrap_or_else(|e| e.into_inner());
+        let mut session = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let deadline = *self
+            .deadline
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         session
             .token(deadline)
             .map_err(|error| session.diagnostic(error).to_string().into())
@@ -182,7 +187,7 @@ impl ClientContext for NativeContext {
         if let Some(session) = &self.oauth {
             error = session
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .diagnostic(error);
         }
         let mut text = error.to_string();
@@ -190,8 +195,13 @@ impl ClientContext for NativeContext {
             text.truncate(text.floor_char_boundary(NATIVE_ERROR_BYTES - 3));
             text.push_str("...");
         }
-        let errors = self.errors.lock().unwrap_or_else(|e| e.into_inner());
-        let mut errors = errors.lock().unwrap_or_else(|e| e.into_inner());
+        let errors = self
+            .errors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut errors = errors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !errors.contains(&text) {
             if errors.len() == NATIVE_ERROR_COUNT {
                 errors.remove(0);
@@ -226,12 +236,20 @@ impl rdkafka::producer::ProducerContext for NativeContext {
 
 /// Point a retained native client's diagnostics and deadline at the current job.
 fn refresh(context: &NativeContext, job: &Job) {
-    *context.errors.lock().unwrap_or_else(|e| e.into_inner()) = job.errors.clone();
-    *context.deadline.lock().unwrap_or_else(|e| e.into_inner()) = job.deadline;
+    *context
+        .errors
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = job.errors.clone();
+    *context
+        .deadline
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = job.deadline;
 }
 
 fn request_error(error: anyhow::Error, errors: &StdMutex<Vec<String>>) -> anyhow::Error {
-    let errors = errors.lock().unwrap_or_else(|e| e.into_inner());
+    let errors = errors
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if errors.is_empty() {
         error
     } else {
@@ -269,7 +287,10 @@ impl KafkaExecutor {
                             // Idle sessions do not poll tokens. Reconnect after expiry instead of
                             // reauthenticating an expired socket; logical bookmarks remain valid.
                             if oauth.as_ref().is_some_and(|session| {
-                                session.lock().unwrap_or_else(|e| e.into_inner()).expired()
+                                session
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .expired()
                             }) {
                                 client.take();
                                 if let Some(producer) = producer.take() {
@@ -359,7 +380,7 @@ impl KafkaExecutor {
                             match &oauth {
                                 Some(session) => session
                                     .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                                     .diagnostic(error),
                                 None => error,
                             }
@@ -367,7 +388,7 @@ impl KafkaExecutor {
                         let native_error = !job
                             .errors
                             .lock()
-                            .unwrap_or_else(|error| error.into_inner())
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .is_empty();
                         if result.is_ok()
                             || (client.is_some() && !native_error && Instant::now() < job.deadline)
@@ -713,42 +734,40 @@ fn run(
             "Kafka live window moved backwards; following stopped, start again explicitly"
         );
         (position.map_or(stable_end, |p| p.offset), stable_end)
-    } else {
-        if let Some(position) = position {
-            (position.offset, position.end.unwrap())
-        } else if let Operation::Query(query) = &job.operation {
-            let (replay, _) = crate::query::prepare(query, identity)?;
-            let end = replay.end_offset.unwrap_or(stable_end);
-            ensure!(
-                end >= low && end <= stable_end,
-                "Kafka end_offset {end} outside available [{low}, {stable_end}]"
-            );
-            let start = if let Some(timestamp) = replay.timestamp_ms {
-                let offsets = native_request(client, job, |wait| {
-                    let mut timestamps = TopicPartitionList::new();
-                    timestamps.add_partition_offset(topic, partition, Offset::Offset(timestamp))?;
-                    client.offsets_for_times(timestamps, wait)
-                })?;
-                let result = offsets
-                    .find_partition(topic, partition)
-                    .ok_or_else(|| anyhow!("Kafka timestamp lookup returned no partition"))?;
-                result.error()?;
-                // A timestamp after the last record has no match. A match beyond the
-                // requested read-committed window also yields an empty replay.
-                match result.offset() {
-                    Offset::Offset(offset) if offset >= 0 => offset.min(end),
-                    Offset::End => end,
-                    offset => {
-                        anyhow::bail!("Kafka timestamp lookup returned invalid offset {offset:?}")
-                    }
+    } else if let Some(position) = position {
+        (position.offset, position.end.unwrap())
+    } else if let Operation::Query(query) = &job.operation {
+        let (replay, _) = crate::query::prepare(query, identity)?;
+        let end = replay.end_offset.unwrap_or(stable_end);
+        ensure!(
+            end >= low && end <= stable_end,
+            "Kafka end_offset {end} outside available [{low}, {stable_end}]"
+        );
+        let start = if let Some(timestamp) = replay.timestamp_ms {
+            let offsets = native_request(client, job, |wait| {
+                let mut timestamps = TopicPartitionList::new();
+                timestamps.add_partition_offset(topic, partition, Offset::Offset(timestamp))?;
+                client.offsets_for_times(timestamps, wait)
+            })?;
+            let result = offsets
+                .find_partition(topic, partition)
+                .ok_or_else(|| anyhow!("Kafka timestamp lookup returned no partition"))?;
+            result.error()?;
+            // A timestamp after the last record has no match. A match beyond the
+            // requested read-committed window also yields an empty replay.
+            match result.offset() {
+                Offset::Offset(offset) if offset >= 0 => offset.min(end),
+                Offset::End => end,
+                offset => {
+                    anyhow::bail!("Kafka timestamp lookup returned invalid offset {offset:?}")
                 }
-            } else {
-                replay.offset.unwrap_or(low)
-            };
-            (start, end)
+            }
         } else {
-            (low, stable_end)
-        }
+            replay.offset.unwrap_or(low)
+        };
+        (start, end)
+    } else {
+        (low, stable_end)
     };
     ensure!(
         start >= low && start <= end && end <= stable_end,

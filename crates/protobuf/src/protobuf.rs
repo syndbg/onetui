@@ -70,7 +70,7 @@ fn scan(
                 let mut body = take(input, len)?;
                 match field {
                     Some((Kind::Message(child), _)) => {
-                        scan(Some(&child), &mut body, budget, depth + 1, None)?
+                        scan(Some(&child), &mut body, budget, depth + 1, None)?;
                     }
                     Some((kind, true)) if !matches!(kind, Kind::String | Kind::Bytes) => {
                         while !body.is_empty() {

@@ -36,11 +36,12 @@ struct RawConfig {
     connections: BTreeMap<String, toml::Table>,
 }
 
-fn default_ask_for_query_confirm() -> bool {
+const fn default_ask_for_query_confirm() -> bool {
     true
 }
 
 impl Config {
+    #[must_use]
     pub fn aliases(&self) -> Vec<(&str, &'static str)> {
         self.connections
             .iter()
@@ -48,6 +49,7 @@ impl Config {
             .collect()
     }
 
+    #[must_use]
     pub fn descriptor(&self, alias: &str) -> Option<&'static ProviderDescriptor> {
         self.connections.get(alias).map(|c| c.descriptor)
     }
@@ -73,6 +75,7 @@ impl Config {
         Ok(config)
     }
 
+    #[must_use]
     pub fn path(&self) -> Option<&Path> {
         self.source.as_ref().map(|(path, _)| path.as_path())
     }
@@ -234,6 +237,7 @@ pub fn secret(name: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<String
         })
 }
 
+#[must_use]
 pub fn safe_name(value: &str) -> bool {
     !value.is_empty()
         && value

@@ -24,18 +24,29 @@ pub enum Outcome {
 
 impl Reports {
     pub fn begin(&self, records: usize) {
-        let mut reports = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reports = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         reports.clear();
         reports.resize_with(records, || None);
     }
     pub fn record(&self, index: usize, outcome: Outcome) {
-        let mut reports = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reports = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slot) = reports.get_mut(index) {
             *slot = Some(outcome);
         }
     }
     fn take(&self) -> Vec<Option<Outcome>> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 }
 

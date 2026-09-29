@@ -15,7 +15,7 @@ pub enum Field {
 }
 
 impl Field {
-    fn name(self) -> &'static str {
+    const fn name(self) -> &'static str {
         match self {
             Self::Key => "key",
             Self::Value => "value",
@@ -296,7 +296,7 @@ impl Entry {
                 } else if let Some(catalog) = &self.binding.catalog {
                     format!("{}:{}", catalog.identity(), decoder.schema_id())
                 } else {
-                    decoder.schema_id().to_owned()
+                    decoder.schema_id()
                 };
                 Ok(Loaded { decoder, identity })
             })()

@@ -103,10 +103,10 @@ pub fn validate_keys(keys: &[Value]) -> Result<()> {
     Ok(())
 }
 
-fn page_size() -> i32 {
+const fn page_size() -> i32 {
     100
 }
-fn forward() -> bool {
+const fn forward() -> bool {
     true
 }
 
@@ -116,7 +116,7 @@ pub fn watermark(resource: &onetui_core::Resource, row: Option<&onetui_core::Row
         .and_then(Option::as_ref)
         .and_then(onetui_core::Value::text);
     let value = if resource.id == "dynamodb.records" {
-        serde_json::json!({"operation":"GetRecords", "shard_id":resource.path.get(1).map(String::as_str).unwrap_or("shard-id"), "sequence_number":first.unwrap_or("0"), "limit":100})
+        serde_json::json!({"operation":"GetRecords", "shard_id":resource.path.get(1).map_or("shard-id", String::as_str), "sequence_number":first.unwrap_or("0"), "limit":100})
     } else if matches!(resource.id, "dynamodb.shards" | "dynamodb.shard_details") {
         let start = row
             .and_then(|row| row.cells.get(2))

@@ -84,6 +84,7 @@ impl Config {
         Ok(secrets)
     }
 
+    #[must_use]
     pub fn identity(&self) -> String {
         let reference = match self.resolved_revision.as_ref().or(self.revision.as_ref()) {
             Some(revision) => format!("commit={revision}"),
@@ -97,6 +98,7 @@ impl Config {
         )
     }
 
+    #[must_use]
     pub fn diagnostic(&self, error: anyhow::Error) -> String {
         match &self.remote {
             Some(remote) => remote.diagnostic(error),
@@ -157,6 +159,7 @@ impl Config {
     }
 }
 
+#[must_use]
 pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "required": "raw protobuf only; mutually exclusive with schema_file, catalog and registry",

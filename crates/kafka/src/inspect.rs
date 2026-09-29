@@ -68,7 +68,13 @@ pub fn page<C: ConsumerContext>(
                 native::rd_kafka_ListConsumerGroupOffsets_new(name.as_ptr(), ptr::null()),
                 native::rd_kafka_ListConsumerGroupOffsets_destroy,
             )?;
-            native::rd_kafka_ListConsumerGroupOffsets(rk, &mut request.0, 1, options.0, queue.0);
+            native::rd_kafka_ListConsumerGroupOffsets(
+                rk,
+                &raw mut request.0,
+                1,
+                options.0,
+                queue.0,
+            );
         } else {
             let kind = if resource.id == "kafka.topic_config" {
                 native::rd_kafka_ResourceType_t::RD_KAFKA_RESOURCE_TOPIC
@@ -79,7 +85,7 @@ pub fn page<C: ConsumerContext>(
                 native::rd_kafka_ConfigResource_new(kind, name.as_ptr()),
                 native::rd_kafka_ConfigResource_destroy,
             )?;
-            native::rd_kafka_DescribeConfigs(rk, &mut request.0, 1, options.0, queue.0);
+            native::rd_kafka_DescribeConfigs(rk, &raw mut request.0, 1, options.0, queue.0);
         }
         let event = loop {
             let wait = remaining()?.as_millis().clamp(1, 100) as i32;
@@ -134,7 +140,7 @@ unsafe fn configs(
             "Kafka returned an unexpected admin event"
         );
         let mut count = 0;
-        let resources = native::rd_kafka_DescribeConfigs_result_resources(result, &mut count);
+        let resources = native::rd_kafka_DescribeConfigs_result_resources(result, &raw mut count);
         let resources = slice(resources, i32::try_from(count)?)?;
         ensure!(
             resources.len() == 1 && !resources[0].is_null(),
@@ -149,7 +155,7 @@ unsafe fn configs(
             text(native::rd_kafka_ConfigResource_name(config))? == resource.path[0],
             "Kafka returned another configuration resource"
         );
-        let entries = native::rd_kafka_ConfigResource_configs(config, &mut count);
+        let entries = native::rd_kafka_ConfigResource_configs(config, &raw mut count);
         let mut entries = slice(entries, i32::try_from(count)?)?
             .iter()
             .map(|&entry| {
@@ -223,7 +229,7 @@ unsafe fn config_synonyms(
     // and never expose a sensitive parent's value through a synonym.
     unsafe {
         let mut count = 0;
-        let entries = native::rd_kafka_ConfigEntry_synonyms(entry, &mut count);
+        let entries = native::rd_kafka_ConfigEntry_synonyms(entry, &raw mut count);
         let mut json = String::from("[");
         for &synonym in slice(entries, i32::try_from(count)?)? {
             ensure!(
@@ -277,7 +283,8 @@ unsafe fn offsets(
             "Kafka returned an unexpected admin event"
         );
         let mut count = 0;
-        let groups = native::rd_kafka_ListConsumerGroupOffsets_result_groups(result, &mut count);
+        let groups =
+            native::rd_kafka_ListConsumerGroupOffsets_result_groups(result, &raw mut count);
         let groups = slice(groups, i32::try_from(count)?)?;
         ensure!(
             groups.len() == 1 && !groups[0].is_null(),
@@ -351,7 +358,7 @@ fn lag(committed: i64, low: i64, end: i64) -> Result<(Option<i64>, &'static str)
         low >= 0 && end >= low,
         "Kafka returned an invalid watermark window"
     );
-    Ok(if committed == native::RD_KAFKA_OFFSET_INVALID as i64 {
+    Ok(if committed == i64::from(native::RD_KAFKA_OFFSET_INVALID) {
         (None, "no commit")
     } else if committed < 0 {
         anyhow::bail!("Kafka returned invalid committed offset {committed}")

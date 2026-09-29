@@ -141,7 +141,7 @@ fn exact_schema_names_missing_imports_empty_and_malformed_input() {
 fn preflight_bounds_recursive_messages_unknown_groups_and_packed_values() {
     let decoder = Decoder::new(&schema(), "demo.Event").unwrap();
     let mut raw = Vec::new();
-    for _ in 0..MAX_DEPTH + 1 {
+    for _ in 0..=MAX_DEPTH {
         let mut outer = vec![50];
         prost::encoding::encode_varint(raw.len() as u64, &mut outer);
         outer.extend(raw);

@@ -219,8 +219,7 @@ impl DynamoDbExecutor {
                     .resource
                     .path
                     .first()
-                    .map(String::as_str)
-                    .unwrap_or("");
+                    .map_or("", String::as_str);
                 let (mut page, token) = if let Some(crate::query::Read::GetRecords {
                     shard_id,
                     sequence_number,
