@@ -199,7 +199,7 @@ impl DynamoDbExecutor {
         let mut native_completed = false;
         let mut dispatched = false;
         let attempt = context
-            .run(async {
+            .run(Box::pin(async {
                 if lease.client.is_none() {
                     self.status.send_replace(ConnectionStatus::Connecting);
                     *lease.client = Some(self.client().await?);
@@ -310,7 +310,7 @@ impl DynamoDbExecutor {
                     );
                 }
                 Ok::<_, anyhow::Error>(page)
-            })
+            }))
             .await;
         let completed = attempt.is_ok();
         let result = match attempt {
@@ -361,7 +361,7 @@ impl Executor for DynamoDbExecutor {
             clean: false,
         };
         let result = context
-            .run(async {
+            .run(Box::pin(async {
                 if lease.client.is_none() {
                     self.status.send_replace(ConnectionStatus::Connecting);
                     *lease.client = Some(self.client().await?);
@@ -384,7 +384,7 @@ impl Executor for DynamoDbExecutor {
                 Ok::<_, anyhow::Error>(CheckResult {
                     summary: "DynamoDB table inventory readable".into(),
                 })
-            })
+            }))
             .await
             .and_then(|r| r);
         if result.is_ok() {
