@@ -103,7 +103,7 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
     .unwrap();
     match created {
         QueryExecution::Write(write) => {
-            assert_eq!(write.outcome, WriteOutcome::Applied, "{}", write.summary)
+            assert_eq!(write.outcome, WriteOutcome::Applied, "{}", write.summary);
         }
         QueryExecution::Page(_) => panic!("CREATE TABLE returned rows"),
     }
@@ -224,7 +224,7 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         .expect("write did not reach the server lock");
         cancel.send(()).unwrap();
     };
-    let (_, cancelled) = tokio::join!(wait_and_cancel, pending);
+    let ((), cancelled) = tokio::join!(wait_and_cancel, pending);
     assert!(
         matches!(cancelled.unwrap(), QueryExecution::Write(write) if write.outcome == WriteOutcome::Unknown)
     );
@@ -338,7 +338,7 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
         },
         context,
     );
-    let (_, result) = tokio::join!(
+    let ((), result) = tokio::join!(
         async {
             tokio::time::sleep(Duration::from_millis(100)).await;
             cancel.send(()).unwrap();
@@ -412,7 +412,7 @@ async fn native_error_preserves_sqlstate_detail_hint_and_redacts_password() {
     admin
         .client
         .batch_execute(&format!(
-            r#"
+            r"
         CREATE SCHEMA {schema};
         CREATE FUNCTION {schema}.fail() RETURNS integer LANGUAGE plpgsql AS $$
         BEGIN
@@ -424,7 +424,7 @@ async fn native_error_preserves_sqlstate_detail_hint_and_redacts_password() {
         CREATE VIEW {schema}.sample AS SELECT {schema}.fail() AS value;
         GRANT USAGE ON SCHEMA {schema} TO onetui_reader;
         GRANT SELECT ON {schema}.sample TO onetui_reader;
-    "#
+    "
         ))
         .await
         .unwrap();
@@ -1533,11 +1533,10 @@ async fn postgres_row_limit_does_not_limit_cell_bytes() {
     wait_for_backend(&observer.client, reader.pid().await, "idle").await;
 }
 fn binary() -> Command {
-    let path = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-        });
+    let path = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     assert!(
         path.is_file(),
         "Build the CLI first with make build, or set ONETUI_TEST_BIN"

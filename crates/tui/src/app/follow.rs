@@ -1,4 +1,4 @@
-use super::*;
+use super::{App, PAGE_BYTES, PAGE_SIZE, Page, Request, Result, display, projections};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -125,7 +125,10 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use onetui_core::Column;
+    use crate::app::View;
+    use onetui_core::catalog::Action;
+    use onetui_core::config::Config;
+    use onetui_core::{Column, Resource, Row, Value};
 
     fn batch(start: usize, count: usize, bytes: usize) -> Page {
         Page {

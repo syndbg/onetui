@@ -20,6 +20,7 @@ impl From<&str> for Value {
 }
 
 impl Value {
+    #[must_use]
     pub fn text(&self) -> Option<&str> {
         match self {
             Self::Text(s) | Self::Json(s) => Some(s),
@@ -27,6 +28,7 @@ impl Value {
         }
     }
 
+    #[must_use]
     pub fn bytes(&self) -> &[u8] {
         match self {
             Self::Text(s) | Self::Json(s) => s.as_bytes(),
@@ -34,7 +36,8 @@ impl Value {
         }
     }
 
-    pub fn provenance(&self) -> &'static str {
+    #[must_use]
+    pub const fn provenance(&self) -> &'static str {
         match self {
             Self::Text(_) => "UTF-8 text",
             Self::Json(_) => "serialized JSON (not wire bytes)",
@@ -90,6 +93,7 @@ pub const FORMATS: &[FormatDescriptor] = &[
 ];
 
 impl ValueFormat {
+    #[must_use]
     pub fn name(self) -> &'static str {
         FORMATS
             .iter()

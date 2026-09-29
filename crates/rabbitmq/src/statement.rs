@@ -21,7 +21,7 @@ pub enum Statement<'a> {
         requeue: bool,
     },
     /// Create or replace an object from a JSON body. `collection` is the management
-    /// collection word as typed, pluralised but never checked against a list: RabbitMQ
+    /// collection word as typed, pluralised but never checked against a list: `RabbitMQ`
     /// decides what it supports, so a new object kind needs no change here.
     Declare {
         collection: &'a str,
@@ -49,7 +49,7 @@ pub enum Statement<'a> {
 
 /// The management collection a DECLARE or DELETE addresses, from the singular word the
 /// user typed. Only `vhost` is special: it has no enclosing vhost, so it takes one name.
-/// Every other word is pluralised and sent; an unsupported one is RabbitMQ's 404 to give.
+/// Every other word is pluralised and sent; an unsupported one is `RabbitMQ`'s 404 to give.
 fn collection_of(word: &str) -> String {
     match word {
         // Policies and the few other -y kinds pluralise to -ies, not -ys.
@@ -291,7 +291,7 @@ fn decode(payload: &str, encoding: Option<&str>) -> Result<Vec<u8>> {
 /// Prefill the editor from whatever the current view has open. The vhost is a literal
 /// here, which is the point: the default vhost reads as `/`, not `%2F`.
 pub fn watermark(resource: &Resource, row: Option<&Row>) -> String {
-    let vhost = resource.path.first().map(String::as_str).unwrap_or("/");
+    let vhost = resource.path.first().map_or("/", String::as_str);
     let name = row
         .and_then(|row| row.cells.first())
         .and_then(Option::as_ref)
@@ -319,7 +319,7 @@ pub struct Outbound {
 
 impl Statement<'_> {
     /// A read returns a page; everything else reports a write outcome.
-    pub(crate) fn reads(&self) -> bool {
+    pub(crate) const fn reads(&self) -> bool {
         match self {
             Self::Get { .. } => true,
             Self::Raw { method, .. } => matches!(*method, Method::GET | Method::HEAD),
@@ -514,7 +514,7 @@ impl Statement<'_> {
 fn segments<'a>(url: &mut url::Url, parts: impl IntoIterator<Item = &'a str>) -> Result<()> {
     let mut path = url
         .path_segments_mut()
-        .map_err(|_| anyhow!("Invalid RabbitMQ URL"))?;
+        .map_err(|()| anyhow!("Invalid RabbitMQ URL"))?;
     path.clear().push("api");
     for part in parts {
         ensure!(
@@ -665,8 +665,10 @@ fn messages(
                         // The request asked for base64 so any bytes survive the trip.
                         base64::engine::general_purpose::STANDARD
                             .decode(text)
-                            .map(|bytes| Some(Value::Bytes(bytes)))
-                            .unwrap_or_else(|_| Some(Value::Text(text.clone())))
+                            .map_or_else(
+                                |_| Some(Value::Text(text.clone())),
+                                |bytes| Some(Value::Bytes(bytes)),
+                            )
                     }
                     (_, serde_json::Value::Null) => None,
                     (_, serde_json::Value::String(text)) => Some(Value::Text(text.clone())),

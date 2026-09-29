@@ -134,11 +134,7 @@ fn decode(payload: &str, encoding: Option<&str>) -> Result<Vec<u8>> {
 }
 
 pub fn watermark(resource: &Resource, row: Option<&Row>) -> String {
-    let stream = resource
-        .path
-        .first()
-        .map(String::as_str)
-        .unwrap_or("stream");
+    let stream = resource.path.first().map_or("stream", String::as_str);
     let subject = row
         .and_then(|row| row.cells.get(1))
         .and_then(Option::as_ref)

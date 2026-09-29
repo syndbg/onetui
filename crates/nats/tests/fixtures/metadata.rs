@@ -41,7 +41,7 @@ async fn kv_keys_values_history_watch_and_bookmarks() {
                 Some(token) => {
                     page = read(&executor, "nats.kv_keys", &[&name], Some(token), false)
                         .await
-                        .unwrap()
+                        .unwrap();
                 }
                 None => break,
             }
@@ -186,7 +186,7 @@ async fn object_metadata_lazy_chunks_empty_deleted_and_replaced_versions() {
                         false,
                     )
                     .await
-                    .unwrap()
+                    .unwrap();
                 }
                 None => break,
             }

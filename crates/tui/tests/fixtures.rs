@@ -558,7 +558,7 @@ mod terminal {
             unsafe {
                 command.pre_exec(|| {
                     if nix::libc::setsid() == -1
-                        || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
+                        || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
                     {
                         return Err(std::io::Error::last_os_error());
                     }
@@ -696,11 +696,10 @@ mod terminal {
             "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'"
         )
         .unwrap();
-        let binary = std::env::var_os("ONETUI_TEST_BIN")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-            });
+        let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+            || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+            std::path::PathBuf::from,
+        );
         let mut command = Command::new(binary);
         command
             .arg("--config")
@@ -831,11 +830,9 @@ mod terminal {
             "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.pg_other]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.qd]\nkind='qdrant'\nurl='http://127.0.0.1:16334'\napi_key_env='ONETUI_LIVE_PTY_KEY'"
         )
         .unwrap();
-        let binary = std::env::var_os("ONETUI_TEST_BIN")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
+        let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(|| {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-            });
+            }, std::path::PathBuf::from);
         let mut command = Command::new(binary);
         command
             .arg("--config")

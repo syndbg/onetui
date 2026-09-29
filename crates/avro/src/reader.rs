@@ -25,6 +25,7 @@ impl ReaderSchema {
         })
     }
 
+    #[must_use]
     pub fn schema_id(&self) -> &str {
         &self.identity
     }

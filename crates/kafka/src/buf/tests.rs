@@ -481,7 +481,7 @@ fn labels_are_explicit_mutually_exclusive_and_offline() {
             .is_err()
     );
     for label in [
-        "".to_owned(),
+        String::new(),
         "x".repeat(251),
         "has space".into(),
         "bad\nlabel".into(),

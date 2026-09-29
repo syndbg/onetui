@@ -98,7 +98,7 @@ async fn editor_cancellation_after_dispatch_is_unknown_without_retrying() {
                     break;
                 }
                 Err(mpsc::TryRecvError::Empty) => {
-                    tokio::time::sleep(Duration::from_millis(5)).await
+                    tokio::time::sleep(Duration::from_millis(5)).await;
                 }
                 Err(error) => panic!("{error}"),
             }

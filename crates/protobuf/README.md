@@ -13,7 +13,7 @@ protoc -I crates/protobuf/examples --include_imports --descriptor_set_out=/tmp/o
 cargo run -p onetui-protobuf --example decode_protobuf --locked -- /tmp/onetui-event.pb demo.Event 080712024869
 ```
 
-This prints Protobuf JSON: `{"id":"7","name":"Hi"}`. Arguments are a binary descriptor-set file, an exact case-sensitive full message name and hexadecimal payload bytes. Hex must contain complete byte pairs, without spaces or `0x`; an empty argument represents an empty payload. File paths resolve from the current directory. The example does not read OneTUI configuration, expand environment variables, guess framing or contact a datasource.
+This prints Protobuf JSON: `{"id":"7","name":"Hi"}`. Arguments are a binary descriptor-set file, an exact case-sensitive full message name and hexadecimal payload bytes. Hex must contain complete byte pairs, without spaces or `0x`; an empty argument represents an empty payload. File paths resolve from the current directory. The example does not read `OneTUI` configuration, expand environment variables, guess framing or contact a datasource.
 
 ## API and interpretation
 

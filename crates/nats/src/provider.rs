@@ -109,7 +109,7 @@ struct Session {
 
 /// Classify a publish that produced no acknowledgment. Once the message is dispatched,
 /// nothing proves it was not stored, and a Core subscriber may have received it even
-/// when JetStream refused to store it. A failure before dispatch never reached the wire,
+/// when `JetStream` refused to store it. A failure before dispatch never reached the wire,
 /// so it stays an ordinary error rather than sending the user to inspect an unchanged
 /// stream.
 fn publish_failure(error: anyhow::Error, dispatched: bool) -> Result<QueryExecution> {
@@ -221,7 +221,7 @@ impl NatsExecutor {
                 *slot = Some(Box::new(Session {
                     client,
                     subscription: None,
-                }))
+                }));
             }
             Err(error) => {
                 self.generation.fetch_add(1, Ordering::Relaxed);

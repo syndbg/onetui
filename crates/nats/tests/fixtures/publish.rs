@@ -240,7 +240,10 @@ async fn headers_and_encoded_payloads_reach_the_stream() {
     // have produced them.
     assert_eq!(stored.payload.as_ref(), &[255u8, 254, 60]);
     let headers = &stored.headers;
-    assert_eq!(headers.get("src").map(|v| v.as_str()), Some("onetui"));
+    assert_eq!(
+        headers.get("src").map(async_nats::HeaderValue::as_str),
+        Some("onetui")
+    );
     // The encoding line selects decoding; it is never sent as a header.
     assert!(headers.get("Onetui-Encoding").is_none());
     js.delete_stream(&stream).await.unwrap();

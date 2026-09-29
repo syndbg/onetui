@@ -570,7 +570,7 @@ mod tests {
         )
         .unwrap();
         let request = PageRequest {
-            resource: resource.clone(),
+            resource,
             continuation: page.continuation,
         };
         assert_eq!(validate(&request, 7, false).unwrap().unwrap().offset, 100);

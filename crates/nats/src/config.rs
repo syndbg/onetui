@@ -31,7 +31,7 @@ pub struct Config {
     pub system_discovery: bool,
 }
 
-fn tls_default() -> bool {
+const fn tls_default() -> bool {
     true
 }
 

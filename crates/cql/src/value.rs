@@ -140,7 +140,7 @@ pub fn type_name(typ: &ColumnType) -> String {
 }
 
 /// Proleptic Gregorian (year, month, day) from days since 1970-01-01. Howard Hinnant's
-/// civil_from_days: exact integer arithmetic, valid for every CQL date and timestamp.
+/// `civil_from_days`: exact integer arithmetic, valid for every CQL date and timestamp.
 fn civil(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -221,7 +221,7 @@ fn integer(bytes: &[u8]) -> String {
     // Repeated division by 10 over the byte array; each pass yields one decimal digit.
     while magnitude.iter().any(|&byte| byte != 0) {
         let mut remainder = 0u16;
-        for byte in magnitude.iter_mut() {
+        for byte in &mut magnitude {
             let current = remainder << 8 | u16::from(*byte);
             *byte = (current / 10) as u8;
             remainder = current % 10;

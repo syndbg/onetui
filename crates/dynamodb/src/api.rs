@@ -47,7 +47,7 @@ pub async fn metadata(
     path: &[String],
     cursor: Option<&Value>,
 ) -> Result<Value> {
-    let name = path.first().map(String::as_str).unwrap_or("");
+    let name = path.first().map_or("", String::as_str);
     let token = cursor
         .map(|v| {
             v.as_str()

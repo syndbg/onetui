@@ -123,9 +123,10 @@ fn actual_cli_metadata_details_paging_and_terminal_restore() {
     let master = std::fs::File::from(pair.master);
     let flags = OFlag::from_bits_truncate(fcntl(&master, FcntlArg::F_GETFL).unwrap());
     fcntl(&master, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)).unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || root.join("target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     // Keep the PTY owner alive until restored terminal flags have been inspected.
     let mut command = Command::new("sh");
     command
@@ -139,7 +140,8 @@ fn actual_cli_metadata_details_paging_and_terminal_restore() {
         .stderr(Stdio::from(slave.try_clone().unwrap()));
     unsafe {
         command.pre_exec(|| {
-            if nix::libc::setsid() == -1 || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
+            if nix::libc::setsid() == -1
+                || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
             {
                 return Err(std::io::Error::last_os_error());
             }

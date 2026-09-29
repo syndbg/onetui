@@ -33,7 +33,7 @@ impl Groups {
             native::rd_kafka_list_groups(
                 client.native_ptr(),
                 group.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
-                &mut list.0,
+                &raw mut list.0,
                 timeout.as_millis().clamp(1, i32::MAX as u128) as i32,
             )
         };
@@ -196,11 +196,11 @@ mod tests {
             member_cnt: 0,
         };
         let list = native::rd_kafka_group_list {
-            groups: &mut group,
+            groups: &raw mut group,
             group_cnt: 1,
         };
         // The native deallocator must not free this stack-owned response.
-        let groups = std::mem::ManuallyDrop::new(Groups(&list));
+        let groups = std::mem::ManuallyDrop::new(Groups(&raw const list));
         let page = groups
             .page(&Resource::new("kafka.groups", vec![]), 0, 1)
             .unwrap();
@@ -246,11 +246,11 @@ mod tests {
             member_cnt: 0,
         };
         let list = native::rd_kafka_group_list {
-            groups: &mut group,
+            groups: &raw mut group,
             group_cnt: 1,
         };
         // Stack-owned test response must not go through librdkafka's deallocator.
-        let groups = std::mem::ManuallyDrop::new(Groups(&list));
+        let groups = std::mem::ManuallyDrop::new(Groups(&raw const list));
         for resource in [
             Resource::new("kafka.groups", vec![]),
             Resource::new("kafka.members", vec!["denied".into()]),

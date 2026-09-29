@@ -41,7 +41,7 @@ fn register(subject: &str, kind: &str, schema: &str) -> Result<u32> {
     let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     let id = value["id"]
         .as_u64()
-        .filter(|id| *id > 0 && *id <= i32::MAX as u64)
+        .filter(|id| *id > 0 && i32::try_from(*id).is_ok())
         .ok_or_else(|| anyhow::anyhow!("Invalid fixture schema ID: {value}"))?;
     Ok(id as u32)
 }

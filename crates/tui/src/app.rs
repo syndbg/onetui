@@ -277,6 +277,7 @@ pub struct App {
 }
 
 impl App {
+    #[must_use]
     pub fn new(config: Config, alias: Option<&str>) -> Self {
         let (history_path, query_history, history_error) = match crate::history::path(&config) {
             Some(path) => match crate::history::load(&path) {
@@ -589,7 +590,7 @@ impl App {
             }
             Ok(_) => {
                 self.error =
-                    Some("Page exceeds the 1 MiB display limit; current page retained".into())
+                    Some("Page exceeds the 1 MiB display limit; current page retained".into());
             }
             Err(error) => self.error = Some(display(&error.to_string())),
         }
@@ -606,6 +607,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn available(&self, action: Action) -> bool {
         self.available_while_loading(action, self.loading && !self.following)
     }
@@ -720,6 +722,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn descriptor(&self) -> &'static ResourceDescriptor {
         if self.view.resource.id == "connections" {
             &onetui_core::catalog::CONNECTIONS
@@ -744,6 +747,7 @@ impl App {
             )
     }
 
+    #[must_use]
     pub fn query_descriptor(&self) -> Option<onetui_core::provider::QueryDescriptor> {
         self.config.descriptor(self.view.alias.as_deref()?)?.query
     }
@@ -812,13 +816,14 @@ impl App {
         if self.history_position.is_none() && position.is_some() {
             self.history_current = Some(editor.text.clone());
         }
-        let text = position
-            .map(|index| self.query_history[index].1.clone())
-            .unwrap_or_else(|| {
+        let text = position.map_or_else(
+            || {
                 self.history_current
                     .take()
                     .unwrap_or_else(|| editor.text.clone())
-            });
+            },
+            |index| self.query_history[index].1.clone(),
+        );
         *editor = crate::query::Editor::new(text);
         self.history_position = position;
     }
@@ -886,6 +891,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn column_count(&self) -> usize {
         if self.view.page.columns.is_empty() {
             self.descriptor().columns.len()
@@ -894,6 +900,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn column_name(&self, index: usize) -> &str {
         if self.view.page.columns.is_empty() {
             self.descriptor().columns[index]
@@ -1071,7 +1078,7 @@ impl App {
                 Action::Up => self.history_menu = Some(index.saturating_sub(1)),
                 Action::Down => {
                     self.history_menu =
-                        Some((index + 1).min(self.history_entries().count().saturating_sub(1)))
+                        Some((index + 1).min(self.history_entries().count().saturating_sub(1)));
                 }
                 Action::Open => {
                     let text = self
@@ -1127,7 +1134,8 @@ impl App {
                     } else {
                         match index - FORMATS.len() {
                             0 => {
-                                self.config.display.pretty_print = !self.config.display.pretty_print
+                                self.config.display.pretty_print =
+                                    !self.config.display.pretty_print;
                             }
                             1 => self.config.display.highlight = !self.config.display.highlight,
                             2 => self.config.display.word_wrap = !self.config.display.word_wrap,
@@ -1179,7 +1187,7 @@ impl App {
             match action {
                 Action::Up => self.detail_scroll = self.detail_scroll.saturating_sub(1),
                 Action::Down => {
-                    self.detail_scroll = self.detail_scroll.saturating_add(1).min(16384)
+                    self.detail_scroll = self.detail_scroll.saturating_add(1).min(16384);
                 }
                 Action::Next => {
                     self.detail_chunk += 1;
@@ -1239,9 +1247,7 @@ impl App {
                 self.help = false;
                 self.display_menu = Some(0);
                 for (i, format) in FORMATS.iter().enumerate() {
-                    self.display_reasons[i] = if !self.detail {
-                        "Open field detail to select a format"
-                    } else {
+                    self.display_reasons[i] = if self.detail {
                         let cell = self.view.page.rows[self.view.selected_index().unwrap()].cells
                             [self.view.column]
                             .as_ref();
@@ -1258,18 +1264,20 @@ impl App {
                                 },
                                 false,
                             );
-                            if prepared.format != format.id {
-                                prepared.notice
-                            } else {
+                            if prepared.format == format.id {
                                 format.description
+                            } else {
+                                prepared.notice
                             }
                         }
+                    } else {
+                        "Open field detail to select a format"
                     };
                 }
             }
             Action::ScrollLeft => self.horizontal_scroll = self.horizontal_scroll.saturating_sub(8),
             Action::ScrollRight => {
-                self.horizontal_scroll = self.horizontal_scroll.saturating_add(8)
+                self.horizontal_scroll = self.horizontal_scroll.saturating_add(8);
             }
             Action::Add => {
                 self.error = None;
@@ -1336,7 +1344,7 @@ impl App {
             Action::Up => self.view.selected = self.view.selected.saturating_sub(1),
             Action::Down => {
                 self.view.selected =
-                    (self.view.selected + 1).min(self.view.visible.len().saturating_sub(1))
+                    (self.view.selected + 1).min(self.view.visible.len().saturating_sub(1));
             }
             Action::Open => {
                 if self.help || self.detail {
@@ -1488,7 +1496,7 @@ impl App {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.act(Action::Open),
                 KeyCode::Esc | KeyCode::Char('n' | 'N') => self.act(Action::Back),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.act(Action::Cancel)
+                    self.act(Action::Cancel);
                 }
                 _ => {}
             }
@@ -1499,7 +1507,7 @@ impl App {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.act(Action::Open),
                 KeyCode::Esc | KeyCode::Char('n' | 'N') => self.act(Action::Back),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.act(Action::Cancel)
+                    self.act(Action::Cancel);
                 }
                 _ => {}
             }
@@ -1509,7 +1517,7 @@ impl App {
             match key.code {
                 KeyCode::Enter | KeyCode::Esc => self.act(Action::Back),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.act(Action::Cancel)
+                    self.act(Action::Cancel);
                 }
                 _ => {}
             }
@@ -1531,24 +1539,24 @@ impl App {
             match key.code {
                 KeyCode::Esc => self.close_query(),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.close_query()
+                    self.close_query();
                 }
                 KeyCode::F(5) if !self.loading => self.execute_query(),
                 KeyCode::Enter if !self.loading && key.modifiers.is_empty() => self.execute_query(),
                 KeyCode::Char('r')
                     if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
                 {
-                    self.execute_query()
+                    self.execute_query();
                 }
                 KeyCode::Char('p')
                     if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
                 {
-                    self.browse_query_history(true)
+                    self.browse_query_history(true);
                 }
                 KeyCode::Char('n')
                     if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
                 {
-                    self.browse_query_history(false)
+                    self.browse_query_history(false);
                 }
                 _ if self.loading => {}
                 _ => {
@@ -1613,7 +1621,7 @@ impl App {
                             self.error = Some(
                                 "Unknown or unavailable command; use ? for available actions"
                                     .into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -1627,7 +1635,7 @@ impl App {
                             .modifiers
                             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
-                    command.push(c)
+                    command.push(c);
                 }
                 _ => {}
             }
@@ -1673,6 +1681,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn theme_index(&self) -> usize {
         Theme::ALL
             .iter()

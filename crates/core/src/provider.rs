@@ -21,10 +21,12 @@ pub struct ProviderDescriptor {
 }
 
 impl ProviderDescriptor {
+    #[must_use]
     pub fn resource(&self, id: &str) -> Option<&'static ResourceDescriptor> {
         self.resources.iter().copied().find(|r| r.id == id)
     }
 
+    #[must_use]
     pub fn capabilities(&self) -> serde_json::Value {
         let mut value = (self.documentation)();
         value["connection_form"] =
@@ -56,18 +58,21 @@ pub struct ConnectionField {
 }
 
 impl ConnectionField {
+    #[must_use]
     pub const fn text(name: &'static str) -> Self {
         Self {
             name,
             input: ConnectionInput::Text,
         }
     }
+    #[must_use]
     pub const fn list(name: &'static str) -> Self {
         Self {
             name,
             input: ConnectionInput::StringList,
         }
     }
+    #[must_use]
     pub const fn boolean(name: &'static str) -> Self {
         Self {
             name,
@@ -157,7 +162,7 @@ pub const QUERY_BYTES: usize = 16 * 1024;
 /// which of these its language is and its extra keywords, so syntax stays provider-owned.
 #[derive(Clone, Copy, Debug)]
 pub enum Syntax {
-    /// SQL-like statements: SQL, CQL, PartiQL. `keywords` adds to a shared SQL set.
+    /// SQL-like statements: SQL, CQL, `PartiQL`. `keywords` adds to a shared SQL set.
     Sql { keywords: &'static [&'static str] },
     /// A JSON document.
     Json,
@@ -197,12 +202,14 @@ pub struct QueryDescriptor {
 }
 
 impl QueryDescriptor {
+    #[must_use]
     pub fn watermark(&self, resource: &Resource, row: Option<&crate::Row>) -> String {
         self.contextual_watermark.map_or_else(
             || self.watermark.into(),
             |watermark| watermark(resource, row),
         )
     }
+    #[must_use]
     pub fn accepts(&self, resource: &Resource) -> bool {
         resource.path.len() >= self.path_depth
             && (self.scope_resources.is_empty() || self.scope_resources.contains(&resource.id))
@@ -246,6 +253,7 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
+    #[must_use]
     pub fn new(timeout: Duration) -> (oneshot::Sender<()>, Self) {
         let (cancel, receiver) = oneshot::channel();
         (
@@ -257,6 +265,7 @@ impl RequestContext {
         )
     }
 
+    #[must_use]
     pub fn remaining(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
     }
@@ -265,7 +274,7 @@ impl RequestContext {
         tokio::select! {
             biased;
             _ = &mut self.cancel => Err(anyhow!("Request cancelled")),
-            _ = tokio::time::sleep_until(self.deadline) => Err(anyhow!("Request timed out")),
+            () = tokio::time::sleep_until(self.deadline) => Err(anyhow!("Request timed out")),
             value = future => Ok(value),
         }
     }
@@ -276,6 +285,7 @@ pub struct ShutdownContext {
 }
 
 impl ShutdownContext {
+    #[must_use]
     pub fn new(timeout: Duration) -> Self {
         Self {
             deadline: Instant::now() + timeout,

@@ -207,6 +207,7 @@ pub struct ResourceAction {
 }
 
 impl ResourceAction {
+    #[must_use]
     pub fn target(
         &self,
         current: &crate::Resource,

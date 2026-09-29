@@ -93,7 +93,7 @@ pub async fn read(
     {
         let mut path = url
             .path_segments_mut()
-            .map_err(|_| anyhow!("Invalid Qdrant REST URL"))?;
+            .map_err(|()| anyhow!("Invalid Qdrant REST URL"))?;
         path.clear();
         if let Some(collection) = resource.path.first() {
             path.push("collections").push(collection);

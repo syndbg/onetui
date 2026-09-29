@@ -2,11 +2,10 @@ use std::process::Command;
 
 #[test]
 fn schema_registers_the_builtin_and_configuration_without_resolving_secrets() {
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-        });
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     assert!(binary.is_file(), "Use make build first");
     let output = Command::new(binary)
         .args(["schema", "--datasource", "rabbitmq"])

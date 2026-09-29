@@ -52,7 +52,7 @@ impl Pty {
         unsafe {
             command.pre_exec(|| {
                 if nix::libc::setsid() == -1
-                    || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
+                    || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
                 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -186,9 +186,10 @@ fn actual_cli_system_discovery_and_details() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(config, "[connections.system]\nkind='nats'\nservers=['nats://127.0.0.1:14226']\ntls=false\njetstream=false\nsystem_discovery=true\nusername_env='NATS_USER'\npassword_env='NATS_PASS'").unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || root.join("target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     let mut command = Command::new("sh");
     command.args(["-c", "\"$1\" --config \"$2\"; status=$?; printf '\\nONETUI_DONE\\n'; read -r finish; exit \"$status\"", "discovery-pty"])
         .arg(binary).arg(config.path()).env("NATS_USER", "fixture-reader").env("NATS_PASS", "fixture-reader-only");
@@ -221,9 +222,10 @@ fn actual_cli_nats_browsing_and_following() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(config, "[connections.nats]\nkind='nats'\nservers=['nats://127.0.0.1:14222']\ntls=false\nusername_env='NATS_USER'\npassword_env='NATS_PASS'\n[connections.second]\nkind='nats'\nservers=['nats://127.0.0.1:14222']\ntls=false\nusername_env='NATS_USER'\npassword_env='NATS_PASS'").unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || root.join("target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     // Keep the PTY owner alive until the parent checks restored terminal flags.
     let mut command = Command::new("sh");
     command
@@ -319,9 +321,10 @@ async fn actual_cli_core_subscription_stops_when_inspecting() {
     let subject = format!("core.pty.{}", std::process::id());
     let mut config = tempfile::NamedTempFile::new().unwrap();
     write!(config, "[connections.core]\nkind='nats'\nservers=['nats://127.0.0.1:14222']\ntls=false\njetstream=false\nsubjects=['{subject}']\nusername_env='NATS_USER'\npassword_env='NATS_PASS'").unwrap();
-    let binary = std::env::var_os("ONETUI_TEST_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| root.join("target/debug/onetui"));
+    let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+        || root.join("target/debug/onetui"),
+        std::path::PathBuf::from,
+    );
     let mut command = Command::new("sh");
     command.args(["-c", "\"$1\" --config \"$2\"; status=$?; printf '\\nONETUI_DONE\\n'; read -r finish; exit \"$status\"", "core-pty"])
         .arg(binary).arg(config.path()).env("NATS_USER", "fixture-admin").env("NATS_PASS", "fixture-admin-only");

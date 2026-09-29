@@ -12,7 +12,7 @@ From the workspace root:
 cargo run -p onetui-avro --example decode_avro --locked -- crates/avro/examples/event.avsc 0e044869
 ```
 
-This prints `{"id":7,"name":"Hi"}`. Arguments are a UTF-8 writer-schema file and hexadecimal datum bytes. Hex must contain complete byte pairs, without spaces or `0x`; an empty argument represents an empty payload. File paths resolve from the current directory. The example does not read OneTUI configuration, expand environment variables, guess framing or contact a datasource.
+This prints `{"id":7,"name":"Hi"}`. Arguments are a UTF-8 writer-schema file and hexadecimal datum bytes. Hex must contain complete byte pairs, without spaces or `0x`; an empty argument represents an empty payload. File paths resolve from the current directory. The example does not read `OneTUI` configuration, expand environment variables, guess framing or contact a datasource.
 
 ## API and interpretation
 

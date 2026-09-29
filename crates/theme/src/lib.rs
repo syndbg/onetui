@@ -34,6 +34,7 @@ impl Theme {
         Self::Flexoki,
     ];
 
+    #[must_use]
     pub const fn palette(self) -> &'static Palette {
         match self {
             Self::Catppuccin => &palettes::CATPPUCCIN,

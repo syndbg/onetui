@@ -108,7 +108,7 @@ async fn discovery_deadline_cancellation_and_reopen_release_the_session() {
         2
     );
     let (cancel, context) = RequestContext::new(Duration::from_secs(3));
-    let (result, _) = tokio::join!(executor.fetch_page(request(), context), async {
+    let (result, ()) = tokio::join!(executor.fetch_page(request(), context), async {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let _ = cancel.send(());
     });

@@ -375,9 +375,10 @@ pub fn points(
 }
 
 pub fn metadata(resource: &Resource, info: CollectionInfo) -> Result<Page> {
-    let status = qdrant_client::qdrant::CollectionStatus::try_from(info.status)
-        .map(|s| s.as_str_name().to_owned())
-        .unwrap_or_else(|_| format!("unknown ({})", info.status));
+    let status = qdrant_client::qdrant::CollectionStatus::try_from(info.status).map_or_else(
+        |_| format!("unknown ({})", info.status),
+        |s| s.as_str_name().to_owned(),
+    );
     let rows = vec![
         row(["status".into(), status], None),
         row(
@@ -651,12 +652,12 @@ mod tests {
             vectors_count: Some(0),
             ..Default::default()
         };
-        assert!(vector_row("".into(), malformed).is_err());
+        assert!(vector_row(String::new(), malformed).is_err());
         let nonfinite = VectorOutput {
             data: vec![f32::NAN],
             ..Default::default()
         };
-        assert!(vector_row("".into(), nonfinite).is_err());
+        assert!(vector_row(String::new(), nonfinite).is_err());
         let legacy = VectorOutput {
             data: vec![1.0, 2.0, 3.0, 4.0],
             vectors_count: Some(2),

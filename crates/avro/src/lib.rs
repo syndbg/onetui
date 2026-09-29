@@ -87,10 +87,12 @@ impl Decoder {
         })
     }
 
+    #[must_use]
     pub fn schema_id(&self) -> &str {
         &self.schema_id
     }
 
+    #[must_use]
     pub fn with_reader(mut self, reader: ReaderSchema) -> Self {
         self.reader = Some(reader);
         self
@@ -137,16 +139,20 @@ fn fingerprint(bytes: &[u8]) -> String {
 }
 
 impl Decoded {
+    #[must_use]
     pub fn raw(&self) -> &[u8] {
         &self.raw
     }
+    #[must_use]
     pub fn schema_id(&self) -> &str {
         &self.schema_id
     }
+    #[must_use]
     pub fn reader_schema_id(&self) -> Option<&str> {
         self.reader_schema_id.as_deref()
     }
-    pub fn value(&self) -> &apache_avro::types::Value {
+    #[must_use]
+    pub const fn value(&self) -> &apache_avro::types::Value {
         &self.value
     }
 

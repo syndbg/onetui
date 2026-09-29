@@ -15,7 +15,7 @@ pub struct Form {
 }
 
 impl Form {
-    pub fn new(providers: Vec<&'static ProviderDescriptor>) -> Self {
+    pub const fn new(providers: Vec<&'static ProviderDescriptor>) -> Self {
         Self {
             providers,
             selected: 0,
@@ -36,7 +36,7 @@ impl Form {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
                 KeyCode::Down | KeyCode::Char('j') => {
-                    self.selected = (self.selected + 1).min(self.providers.len() - 1)
+                    self.selected = (self.selected + 1).min(self.providers.len() - 1);
                 }
                 KeyCode::Enter => {
                     self.inputs = (0..=self.provider().connection_fields.len())
@@ -53,10 +53,10 @@ impl Form {
             KeyCode::F(2) => self.save = true,
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => self.save = true,
             KeyCode::Tab | KeyCode::Enter | KeyCode::Down => {
-                self.field = (self.field + 1) % self.inputs.len()
+                self.field = (self.field + 1) % self.inputs.len();
             }
             KeyCode::BackTab | KeyCode::Up => {
-                self.field = (self.field + self.inputs.len() - 1) % self.inputs.len()
+                self.field = (self.field + self.inputs.len() - 1) % self.inputs.len();
             }
             _ => {
                 if let KeyCode::Char(c) = key.code

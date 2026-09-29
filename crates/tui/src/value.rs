@@ -38,7 +38,7 @@ pub struct Prepared {
     pub notice: &'static str,
 }
 
-fn unsafe_char(c: char) -> bool {
+const fn unsafe_char(c: char) -> bool {
     c.is_control()
         || matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
