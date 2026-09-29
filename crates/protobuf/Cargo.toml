@@ -7,6 +7,9 @@ rust-version.workspace = true
 description = "Bounded Protobuf message decoding for OneTUI"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 prost = "0.14"
