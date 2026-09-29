@@ -45,7 +45,8 @@ fn first_run_opens_empty_picker_and_saves_without_connecting() {
     // The test owns /dev/tty, so keyboard input cannot reach the developer's terminal.
     unsafe {
         command.pre_exec(|| {
-            if nix::libc::setsid() == -1 || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
+            if nix::libc::setsid() == -1
+                || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
             {
                 return Err(std::io::Error::last_os_error());
             }

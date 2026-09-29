@@ -1,6 +1,7 @@
 use onetui_core::Value;
 use scylla::frame::response::result::{CollectionType, ColumnType};
 use scylla::value::{CqlDuration, CqlValue};
+use std::fmt::Write as _;
 
 /// Render one cell. Scalars become text, collections and structures become JSON so the
 /// existing pretty-printer and filters can work on them, and `blob` stays bytes so the
@@ -184,7 +185,7 @@ fn hex(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(2 + bytes.len() * 2);
     text.push_str("0x");
     for byte in bytes {
-        text.push_str(&format!("{byte:02x}"));
+        let _ = write!(text, "{byte:02x}");
     }
     text
 }
@@ -245,10 +246,9 @@ fn decimal_text(digits: &[u8], scale: i32) -> String {
     if scale == 0 {
         return text;
     }
-    let (sign, magnitude) = match text.strip_prefix('-') {
-        Some(rest) => ("-", rest),
-        None => ("", text.as_str()),
-    };
+    let (sign, magnitude) = text
+        .strip_prefix('-')
+        .map_or(("", text.as_str()), |rest| ("-", rest));
     // A negative scale means trailing zeros rather than a fractional part.
     if scale < 0 {
         let zeros = scale.unsigned_abs() as usize;
@@ -269,15 +269,15 @@ mod tests {
     use super::*;
     use scylla::value::{Counter, CqlDate, CqlDecimal, CqlTime, CqlTimestamp, CqlVarint};
 
-    fn text(value: CqlValue) -> String {
-        match cell(Some(&value)) {
+    fn text(value: &CqlValue) -> String {
+        match cell(Some(value)) {
             Some(Value::Text(text)) => text,
             other => panic!("expected text, got {other:?}"),
         }
     }
 
-    fn rendered_json(value: CqlValue) -> serde_json::Value {
-        match cell(Some(&value)) {
+    fn rendered_json(value: &CqlValue) -> serde_json::Value {
+        match cell(Some(value)) {
             Some(Value::Json(text)) => serde_json::from_str(&text).expect("valid JSON"),
             other => panic!("expected JSON, got {other:?}"),
         }
@@ -327,12 +327,12 @@ mod tests {
 
     #[test]
     fn scalars_keep_their_exact_value() {
-        assert_eq!(text(CqlValue::Int(-7)), "-7");
-        assert_eq!(text(CqlValue::BigInt(i64::MIN)), i64::MIN.to_string());
-        assert_eq!(text(CqlValue::TinyInt(-128)), "-128");
-        assert_eq!(text(CqlValue::Boolean(true)), "true");
-        assert_eq!(text(CqlValue::Counter(Counter(42))), "42");
-        assert_eq!(text(CqlValue::Text("hi".into())), "hi");
+        assert_eq!(text(&CqlValue::Int(-7)), "-7");
+        assert_eq!(text(&CqlValue::BigInt(i64::MIN)), i64::MIN.to_string());
+        assert_eq!(text(&CqlValue::TinyInt(-128)), "-128");
+        assert_eq!(text(&CqlValue::Boolean(true)), "true");
+        assert_eq!(text(&CqlValue::Counter(Counter(42))), "42");
+        assert_eq!(text(&CqlValue::Text("hi".into())), "hi");
         // A blob stays bytes so the display format chooses hex or text.
         assert_eq!(
             cell(Some(&CqlValue::Blob(vec![0, 255]))),
@@ -340,29 +340,29 @@ mod tests {
         );
         // Temporal values render in UTC like cqlsh, including before the epoch.
         assert_eq!(
-            text(CqlValue::Timestamp(CqlTimestamp(1_700_000_000_000))),
+            text(&CqlValue::Timestamp(CqlTimestamp(1_700_000_000_000))),
             "2023-11-14 22:13:20.000Z"
         );
         assert_eq!(
-            text(CqlValue::Timestamp(CqlTimestamp(-1))),
+            text(&CqlValue::Timestamp(CqlTimestamp(-1))),
             "1969-12-31 23:59:59.999Z"
         );
-        assert_eq!(text(CqlValue::Date(CqlDate(1 << 31))), "1970-01-01");
+        assert_eq!(text(&CqlValue::Date(CqlDate(1 << 31))), "1970-01-01");
         // A leap day, which a naive days-per-year conversion gets wrong.
         assert_eq!(
-            text(CqlValue::Date(CqlDate((1 << 31) + 11_016))),
+            text(&CqlValue::Date(CqlDate((1 << 31) + 11_016))),
             "2000-02-29"
         );
         // The extremes of both types stay in range.
-        assert_eq!(text(CqlValue::Date(CqlDate(0))), "-5877641-06-23");
-        text(CqlValue::Timestamp(CqlTimestamp(i64::MIN)));
-        text(CqlValue::Timestamp(CqlTimestamp(i64::MAX)));
+        assert_eq!(text(&CqlValue::Date(CqlDate(0))), "-5877641-06-23");
+        text(&CqlValue::Timestamp(CqlTimestamp(i64::MIN)));
+        text(&CqlValue::Timestamp(CqlTimestamp(i64::MAX)));
         assert_eq!(
-            text(CqlValue::Time(CqlTime(86_399_999_999_999))),
+            text(&CqlValue::Time(CqlTime(86_399_999_999_999))),
             "23:59:59.999999999"
         );
         assert_eq!(
-            text(CqlValue::Duration(CqlDuration {
+            text(&CqlValue::Duration(CqlDuration {
                 months: 1,
                 days: 2,
                 nanoseconds: 3,
@@ -378,22 +378,22 @@ mod tests {
         let big = CqlVarint::from_signed_bytes_be(vec![
             0x36, 0x35, 0xC9, 0xAD, 0xC5, 0xDE, 0xA0, 0x00, 0x00,
         ]);
-        assert_eq!(text(CqlValue::Varint(big)), "1000000000000000000000");
+        assert_eq!(text(&CqlValue::Varint(big)), "1000000000000000000000");
         assert_eq!(
-            text(CqlValue::Varint(CqlVarint::from_signed_bytes_be(vec![
+            text(&CqlValue::Varint(CqlVarint::from_signed_bytes_be(vec![
                 0x00
             ]))),
             "0"
         );
         // Two's-complement negatives, including the all-ones edge.
         assert_eq!(
-            text(CqlValue::Varint(CqlVarint::from_signed_bytes_be(vec![
+            text(&CqlValue::Varint(CqlVarint::from_signed_bytes_be(vec![
                 0xFF
             ]))),
             "-1"
         );
         assert_eq!(
-            text(CqlValue::Varint(CqlVarint::from_signed_bytes_be(vec![
+            text(&CqlValue::Varint(CqlVarint::from_signed_bytes_be(vec![
                 0x80, 0x00
             ]))),
             "-32768"
@@ -401,22 +401,22 @@ mod tests {
 
         // scale > 0 places a fractional point; the integer is unbounded.
         let decimal = CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x04, 0xD2], 2);
-        assert_eq!(text(CqlValue::Decimal(decimal)), "12.34");
+        assert_eq!(text(&CqlValue::Decimal(decimal)), "12.34");
         // A scale wider than the digits pads with leading zeros.
         let small = CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01], 4);
-        assert_eq!(text(CqlValue::Decimal(small)), "0.0001");
+        assert_eq!(text(&CqlValue::Decimal(small)), "0.0001");
         // A negative scale means trailing zeros, not a fraction.
         let scaled = CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x05], -3);
-        assert_eq!(text(CqlValue::Decimal(scaled)), "5000");
+        assert_eq!(text(&CqlValue::Decimal(scaled)), "5000");
         // Sign stays outside the decimal point.
         let negative = CqlDecimal::from_signed_be_bytes_and_exponent(vec![0xFB, 0x2E], 2);
-        assert_eq!(text(CqlValue::Decimal(negative)), "-12.34");
+        assert_eq!(text(&CqlValue::Decimal(negative)), "-12.34");
     }
 
     #[test]
     fn structures_render_as_inspectable_json() {
         assert_eq!(
-            rendered_json(CqlValue::List(vec![
+            rendered_json(&CqlValue::List(vec![
                 CqlValue::Int(1),
                 CqlValue::Text("two".into())
             ])),
@@ -424,19 +424,19 @@ mod tests {
         );
         // A tuple keeps its nulls, which are part of its type.
         assert_eq!(
-            rendered_json(CqlValue::Tuple(vec![Some(CqlValue::Int(1)), None,])),
+            rendered_json(&CqlValue::Tuple(vec![Some(CqlValue::Int(1)), None,])),
             serde_json::json!(["1", null])
         );
         // A map is a list of pairs: CQL keys are not restricted to strings.
         assert_eq!(
-            rendered_json(CqlValue::Map(vec![(
+            rendered_json(&CqlValue::Map(vec![(
                 CqlValue::Int(1),
                 CqlValue::Text("one".into())
             )])),
             serde_json::json!([{"key": "1", "value": "one"}])
         );
         assert_eq!(
-            rendered_json(CqlValue::UserDefinedType {
+            rendered_json(&CqlValue::UserDefinedType {
                 keyspace: "ks".into(),
                 name: "address".into(),
                 fields: vec![
@@ -448,12 +448,14 @@ mod tests {
         );
         // Nesting stays structured rather than becoming an escaped string.
         assert_eq!(
-            rendered_json(CqlValue::List(vec![CqlValue::List(vec![CqlValue::Int(1)])])),
+            rendered_json(&CqlValue::List(vec![CqlValue::List(vec![CqlValue::Int(
+                1
+            )])])),
             serde_json::json!([["1"]])
         );
         // A nested blob cannot stay bytes inside JSON, so it becomes hex.
         assert_eq!(
-            rendered_json(CqlValue::List(vec![CqlValue::Blob(vec![0xAB, 0xCD])])),
+            rendered_json(&CqlValue::List(vec![CqlValue::Blob(vec![0xAB, 0xCD])])),
             serde_json::json!(["0xabcd"])
         );
     }

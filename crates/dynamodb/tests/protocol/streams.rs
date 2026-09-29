@@ -345,6 +345,10 @@ async fn sequence_bookmarks_renew_expired_iterators_and_replay_closed_pages() {
 
 #[tokio::test]
 async fn empty_follow_pages_advance_iterators_and_expiry_never_resets_latest() {
+    async fn follow(e: &DynamoDbExecutor, bookmark: Option<String>) -> anyhow::Result<Page> {
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        e.follow_page(records_request(bookmark), context).await
+    }
     let mut responses = replies(vec![
         json!({"ShardIterator":"latest"}),
         json!({"Records":[],"NextShardIterator":"empty-next"}),
@@ -357,10 +361,6 @@ async fn empty_follow_pages_advance_iterators_and_expiry_never_resets_latest() {
     ));
     let server = Server::start(responses);
     let e = server.executor();
-    async fn follow(e: &DynamoDbExecutor, bookmark: Option<String>) -> anyhow::Result<Page> {
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        e.follow_page(records_request(bookmark), context).await
-    }
     let first = follow(&e, None).await.unwrap();
     assert!(first.rows.is_empty() && first.continuation.is_some());
     assert!(

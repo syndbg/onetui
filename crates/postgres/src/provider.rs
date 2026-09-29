@@ -183,7 +183,7 @@ impl PostgresExecutor {
             .as_ref()
             .and_then(|config| config.get_password())
             .map(String::from_utf8_lossy);
-        onetui_core::diagnostic(error, &[&self.url, password.as_deref().unwrap_or("")])
+        onetui_core::diagnostic(&error, &[&self.url, password.as_deref().unwrap_or("")])
     }
 
     async fn read(

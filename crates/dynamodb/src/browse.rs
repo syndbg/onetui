@@ -314,11 +314,10 @@ pub fn metadata(id: &str, mut body: Json) -> Result<(Page, Option<Json>)> {
             let table = value["TableName"]
                 .as_str()
                 .ok_or_else(|| anyhow!("Contributor insights is missing TableName"))?;
-            Some(if let Some(index) = value["IndexName"].as_str() {
-                Resource::new("dynamodb.index_insights", vec![table.into(), index.into()])
-            } else {
-                Resource::new("dynamodb.insights", vec![table.into()])
-            })
+            Some(value["IndexName"].as_str().map_or_else(
+                || Resource::new("dynamodb.insights", vec![table.into()]),
+                |index| Resource::new("dynamodb.index_insights", vec![table.into(), index.into()]),
+            ))
         } else {
             target
                 .map(|id| {
@@ -371,7 +370,7 @@ pub fn multi_items(body: Json, table: &str, batch: bool) -> Result<(Page, Option
     Ok((page, next))
 }
 
-pub fn items(body: Json) -> Result<(Page, Option<Json>)> {
+pub fn items(body: &Json) -> Result<(Page, Option<Json>)> {
     let values = if let Some(items) = body.get("Items") {
         items
             .as_array()

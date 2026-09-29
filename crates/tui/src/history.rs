@@ -44,13 +44,13 @@ pub fn load(path: &Path) -> Result<Entries> {
 }
 
 pub fn save(path: &Path, entries: &Entries) -> Result<()> {
+    use std::io::Write;
     let bytes = serde_json::to_vec(entries)?;
     if bytes.len() as u64 > MAX_BYTES {
         bail!("History file would be too large");
     }
     let parent = path.parent().expect("history file has a parent");
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    use std::io::Write;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
     temporary.persist(path)?;

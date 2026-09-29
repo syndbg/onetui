@@ -14,6 +14,9 @@ pub struct ReaderSchema {
 }
 
 impl ReaderSchema {
+    /// # Errors
+    ///
+    /// Returns an error when the text is not a valid Avro reader schema.
     pub fn new(text: &str) -> Result<Self> {
         ensure!(
             text.len() <= crate::MAX_SCHEMA_BYTES,

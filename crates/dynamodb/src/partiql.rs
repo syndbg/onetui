@@ -78,7 +78,7 @@ pub fn page(body: Value, limit: usize) -> Result<(onetui_core::Page, Option<Valu
         return Ok((page, next));
     }
     let details = serde_json::json!({"Count":body.get("Count"),"ScannedCount":body.get("ScannedCount"),"ConsumedCapacity":body.get("ConsumedCapacity")});
-    let (mut page, _) = crate::browse::items(body)?;
+    let (mut page, _) = crate::browse::items(&body)?;
     page.notice = format!("{details} | DynamoDB statement completed");
     Ok((page, next))
 }

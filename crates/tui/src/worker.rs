@@ -201,15 +201,15 @@ mod tests {
         async fn follow_page(&self, request: PageRequest, context: RequestContext) -> Result<Page> {
             self.fetch_page(request, context).await
         }
-        async fn stop_follow(&self, _: ShutdownContext) -> Result<()> {
+        fn stop_follow(&self, _: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
             self.stopped.store(true, Ordering::SeqCst);
-            Ok(())
+            std::future::ready(Ok(()))
         }
         fn status(&self) -> watch::Receiver<ConnectionStatus> {
             self.status.subscribe()
         }
-        async fn check(&self, _: RequestContext) -> Result<CheckResult> {
-            unreachable!()
+        fn check(&self, _: RequestContext) -> impl Future<Output = Result<CheckResult>> + Send {
+            std::future::ready(Err(anyhow::anyhow!("check is unused by this test")))
         }
         async fn fetch_page(&self, _: PageRequest, mut context: RequestContext) -> Result<Page> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
@@ -240,10 +240,10 @@ mod tests {
                     .map(QueryExecution::Page)
             }
         }
-        async fn shutdown(&mut self, _: ShutdownContext) -> Result<()> {
+        fn shutdown(&mut self, _: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
             self.stopped.store(true, Ordering::SeqCst);
             self.status.send_replace(ConnectionStatus::Closed);
-            Ok(())
+            std::future::ready(Ok(()))
         }
     }
 
@@ -265,7 +265,7 @@ mod tests {
                     WorkerEvent::Execution(result) => {
                         return result.map(|execution| match execution {
                             QueryExecution::Page(page) => page,
-                            _ => panic!("expected a paged result"),
+                            QueryExecution::Write(_) => panic!("expected a paged result"),
                         });
                     }
                     WorkerEvent::Status(_) => {}

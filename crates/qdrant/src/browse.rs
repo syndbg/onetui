@@ -374,7 +374,7 @@ pub fn points(
     bounded(page)
 }
 
-pub fn metadata(resource: &Resource, info: CollectionInfo) -> Result<Page> {
+pub fn metadata(resource: &Resource, info: &CollectionInfo) -> Result<Page> {
     let status = qdrant_client::qdrant::CollectionStatus::try_from(info.status).map_or_else(
         |_| format!("unknown ({})", info.status),
         |s| s.as_str_name().to_owned(),

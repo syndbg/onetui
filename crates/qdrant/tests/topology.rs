@@ -114,11 +114,11 @@ impl Server {
             closed,
             task,
         };
-        server.result(value);
+        server.result(&value);
         server
     }
 
-    fn result(&self, value: Value) {
+    fn result(&self, value: &Value) {
         self.reply.lock().unwrap().body =
             serde_json::to_vec(&json!({"status": "ok", "result": value})).unwrap();
     }
@@ -335,7 +335,7 @@ async fn shards_transfers_and_resharding_keep_native_fields_and_escape_paths() {
             .await
             .is_err()
     );
-    server.result(json!({"status":"disabled"}));
+    server.result(&json!({"status":"disabled"}));
     let page = fetch(&executor, "qdrant.peers", &[], None).await.unwrap();
     assert!(page.rows.is_empty());
     assert!(page.notice.contains("disabled"));
@@ -371,7 +371,7 @@ async fn rest_errors_preserve_server_wording_redact_keys_and_refuse_redirects() 
         server.reply.lock().unwrap().body = body.as_bytes().to_vec();
         assert!(fetch(&executor, "qdrant.cluster", &[], None).await.is_err());
     }
-    server.result(json!({}));
+    server.result(&json!({}));
     assert!(
         fetch(&executor, "qdrant.shards", &["demo"], None)
             .await
@@ -398,7 +398,7 @@ async fn rest_limits_cover_declared_and_chunked_bodies() {
                 .contains("1 MiB")
         );
     }
-    server.result(cluster());
+    server.result(&cluster());
     assert!(fetch(&executor, "qdrant.cluster", &[], None).await.is_ok());
 }
 

@@ -33,6 +33,9 @@ impl Config {
         )
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the module, label or revision is invalid.
     pub fn validate(&self) -> Result<()> {
         self.remote().validate()?;
         let url = url::Url::parse(&self.url)?;
@@ -77,6 +80,9 @@ impl Config {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when a referenced secret cannot be resolved.
     pub fn resolve(&mut self, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<String>> {
         let mut remote = self.remote();
         let secrets = remote.resolve(env)?;
@@ -86,10 +92,14 @@ impl Config {
 
     #[must_use]
     pub fn identity(&self) -> String {
-        let reference = match self.resolved_revision.as_ref().or(self.revision.as_ref()) {
-            Some(revision) => format!("commit={revision}"),
-            None => format!("label={}", self.label.as_deref().unwrap_or_default()),
-        };
+        let reference = self
+            .resolved_revision
+            .as_ref()
+            .or(self.revision.as_ref())
+            .map_or_else(
+                || format!("label={}", self.label.as_deref().unwrap_or_default()),
+                |revision| format!("commit={revision}"),
+            );
         format!(
             "buf:{}/{}#{}",
             self.url.trim_end_matches('/'),
@@ -106,6 +116,13 @@ impl Config {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the request fails, the deadline passes or the response is invalid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a validated module has no `owner/name` separator or a label is missing without a revision.
     pub fn load(&mut self, remaining: &impl Fn() -> Result<()>) -> Result<Vec<u8>> {
         remaining()?;
         self.validate()?;
@@ -116,6 +133,14 @@ impl Config {
         );
         let remote = self.remote.as_ref().unwrap_or(&anonymous);
         let result = (|| {
+            #[derive(Deserialize)]
+            struct Commit {
+                id: String,
+            }
+            #[derive(Deserialize)]
+            struct Commits {
+                commits: Vec<Commit>,
+            }
             let agent = remote.agent()?;
             let (owner, module) = self.module.split_once('/').unwrap();
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -130,14 +155,6 @@ impl Config {
                     deadline,
                     remaining,
                 )?;
-                #[derive(Deserialize)]
-                struct Commit {
-                    id: String,
-                }
-                #[derive(Deserialize)]
-                struct Commits {
-                    commits: Vec<Commit>,
-                }
                 let response: Commits = serde_json::from_slice(&bytes)?;
                 ensure!(
                     response.commits.len() == 1 && commit_id(&response.commits[0].id),

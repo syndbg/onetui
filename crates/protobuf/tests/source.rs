@@ -1,4 +1,5 @@
 use onetui_protobuf::{MAX_SCHEMA_BYTES, SourceSchema};
+use std::fmt::Write as _;
 
 #[test]
 fn sources_imports_and_nested_declaration_indexes() {
@@ -73,9 +74,10 @@ fn source_bounds_and_no_ambient_imports() {
         SourceSchema::compile(
             &format!(
                 "message M {{ {} }}",
-                (1..5000)
-                    .map(|i| format!("optional int32 f{i} = {i};"))
-                    .collect::<String>()
+                (1..5000).fold(String::new(), |mut text, i| {
+                    let _ = write!(text, "optional int32 f{i} = {i};");
+                    text
+                })
             ),
             &[]
         )

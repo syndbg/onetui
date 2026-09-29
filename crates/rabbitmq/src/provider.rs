@@ -216,7 +216,7 @@ impl RabbitMqExecutor {
             self.status.send_replace(ConnectionStatus::Connected);
         }
         result.map_err(|error| {
-            onetui_core::diagnostic(error, &[&self.password, &self.encoded_credentials])
+            onetui_core::diagnostic(&error, &[&self.password, &self.encoded_credentials])
         })
     }
 }
@@ -278,7 +278,7 @@ impl Executor for RabbitMqExecutor {
             }
             Ok(Err(error)) | Err(error) => {
                 let error =
-                    onetui_core::diagnostic(error, &[&self.password, &self.encoded_credentials]);
+                    onetui_core::diagnostic(&error, &[&self.password, &self.encoded_credentials]);
                 if dispatched && !statement.reads() {
                     Ok(QueryExecution::Write(WriteResult {
                         outcome: WriteOutcome::Unknown,
@@ -320,11 +320,11 @@ impl Executor for RabbitMqExecutor {
         }
         self.read(&request.resource, number, context).await
     }
-    async fn shutdown(&mut self, _context: ShutdownContext) -> Result<()> {
+    fn shutdown(&mut self, _context: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
         self.closed = true;
         self.status.send_replace(ConnectionStatus::Closing);
         self.client.get_mut().take();
         self.status.send_replace(ConnectionStatus::Closed);
-        Ok(())
+        std::future::ready(Ok(()))
     }
 }

@@ -3,6 +3,7 @@ use aws_sdk_dynamodbstreams::{Client, error::DisplayErrorContext, types::ShardIt
 use onetui_core::{Column, PAGE_BYTES, Page, Resource, Row, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
+use std::fmt::Write as _;
 
 use crate::response::Capture;
 
@@ -326,8 +327,7 @@ async fn records(
                 .ok_or_else(|| anyhow!("DynamoDB Streams Records must be an array"))
         })
         .transpose()?
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
+        .map_or(&[][..], Vec::as_slice);
     ensure!(
         values.len() <= limit as usize,
         "DynamoDB Streams response exceeds requested record limit"
@@ -338,9 +338,10 @@ async fn records(
         ..Page::default()
     };
     if let Some(error) = model_error {
-        page.notice.push_str(&format!(
+        let _ = write!(
+            page.notice,
             " | SDK decode error: {error}; showing original JSON"
-        ));
+        );
     }
     let mut cut = false;
     for value in values {

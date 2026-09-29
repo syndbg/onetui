@@ -50,6 +50,7 @@ async fn project(cache: &Arc<Cache>, page: Page, check: bool) -> Page {
 
 #[test]
 fn remote_bindings_are_strict_offline_and_secrets_are_selected_alias_only() {
+    use onetui_core::provider::Provider;
     let registry = json!({"subject":"demo.event", "format":"protobuf", "framing":"confluent", "registry":{"url":"https://registry.invalid", "token_env":"REGISTRY_TOKEN"}});
     binding(registry.clone());
     for extra in [
@@ -68,7 +69,6 @@ fn remote_bindings_are_strict_offline_and_secrets_are_selected_alias_only() {
     let buf = json!({"subject":"demo.event", "format":"protobuf", "message_name":"demo.Event", "buf":{"url":"https://buf.build", "module":"demo/events", "label":"main", "token_env":"BUF_TOKEN"}});
     binding(buf);
     let options: toml::Table = toml::from_str("servers=['nats://127.0.0.1:14222']\ntls=false\n[[decoders]]\nsubject='demo.event'\nformat='protobuf'\nframing='confluent'\nregistry={url='https://registry.invalid',token_env='REGISTRY_TOKEN'}\n[[decoders]]\nsubject='demo.buf'\nformat='protobuf'\nmessage_name='demo.Event'\nbuf={url='https://buf.build',module='demo/events',label='main',token_env='BUF_TOKEN'}").unwrap();
-    use onetui_core::provider::Provider;
     crate::NatsProvider.validate_config(&options).unwrap();
     let names = Mutex::new(Vec::new());
     crate::NatsProvider

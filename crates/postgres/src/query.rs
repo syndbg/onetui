@@ -58,7 +58,7 @@ pub async fn fetch(client: &Client, sql: &str, offset: i64) -> Result<Page> {
         .join(", ");
     // A derived table admits row queries, not transaction control or utility statements.
     // Newlines prevent a trailing SQL comment from swallowing the wrapper.
-    let sql = sql.trim().strip_suffix(';').unwrap_or(sql.trim());
+    let sql = sql.trim().strip_suffix(';').unwrap_or_else(|| sql.trim());
     // ponytail: deep OFFSET pages rerun work; keysets need a declared unique result key.
     let bounded = format!(
         "WITH page AS MATERIALIZED (SELECT {} FROM (\n{sql}\n) AS src({}) LIMIT {} OFFSET {offset}), \

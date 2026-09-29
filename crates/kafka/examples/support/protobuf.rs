@@ -49,7 +49,7 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
     let subject = format!("{topic}_customer");
     broker::register(
         &subject,
-        json!({"schemaType":"PROTOBUF", "schema":CUSTOMER}),
+        &json!({"schemaType":"PROTOBUF", "schema":CUSTOMER}),
     )?;
     let mut ids = [0; 2];
     for (version, id) in ids.iter_mut().enumerate() {
@@ -60,7 +60,7 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
         };
         *id = broker::register(
             &format!("{topic}_value"),
-            json!({"schemaType":"PROTOBUF", "schema":source,"references":[{"name":"customer.proto","subject":subject,"version":1}]}),
+            &json!({"schemaType":"PROTOBUF", "schema":source,"references":[{"name":"customer.proto","subject":subject,"version":1}]}),
         )?;
     }
     Ok(ids)
@@ -69,7 +69,7 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
 pub fn key_schema(topic: &str) -> Result<u32> {
     broker::register(
         &format!("{topic}_key"),
-        json!({"schemaType":"PROTOBUF", "schema":CUSTOMER}),
+        &json!({"schemaType":"PROTOBUF", "schema":CUSTOMER}),
     )
 }
 

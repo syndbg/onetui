@@ -114,10 +114,10 @@ impl Capture {
             if !(200..300).contains(&status) {
                 return Err(anyhow!(
                     "DynamoDB HTTP {status}: {}",
-                    match std::str::from_utf8(&bytes) {
-                        Ok(text) => text.to_owned(),
-                        Err(_) => format!("non-UTF-8 response bytes: {bytes:02x?}"),
-                    }
+                    std::str::from_utf8(&bytes).map_or_else(
+                        |_| format!("non-UTF-8 response bytes: {bytes:02x?}"),
+                        std::borrow::ToOwned::to_owned
+                    )
                 ));
             }
             if !raw_success {

@@ -19,7 +19,7 @@ pub fn config() -> ClientConfig {
     config
 }
 
-pub fn register(subject: &str, body: serde_json::Value) -> Result<u32> {
+pub fn register(subject: &str, body: &serde_json::Value) -> Result<u32> {
     ensure!(
         !subject.is_empty()
             && subject

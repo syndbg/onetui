@@ -93,6 +93,9 @@ pub const FORMATS: &[FormatDescriptor] = &[
 ];
 
 impl ValueFormat {
+    /// # Panics
+    ///
+    /// Panics if the format is missing from the registry, which the registry tests prevent.
     #[must_use]
     pub fn name(self) -> &'static str {
         FORMATS

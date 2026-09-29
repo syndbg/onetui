@@ -5,6 +5,7 @@ use onetui_core::provider::PageRequest;
 use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
+use std::fmt::Write as _;
 
 pub const RESOURCES: &[&ResourceDescriptor] = &[
     &crate::discovery::RESOURCE,
@@ -433,7 +434,7 @@ pub async fn page(
             "NATS continuation belongs to another session, resource or mode"
         );
     }
-    let mut cursor = prior.unwrap_or(Cursor {
+    let mut cursor = prior.unwrap_or_else(|| Cursor {
         session,
         resource: resource.id.into(),
         path: resource.path.clone(),
@@ -456,7 +457,7 @@ pub async fn page(
         let info = api
             .call("STREAM.LIST", json!({"offset": cursor.next}))
             .await?;
-        let streams = info["streams"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        let streams = info["streams"].as_array().map_or(&[][..], Vec::as_slice);
         let total = number(&info, "total")?;
         page.columns = columns(&[
             ("name", "text"),
@@ -649,7 +650,11 @@ pub async fn page(
                 page.notice.push_str("; object version pinned; chunks are separate byte values, whole-object digest not verified");
             }
             if let Some(replay) = replay {
-                page.notice.push_str(&format!("; subject {}; scanned {scanned}; time filtering scans at most 100 matching messages per page", replay.subject));
+                let _ = write!(
+                    page.notice,
+                    "; subject {}; scanned {scanned}; time filtering scans at most 100 matching messages per page",
+                    replay.subject
+                );
             }
         }
     }

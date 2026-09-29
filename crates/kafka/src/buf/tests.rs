@@ -280,6 +280,7 @@ fn configuration_is_offline_strict_and_validates_commit_ids() {
 
 #[test]
 fn moving_labels_pin_before_fetch_and_reopen_without_reinterpreting_rows() {
+    const NEXT: &str = "1123456789abcdef0123456789abcdef";
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -297,7 +298,6 @@ fn moving_labels_pin_before_fetch_and_reopen_without_reinterpreting_rows() {
         .field[0];
     field.name = Some("renamed".into());
     field.json_name = None;
-    const NEXT: &str = "1123456789abcdef0123456789abcdef";
     let server = Server::start_bytes(true, move |request| {
         assert!(
             request

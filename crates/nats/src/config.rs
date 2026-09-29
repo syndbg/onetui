@@ -134,8 +134,8 @@ impl Config {
             );
         }
         ensure!(
-            !(config.username.is_some() && config.username_env.is_some())
-                && !(config.password.is_some() && config.password_env.is_some()),
+            !(config.username.is_some() && config.username_env.is_some()
+                || config.password.is_some() && config.password_env.is_some()),
             "NATS username and password each need one source: a value or an _env reference"
         );
         ensure!(
@@ -237,7 +237,7 @@ impl Config {
             secrets.push(credentials.clone());
             options = options.credentials(&credentials).map_err(|error| {
                 onetui_core::diagnostic(
-                    error.into(),
+                    &error.into(),
                     &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
                 )
             })?;

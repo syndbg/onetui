@@ -18,7 +18,7 @@ fn registry() -> ureq::Agent {
         .into()
 }
 
-fn register(subject: &str, body: serde_json::Value) -> u32 {
+fn register(subject: &str, body: &serde_json::Value) -> u32 {
     let mut response = registry()
         .post(format!("{REGISTRY}/subjects/{subject}/versions"))
         .header("Content-Type", "application/vnd.schemaregistry.v1+json")
@@ -77,12 +77,12 @@ async fn protobuf_registry_versions_imports_indexes_replay_and_following() {
     let owned = topic.clone();
     let tested = tokio::spawn(async move {
         let child = format!("{owned}_child");
-        register(&child, json!({"schemaType":"PROTOBUF", "schema":r#"syntax="proto3"; package demo; message Child {uint32 id=1;}"#}));
+        register(&child, &json!({"schemaType":"PROTOBUF", "schema":r#"syntax="proto3"; package demo; message Child {uint32 id=1;}"#}));
         let mut ids = [0; 2];
         for (version, id) in ids.iter_mut().enumerate() {
             let extra = if version == 1 { "string added=3;" } else { "" };
             let source = format!("syntax=\"proto3\"; package demo; import \"child.proto\"; message Event {{uint32 id=1; {extra}}} message Outer {{message Inner {{Child child=1;}}}}");
-            *id = register(&format!("{owned}_value"), json!({"schemaType":"PROTOBUF","schema":source,"references":[{"name":"child.proto","subject":child,"version":1}]}));
+            *id = register(&format!("{owned}_value"), &json!({"schemaType":"PROTOBUF","schema":source,"references":[{"name":"child.proto","subject":child,"version":1}]}));
         }
         assert_ne!(ids[0], ids[1]);
         let producer: FutureProducer = config.create().unwrap();

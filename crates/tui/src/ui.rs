@@ -324,6 +324,13 @@ fn terminal() -> Result<(TerminalGuard, DefaultTerminal)> {
     Ok((guard, terminal))
 }
 
+/// # Errors
+///
+/// Returns an error when the terminal cannot be initialised or drawn.
+///
+/// # Panics
+///
+/// Panics if a pending request has no recorded alias, which the request state prevents.
 pub async fn run<P: onetui_core::provider::Provider>(
     mut app: App,
     deadline: Duration,
@@ -1783,7 +1790,7 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .map(|c| c.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(shown.contains("\"tail\":true"), "{shown}");
         app.act(Action::Open);
@@ -1866,7 +1873,7 @@ mod tests {
                     .buffer()
                     .content
                     .chunks(usize::from(width))
-                    .map(|line| line.iter().map(|c| c.symbol()).collect())
+                    .map(|line| line.iter().map(ratatui::buffer::Cell::symbol).collect())
                     .collect();
                 assert_eq!(
                     lines.iter().any(|line| line.contains("END")),
@@ -1950,7 +1957,7 @@ mod tests {
             terminal
                 .draw(|frame| {
                     app.viewport = frame.area();
-                    draw(frame, app)
+                    draw(frame, app);
                 })
                 .unwrap();
             terminal
@@ -1958,7 +1965,7 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .map(|c| c.symbol())
+                .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>()
         };
         assert!(!render(&mut app, &mut terminal).contains("entry_099"));
@@ -2062,7 +2069,7 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .map(|c| c.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(text.contains("65 fields") && text.contains("field_0") && text.contains("value_0"));
         app.view.page.columns[0].datatype = "timestamp with time zone".into();
@@ -2078,7 +2085,7 @@ mod tests {
                 .buffer()
                 .content
                 .chunks(usize::from(width))
-                .map(|line| line.iter().map(|c| c.symbol()).collect())
+                .map(|line| line.iter().map(ratatui::buffer::Cell::symbol).collect())
                 .collect();
             let heading = lines.iter().find(|line| line.contains("FIELD")).unwrap();
             let value_x = heading.chars().position(|c| c == 'V').unwrap();
@@ -2103,7 +2110,7 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .map(|c| c.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(text.contains("field_64") && text.contains("value_64"));
         for width in [1, 20, 60] {
@@ -2124,7 +2131,7 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .map(|c| c.symbol())
+                .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>()
         };
         let mut app = App::new(
@@ -2222,10 +2229,12 @@ mod tests {
                 .flat_map(|y| (0..80).map(move |x| (x, y)))
                 .find(|&(x, y)| {
                     (0..text.len() as u16)
-                        .all(|i| buffer[(x + i, y)].symbol() == &text[i as usize..i as usize + 1])
+                        .all(|i| buffer[(x + i, y)].symbol() == &text[(i as usize)..=(i as usize)])
                 })
-                .map(|position| buffer[position].clone())
-                .unwrap_or_else(|| panic!("{text} not on screen"))
+                .map_or_else(
+                    || panic!("{text} not on screen"),
+                    |position| buffer[position].clone(),
+                )
         };
         let keyword = cell(&app, "SELECT");
         assert_eq!(keyword.fg, color(p.key_hint));
@@ -2256,7 +2265,7 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .map(|cell| cell.symbol())
+                .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>()
         };
         assert_eq!(app.query_editor.as_ref().unwrap().text, "");
@@ -2287,7 +2296,7 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .map(|c| c.symbol())
+                .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>()
         };
         let mut app = App::new(
@@ -2426,7 +2435,7 @@ mod tests {
             let text = buffer
                 .content
                 .iter()
-                .map(|c| c.symbol())
+                .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>();
             assert!(!text.contains("Filter displayed page"));
             if width == 120 {
@@ -2474,7 +2483,11 @@ mod tests {
             let text = buffer
                 .content
                 .chunks(width as usize)
-                .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+                .map(|row| {
+                    row.iter()
+                        .map(ratatui::buffer::Cell::symbol)
+                        .collect::<String>()
+                })
                 .collect::<Vec<_>>();
             if width >= 80 {
                 let command = text[1].find("COMMAND").unwrap();
@@ -2514,7 +2527,11 @@ mod tests {
                 .buffer()
                 .content
                 .chunks(120)
-                .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                .map(|row| {
+                    row.iter()
+                        .map(ratatui::buffer::Cell::symbol)
+                        .collect::<String>()
+                })
                 .collect::<Vec<_>>()
         };
         terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -2582,7 +2599,7 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .map(|c| c.symbol())
+                .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>();
             assert!(!text.contains('\u{001b}'));
             if width >= 20 {
@@ -2618,7 +2635,7 @@ mod tests {
                     let text = buffer
                         .content
                         .iter()
-                        .map(|c| c.symbol())
+                        .map(ratatui::buffer::Cell::symbol)
                         .collect::<String>();
                     for theme in onetui_theme::Theme::ALL {
                         let name = serde_json::to_value(theme).unwrap();
@@ -2675,7 +2692,7 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .map(|cell| cell.symbol())
+                .map(ratatui::buffer::Cell::symbol)
                 .collect::<String>()
         };
         let first = render(&mut terminal, &app);
@@ -2752,7 +2769,11 @@ mod tests {
                 .buffer()
                 .content
                 .chunks(120)
-                .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                .map(|row| {
+                    row.iter()
+                        .map(ratatui::buffer::Cell::symbol)
+                        .collect::<String>()
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         };
@@ -2961,7 +2982,6 @@ mod tests {
 
     #[test]
     fn connection_form_renders_controls_path_and_editing_on_narrow_frames() {
-        use onetui_core::provider::Provider;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         let catalog = crate::test_provider::CATALOG;
@@ -2971,7 +2991,7 @@ mod tests {
         );
         app.providers = catalog
             .iter()
-            .map(|provider| provider.descriptor())
+            .map(onetui_core::provider::Provider::descriptor)
             .collect();
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -2980,7 +3000,7 @@ mod tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect::<String>();
         assert!(text.contains("No connections yet"));
         assert!(text.contains("config.toml"));
@@ -3000,7 +3020,7 @@ mod tests {
                     .buffer()
                     .content()
                     .iter()
-                    .map(|cell| cell.symbol())
+                    .map(ratatui::buffer::Cell::symbol)
                     .collect::<String>();
                 assert!(text.contains("F2 save"));
                 assert!(text.contains("alias *"));
@@ -3194,7 +3214,7 @@ mod tests {
             unsafe {
                 command.pre_exec(|| {
                     if nix::libc::setsid() == -1
-                        || nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1
+                        || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
                     {
                         return Err(std::io::Error::last_os_error());
                     }

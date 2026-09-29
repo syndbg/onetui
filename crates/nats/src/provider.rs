@@ -380,7 +380,7 @@ impl NatsExecutor {
 
     fn diagnostic(&self, error: anyhow::Error) -> anyhow::Error {
         onetui_core::diagnostic(
-            error,
+            &error,
             &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
         )
     }

@@ -33,12 +33,12 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
         "Invalid fixture topic"
     );
     let subject = format!("{topic}_customer");
-    broker::register(&subject, json!({"schemaType":"AVRO","schema":CUSTOMER}))?;
+    broker::register(&subject, &json!({"schemaType":"AVRO","schema":CUSTOMER}))?;
     let mut ids = [0; 2];
     for (version, id) in ids.iter_mut().enumerate() {
         *id = broker::register(
             &format!("{topic}_value"),
-            json!({"schemaType":"AVRO","schema":writer(version),"references":[{"name":"demo.Customer","subject":subject,"version":1}]}),
+            &json!({"schemaType":"AVRO","schema":writer(version),"references":[{"name":"demo.Customer","subject":subject,"version":1}]}),
         )?;
     }
     Ok(ids)
@@ -47,7 +47,7 @@ pub fn schemas(topic: &str) -> Result<[u32; 2]> {
 pub fn key_schema(topic: &str) -> Result<u32> {
     broker::register(
         &format!("{topic}_key"),
-        json!({"schemaType":"AVRO","schema":CUSTOMER}),
+        &json!({"schemaType":"AVRO","schema":CUSTOMER}),
     )
 }
 

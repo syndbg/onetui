@@ -164,7 +164,7 @@ fn array<'a>(value: &'a Json, key: &str) -> Result<&'a Vec<Json>> {
     Ok(array)
 }
 
-pub fn page(resource: &Resource, value: Json, offset: usize, executor: u64) -> Result<Page> {
+pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> Result<Page> {
     let mut notice =
         "Topology observed by the REST node; re-read per page, not a snapshot".to_owned();
     let rows = match resource.id {

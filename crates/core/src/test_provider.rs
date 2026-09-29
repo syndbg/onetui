@@ -54,16 +54,20 @@ impl Executor for FakeExecutor {
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.0.subscribe()
     }
-    async fn check(&self, _: RequestContext) -> Result<CheckResult> {
-        Ok(CheckResult {
+    fn check(&self, _: RequestContext) -> impl Future<Output = Result<CheckResult>> + Send {
+        std::future::ready(Ok(CheckResult {
             summary: "fake".into(),
-        })
+        }))
     }
-    async fn fetch_page(&self, _: PageRequest, _: RequestContext) -> Result<Page> {
-        anyhow::bail!("unsupported")
+    fn fetch_page(
+        &self,
+        _: PageRequest,
+        _: RequestContext,
+    ) -> impl Future<Output = Result<Page>> + Send {
+        std::future::ready(Err(anyhow::anyhow!("unsupported")))
     }
-    async fn shutdown(&mut self, _: ShutdownContext) -> Result<()> {
+    fn shutdown(&mut self, _: ShutdownContext) -> impl Future<Output = Result<()>> + Send {
         self.0.send_replace(ConnectionStatus::Closed);
-        Ok(())
+        std::future::ready(Ok(()))
     }
 }

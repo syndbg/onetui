@@ -26,6 +26,9 @@ impl ProviderDescriptor {
         self.resources.iter().copied().find(|r| r.id == id)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the connection fields cannot be serialized to JSON.
     #[must_use]
     pub fn capabilities(&self) -> serde_json::Value {
         let mut value = (self.documentation)();
@@ -85,7 +88,13 @@ pub trait Provider: Send + Sync {
     type Executor: Executor;
 
     fn descriptor(&self) -> &'static ProviderDescriptor;
+    /// # Errors
+    ///
+    /// Returns an error when the options are invalid for this provider.
     fn validate_config(&self, options: &toml::Table) -> Result<()>;
+    /// # Errors
+    ///
+    /// Returns an error when the options are invalid or a referenced secret cannot be resolved.
     fn configure(
         &self,
         options: &toml::Table,
@@ -222,6 +231,9 @@ pub struct QueryRequest {
 }
 
 impl QueryRequest {
+    /// # Errors
+    ///
+    /// Returns an error when the query is empty or larger than 16 KiB.
     pub fn validate(&self) -> Result<()> {
         ensure!(!self.text.trim().is_empty(), "Query is empty");
         ensure!(self.text.len() <= QUERY_BYTES, "Query exceeds 16 KiB");
@@ -270,6 +282,9 @@ impl RequestContext {
         self.deadline.saturating_duration_since(Instant::now())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the request is cancelled or its deadline passes first.
     pub async fn run<T>(&mut self, future: impl Future<Output = T>) -> Result<T> {
         tokio::select! {
             biased;
@@ -293,6 +308,9 @@ impl ShutdownContext {
     }
 }
 
+/// # Errors
+///
+/// Returns an error when no provider has the given kind.
 pub fn find_provider<'a, P: Provider>(catalog: &'a [P], kind: &str) -> Result<&'a P> {
     catalog
         .iter()
@@ -300,6 +318,9 @@ pub fn find_provider<'a, P: Provider>(catalog: &'a [P], kind: &str) -> Result<&'
         .ok_or_else(|| anyhow!("unknown datasource; use schema for supported kinds"))
 }
 
+/// # Errors
+///
+/// Returns an error when a provider descriptor is duplicated or inconsistent.
 pub fn validate_catalog<P: Provider>(catalog: &[P]) -> Result<()> {
     let mut kinds = BTreeSet::new();
     let mut resources = BTreeSet::new();
@@ -419,9 +440,6 @@ mod tests {
 
     #[test]
     fn catalog_checks_kinds_resources_and_entry_without_executors() {
-        validate_catalog(CATALOG).unwrap();
-        assert!(find_provider(CATALOG, "unknown").is_err());
-        assert!(validate_catalog(&[FakeProvider, FakeProvider]).is_err());
         static RESOURCE: ResourceDescriptor = ResourceDescriptor {
             id: "fake.rows",
             description: "rows",
@@ -449,6 +467,9 @@ mod tests {
             resources: &[&RESOURCE],
             documentation: || serde_json::json!({}),
         };
+        validate_catalog(CATALOG).unwrap();
+        assert!(find_provider(CATALOG, "unknown").is_err());
+        assert!(validate_catalog(&[FakeProvider, FakeProvider]).is_err());
         assert!(validate_catalog(&[Declared(&DUPLICATE)]).is_err());
         assert!(validate_catalog(&[Declared(&MISSING)]).is_err());
         assert_eq!(FakeProvider.descriptor().capabilities()["id"], "fake");
