@@ -102,12 +102,10 @@ impl Terminal {
     }
 }
 
-#[test]
-#[ignore = "requires disposable RabbitMQ fixture and built OneTUI binary"]
-fn actual_cli_metadata_details_paging_and_terminal_restore() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut config = tempfile::NamedTempFile::new().unwrap();
-    write!(config, "[connections.rabbit]\nkind='rabbitmq'\nurl='http://127.0.0.1:15672'\nusername_env='ONETUI_FIXTURE_USER'\npassword_env='ONETUI_FIXTURE_PASS'\n").unwrap();
+fn spawn_terminal(
+    root: &std::path::Path,
+    config: &std::path::Path,
+) -> (Terminal, std::fs::File, nix::sys::termios::Termios) {
     let pair = openpty(
         Some(&Winsize {
             ws_row: 40,
@@ -131,7 +129,7 @@ fn actual_cli_metadata_details_paging_and_terminal_restore() {
     let mut command = Command::new("sh");
     command
         .args(["-c", "\"$1\" --config \"$2\"; status=$?; printf '\\nONETUI_DONE\\n'; read -r finish; exit \"$status\"", "rabbitmq-pty"])
-        .arg(binary).arg(config.path())
+        .arg(binary).arg(config)
         .env("TERM", "xterm-256color")
         .env("ONETUI_FIXTURE_USER", "fixture-reader")
         .env("ONETUI_FIXTURE_PASS", "fixture-reader-only")
@@ -148,12 +146,16 @@ fn actual_cli_metadata_details_paging_and_terminal_restore() {
             Ok(())
         });
     }
-    let mut terminal = Terminal {
+    let terminal = Terminal {
         child: command.spawn().unwrap(),
         master: Some(master),
         output: Vec::new(),
         width: 180,
     };
+    (terminal, slave, before)
+}
+
+fn browse_and_query(terminal: &mut Terminal) {
     terminal.wait("connections");
     terminal.send(b"\r");
     terminal.wait("rabbitmq.resources");
@@ -193,6 +195,16 @@ fn actual_cli_metadata_details_paging_and_terminal_restore() {
     terminal.wait("RAW GET /api/overview");
     terminal.send(b"\x1b");
     terminal.wait("rabbitmq.queues");
+}
+
+#[test]
+#[ignore = "requires disposable RabbitMQ fixture and built OneTUI binary"]
+fn actual_cli_metadata_details_paging_and_terminal_restore() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut config = tempfile::NamedTempFile::new().unwrap();
+    write!(config, "[connections.rabbit]\nkind='rabbitmq'\nurl='http://127.0.0.1:15672'\nusername_env='ONETUI_FIXTURE_USER'\npassword_env='ONETUI_FIXTURE_PASS'\n").unwrap();
+    let (mut terminal, slave, before) = spawn_terminal(&root, config.path());
+    browse_and_query(&mut terminal);
     terminal.send(b"q");
     terminal.wait("Quit OneTUI?");
     terminal.send(b"y");

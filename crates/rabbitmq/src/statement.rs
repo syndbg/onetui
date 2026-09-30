@@ -73,6 +73,135 @@ const ENCODING: &str = "onetui-encoding";
 /// given; the management API rejects one it will not serve.
 const GET_COUNT: u32 = 1;
 
+fn parse_publish<'a>(
+    parts: &mut std::str::SplitWhitespace<'a>,
+    rest: &'a str,
+) -> Result<Statement<'a>> {
+    let vhost = target(parts, "PUBLISH vhost exchange routing_key")?;
+    let exchange = target(parts, "PUBLISH vhost exchange routing_key")?;
+    // An empty routing key is meaningful on a fanout exchange, so it is required
+    // positionally but may be given as the empty-string marker "".
+    let routing_key = target(parts, "PUBLISH vhost exchange routing_key")?;
+    ensure!(
+        parts.next().is_none(),
+        "Enter PUBLISH vhost exchange routing_key on the first line"
+    );
+    let (headers, remainder) = headers(rest)?;
+    let payload = decode(body(remainder)?, headers)?;
+    Ok(Statement::Publish {
+        vhost,
+        exchange,
+        routing_key: match routing_key {
+            "\"\"" => "",
+            key => key,
+        },
+        payload,
+    })
+}
+
+fn parse_get<'a>(
+    parts: &mut std::str::SplitWhitespace<'a>,
+    rest: &'a str,
+) -> Result<Statement<'a>> {
+    let vhost = target(parts, "GET vhost queue [count] [requeue|ack]")?;
+    let queue = target(parts, "GET vhost queue [count] [requeue|ack]")?;
+    let mut count = GET_COUNT;
+    let mut requeue = true;
+    for part in parts {
+        match part {
+            "requeue" => requeue = true,
+            "ack" => requeue = false,
+            digits => {
+                count = digits.parse().map_err(|_| {
+                    anyhow!("Enter GET vhost queue [count] [requeue|ack]; {digits} is not a count")
+                })?;
+            }
+        }
+    }
+    ensure!(
+        body(rest)?.trim().is_empty(),
+        "GET takes no body; put the count and acknowledgement mode on the first line"
+    );
+    Ok(Statement::Get {
+        vhost,
+        queue,
+        count,
+        requeue,
+    })
+}
+
+fn parse_declare<'a>(
+    parts: &mut std::str::SplitWhitespace<'a>,
+    rest: &'a str,
+) -> Result<Statement<'a>> {
+    let word = target(parts, "DECLARE object vhost name")?;
+    let (vhost, name) = object(parts, word, "DECLARE")?;
+    Ok(Statement::Declare {
+        collection: word,
+        vhost,
+        name,
+        // The server validates the definition; an empty body means "defaults".
+        body: body(rest)?,
+    })
+}
+
+fn parse_delete<'a>(
+    parts: &mut std::str::SplitWhitespace<'a>,
+    rest: &'a str,
+) -> Result<Statement<'a>> {
+    let word = target(parts, "DELETE object vhost name")?;
+    let (vhost, name) = object(parts, word, "DELETE")?;
+    ensure!(
+        body(rest)?.trim().is_empty(),
+        "DELETE takes no body; name the object on the first line"
+    );
+    Ok(Statement::Delete {
+        collection: word,
+        vhost,
+        name,
+    })
+}
+
+fn parse_purge<'a>(
+    parts: &mut std::str::SplitWhitespace<'a>,
+    rest: &'a str,
+) -> Result<Statement<'a>> {
+    let vhost = target(parts, "PURGE vhost queue")?;
+    let queue = target(parts, "PURGE vhost queue")?;
+    ensure!(
+        parts.next().is_none(),
+        "Enter PURGE vhost queue on the first line"
+    );
+    ensure!(
+        body(rest)?.trim().is_empty(),
+        "PURGE takes no body; name the queue on the first line"
+    );
+    Ok(Statement::Purge { vhost, queue })
+}
+
+fn parse_raw<'a>(
+    parts: &mut std::str::SplitWhitespace<'a>,
+    rest: &'a str,
+) -> Result<Statement<'a>> {
+    let method = target(parts, "RAW METHOD /path")?;
+    let path = target(parts, "RAW METHOD /path")?;
+    ensure!(
+        parts.next().is_none(),
+        "Enter RAW METHOD /path on the first line"
+    );
+    let method = Method::from_bytes(method.as_bytes())
+        .map_err(|_| anyhow!("Invalid HTTP method {method}"))?;
+    ensure!(
+        path.starts_with('/') && !path.contains("//"),
+        "RAW paths start with / and have no empty segment; encode a literal / in a name as %2F"
+    );
+    Ok(Statement::Raw {
+        method,
+        path,
+        body: body(rest)?,
+    })
+}
+
 pub fn parse(text: &str) -> Result<Statement<'_>> {
     let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
     let mut parts = line.split_whitespace();
@@ -80,111 +209,12 @@ pub fn parse(text: &str) -> Result<Statement<'_>> {
         anyhow!("Enter PUBLISH, GET, DECLARE, DELETE, PURGE or RAW on the first line")
     })?;
     match verb {
-        "PUBLISH" => {
-            let vhost = target(&mut parts, "PUBLISH vhost exchange routing_key")?;
-            let exchange = target(&mut parts, "PUBLISH vhost exchange routing_key")?;
-            // An empty routing key is meaningful on a fanout exchange, so it is required
-            // positionally but may be given as the empty-string marker "".
-            let routing_key = target(&mut parts, "PUBLISH vhost exchange routing_key")?;
-            ensure!(
-                parts.next().is_none(),
-                "Enter PUBLISH vhost exchange routing_key on the first line"
-            );
-            let (headers, remainder) = headers(rest)?;
-            let payload = decode(body(remainder)?, headers)?;
-            Ok(Statement::Publish {
-                vhost,
-                exchange,
-                routing_key: match routing_key {
-                    "\"\"" => "",
-                    key => key,
-                },
-                payload,
-            })
-        }
-        "GET" => {
-            let vhost = target(&mut parts, "GET vhost queue [count] [requeue|ack]")?;
-            let queue = target(&mut parts, "GET vhost queue [count] [requeue|ack]")?;
-            let mut count = GET_COUNT;
-            let mut requeue = true;
-            for part in parts {
-                match part {
-                    "requeue" => requeue = true,
-                    "ack" => requeue = false,
-                    digits => {
-                        count = digits.parse().map_err(|_| {
-                            anyhow!("Enter GET vhost queue [count] [requeue|ack]; {digits} is not a count")
-                        })?;
-                    }
-                }
-            }
-            ensure!(
-                body(rest)?.trim().is_empty(),
-                "GET takes no body; put the count and acknowledgement mode on the first line"
-            );
-            Ok(Statement::Get {
-                vhost,
-                queue,
-                count,
-                requeue,
-            })
-        }
-        "DECLARE" => {
-            let word = target(&mut parts, "DECLARE object vhost name")?;
-            let (vhost, name) = object(&mut parts, word, "DECLARE")?;
-            Ok(Statement::Declare {
-                collection: word,
-                vhost,
-                name,
-                // The server validates the definition; an empty body means "defaults".
-                body: body(rest)?,
-            })
-        }
-        "DELETE" => {
-            let word = target(&mut parts, "DELETE object vhost name")?;
-            let (vhost, name) = object(&mut parts, word, "DELETE")?;
-            ensure!(
-                body(rest)?.trim().is_empty(),
-                "DELETE takes no body; name the object on the first line"
-            );
-            Ok(Statement::Delete {
-                collection: word,
-                vhost,
-                name,
-            })
-        }
-        "PURGE" => {
-            let vhost = target(&mut parts, "PURGE vhost queue")?;
-            let queue = target(&mut parts, "PURGE vhost queue")?;
-            ensure!(
-                parts.next().is_none(),
-                "Enter PURGE vhost queue on the first line"
-            );
-            ensure!(
-                body(rest)?.trim().is_empty(),
-                "PURGE takes no body; name the queue on the first line"
-            );
-            Ok(Statement::Purge { vhost, queue })
-        }
-        "RAW" => {
-            let method = target(&mut parts, "RAW METHOD /path")?;
-            let path = target(&mut parts, "RAW METHOD /path")?;
-            ensure!(
-                parts.next().is_none(),
-                "Enter RAW METHOD /path on the first line"
-            );
-            let method = Method::from_bytes(method.as_bytes())
-                .map_err(|_| anyhow!("Invalid HTTP method {method}"))?;
-            ensure!(
-                path.starts_with('/') && !path.contains("//"),
-                "RAW paths start with / and have no empty segment; encode a literal / in a name as %2F"
-            );
-            Ok(Statement::Raw {
-                method,
-                path,
-                body: body(rest)?,
-            })
-        }
+        "PUBLISH" => parse_publish(&mut parts, rest),
+        "GET" => parse_get(&mut parts, rest),
+        "DECLARE" => parse_declare(&mut parts, rest),
+        "DELETE" => parse_delete(&mut parts, rest),
+        "PURGE" => parse_purge(&mut parts, rest),
+        "RAW" => parse_raw(&mut parts, rest),
         other => Err(anyhow!(
             "Unknown RabbitMQ verb {other}; use PUBLISH, GET, DECLARE, DELETE, PURGE or RAW"
         )),
@@ -317,6 +347,12 @@ pub struct Outbound {
     pub body: Option<String>,
 }
 
+impl Outbound {
+    const fn new(method: Method, url: url::Url, body: Option<String>) -> Self {
+        Self { method, url, body }
+    }
+}
+
 impl Statement<'_> {
     /// A read returns a page; everything else reports a write outcome.
     pub(crate) const fn reads(&self) -> bool {
@@ -418,11 +454,7 @@ impl Statement<'_> {
                     "payload": base64::engine::general_purpose::STANDARD.encode(payload),
                     "payload_encoding": "base64",
                 });
-                Ok(Outbound {
-                    method: Method::POST,
-                    url,
-                    body: Some(body.to_string()),
-                })
+                Ok(Outbound::new(Method::POST, url, Some(body.to_string())))
             }
             Self::Get {
                 vhost,
@@ -437,11 +469,7 @@ impl Statement<'_> {
                     // Base64 keeps a non-UTF-8 payload intact on the way back.
                     "encoding": "base64",
                 });
-                Ok(Outbound {
-                    method: Method::POST,
-                    url,
-                    body: Some(body.to_string()),
-                })
+                Ok(Outbound::new(Method::POST, url, Some(body.to_string())))
             }
             Self::Declare {
                 collection,
@@ -455,16 +483,9 @@ impl Statement<'_> {
                 } else {
                     segments(&mut url, [target.as_str(), name])?;
                 }
-                Ok(Outbound {
-                    method: Method::PUT,
-                    url,
-                    // An empty body means defaults; the server needs a JSON object.
-                    body: Some(if body.trim().is_empty() {
-                        "{}".into()
-                    } else {
-                        (*body).into()
-                    }),
-                })
+                // An empty body means defaults; the server needs a JSON object.
+                let body = if body.trim().is_empty() { "{}" } else { body };
+                Ok(Outbound::new(Method::PUT, url, Some(body.into())))
             }
             Self::Delete {
                 collection,
@@ -477,19 +498,11 @@ impl Statement<'_> {
                 } else {
                     segments(&mut url, [target.as_str(), name])?;
                 }
-                Ok(Outbound {
-                    method: Method::DELETE,
-                    url,
-                    body: None,
-                })
+                Ok(Outbound::new(Method::DELETE, url, None))
             }
             Self::Purge { vhost, queue } => {
                 segments(&mut url, ["queues", vhost, queue, "contents"])?;
-                Ok(Outbound {
-                    method: Method::DELETE,
-                    url,
-                    body: None,
-                })
+                Ok(Outbound::new(Method::DELETE, url, None))
             }
             Self::Raw { method, path, body } => {
                 let target = url.join(path)?;
@@ -500,11 +513,8 @@ impl Statement<'_> {
                         && target.password().is_none(),
                     "RAW paths must stay on the configured endpoint"
                 );
-                Ok(Outbound {
-                    method: method.clone(),
-                    url: target,
-                    body: (!body.is_empty()).then(|| (*body).to_owned()),
-                })
+                let body = (!body.is_empty()).then(|| (*body).to_owned());
+                Ok(Outbound::new(method.clone(), target, body))
             }
         }
     }

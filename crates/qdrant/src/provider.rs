@@ -194,6 +194,104 @@ impl QdrantExecutor {
         result.map_err(|error| onetui_core::diagnostic(&error, &[key.unwrap_or("")]))
     }
 
+    async fn list_collections(
+        &self,
+        channel: Channel,
+        deadline: Instant,
+        resource: &onetui_core::Resource,
+        offset: Option<crate::browse::Offset>,
+    ) -> Result<Page> {
+        let mut client = CollectionsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+        let result = client
+            .list(self.request(ListCollectionsRequest {}, deadline))
+            .await
+            .map_err(|status| crate::rpc_error(&status))?
+            .into_inner();
+        let offset = match offset {
+            Some(crate::browse::Offset::Collections(n)) => n,
+            _ => 0,
+        };
+        crate::browse::collections(
+            resource,
+            result.collections.into_iter().map(|c| c.name).collect(),
+            offset,
+            self.identity,
+        )
+    }
+
+    async fn collection_metadata(
+        &self,
+        channel: Channel,
+        deadline: Instant,
+        resource: &onetui_core::Resource,
+    ) -> Result<Page> {
+        let mut client = CollectionsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+        let result = client
+            .get(self.request(
+                GetCollectionInfoRequest {
+                    collection_name: resource.path[0].clone(),
+                },
+                deadline,
+            ))
+            .await
+            .map_err(|status| crate::rpc_error(&status))?
+            .into_inner();
+        crate::browse::metadata(
+            resource,
+            &result
+                .result
+                .ok_or_else(|| anyhow!("Qdrant collection metadata missing; refresh its parent"))?,
+        )
+    }
+
+    async fn scroll_points(
+        &self,
+        channel: Channel,
+        deadline: Instant,
+        resource: &onetui_core::Resource,
+        offset: Option<crate::browse::Offset>,
+    ) -> Result<Page> {
+        let mut client = PointsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+        let mut scroll = ScrollPointsBuilder::new(&resource.path[0])
+            .limit(u32::try_from(PAGE_SIZE)?)
+            .with_payload(false)
+            .with_vectors(false);
+        if let Some(crate::browse::Offset::Point(id)) = offset {
+            scroll = scroll.offset(id.native());
+        }
+        let result = client
+            .scroll(self.request(scroll.build(), deadline))
+            .await
+            .map_err(|status| crate::rpc_error(&status))?
+            .into_inner();
+        crate::browse::points(
+            resource,
+            result.result,
+            result.next_page_offset,
+            self.identity,
+        )
+    }
+
+    async fn point_detail(
+        &self,
+        channel: Channel,
+        deadline: Instant,
+        resource: &onetui_core::Resource,
+    ) -> Result<Page> {
+        let mut client = PointsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
+        let get =
+            GetPointsBuilder::new(&resource.path[0], vec![crate::browse::point_id(resource)?])
+                .with_payload(resource.id == "qdrant.payload")
+                .with_vectors(resource.id == "qdrant.vectors")
+                .build();
+        let result = client
+            .get(self.request(get, deadline))
+            .await
+            .map_err(|status| crate::rpc_error(&status))?
+            .into_inner();
+        crate::browse::detail(resource, result.result)
+    }
+
     fn request<T>(&self, message: T, deadline: Instant) -> tonic::Request<T> {
         let mut request = tonic::Request::new(message);
         request.set_timeout(deadline.saturating_duration_since(Instant::now()));
@@ -379,82 +477,16 @@ impl Executor for QdrantExecutor {
             let resource = &request.resource;
             match resource.id {
                 "qdrant.collections" => {
-                    let mut client =
-                        CollectionsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
-                    let result = client
-                        .list(self.request(ListCollectionsRequest {}, deadline))
+                    self.list_collections(channel, deadline, resource, offset)
                         .await
-                        .map_err(|status| crate::rpc_error(&status))?
-                        .into_inner();
-                    let offset = match offset {
-                        Some(crate::browse::Offset::Collections(n)) => n,
-                        _ => 0,
-                    };
-                    crate::browse::collections(
-                        resource,
-                        result.collections.into_iter().map(|c| c.name).collect(),
-                        offset,
-                        self.identity,
-                    )
                 }
-                "qdrant.metadata" => {
-                    let mut client =
-                        CollectionsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
-                    let result = client
-                        .get(self.request(
-                            GetCollectionInfoRequest {
-                                collection_name: resource.path[0].clone(),
-                            },
-                            deadline,
-                        ))
-                        .await
-                        .map_err(|status| crate::rpc_error(&status))?
-                        .into_inner();
-                    crate::browse::metadata(
-                        resource,
-                        &result.result.ok_or_else(|| {
-                            anyhow!("Qdrant collection metadata missing; refresh its parent")
-                        })?,
-                    )
-                }
+                "qdrant.metadata" => self.collection_metadata(channel, deadline, resource).await,
                 "qdrant.points" => {
-                    let mut client =
-                        PointsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
-                    let mut scroll = ScrollPointsBuilder::new(&resource.path[0])
-                        .limit(u32::try_from(PAGE_SIZE)?)
-                        .with_payload(false)
-                        .with_vectors(false);
-                    if let Some(crate::browse::Offset::Point(id)) = offset {
-                        scroll = scroll.offset(id.native());
-                    }
-                    let result = client
-                        .scroll(self.request(scroll.build(), deadline))
+                    self.scroll_points(channel, deadline, resource, offset)
                         .await
-                        .map_err(|status| crate::rpc_error(&status))?
-                        .into_inner();
-                    crate::browse::points(
-                        resource,
-                        result.result,
-                        result.next_page_offset,
-                        self.identity,
-                    )
                 }
                 "qdrant.payload" | "qdrant.vectors" => {
-                    let mut client =
-                        PointsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
-                    let get = GetPointsBuilder::new(
-                        &resource.path[0],
-                        vec![crate::browse::point_id(resource)?],
-                    )
-                    .with_payload(resource.id == "qdrant.payload")
-                    .with_vectors(resource.id == "qdrant.vectors")
-                    .build();
-                    let result = client
-                        .get(self.request(get, deadline))
-                        .await
-                        .map_err(|status| crate::rpc_error(&status))?
-                        .into_inner();
-                    crate::browse::detail(resource, result.result)
+                    self.point_detail(channel, deadline, resource).await
                 }
                 _ => unreachable!("validated resource"),
             }

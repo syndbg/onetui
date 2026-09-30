@@ -84,38 +84,15 @@ async fn sql_once_pid(executor: &onetui_postgres::PostgresExecutor) -> i32 {
         .unwrap()
 }
 
-#[tokio::test]
-#[ignore = "creates and removes a table in the disposable PostgreSQL fixture"]
-async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
-    let mut writer = onetui_postgres::PostgresProvider
-        .configure(&toml::from_str("url_env='DSN'").unwrap(), &|_| {
-            Some(PG_ADMIN.into())
-        })
-        .unwrap();
-    let table = format!("demo.onetui_write_{}", std::process::id());
-    let _ = sql_once(&writer, &format!("DROP TABLE IF EXISTS {table}")).await;
-    let pid = sql_once_pid(&writer).await;
-    let created = sql_once(
-        &writer,
-        &format!("CREATE TABLE {table} (id integer PRIMARY KEY, label text)"),
-    )
-    .await
-    .unwrap();
-    match created {
-        QueryExecution::Write(write) => {
-            assert_eq!(write.outcome, WriteOutcome::Applied, "{}", write.summary);
-        }
-        QueryExecution::Page(_) => panic!("CREATE TABLE returned rows"),
-    }
-
+async fn check_write_outcomes(writer: &onetui_postgres::PostgresExecutor, table: &str, pid: i32) {
     let inserted = sql_once(
-        &writer,
+        writer,
         &format!("INSERT INTO {table} VALUES (1, 'first') RETURNING id, label"),
     )
     .await
     .unwrap();
     assert!(matches!(inserted, QueryExecution::Page(page) if page.rows.len() == 1 && !page.next));
-    let rejected = sql_once(&writer, &format!("INSERT INTO {table} VALUES (1, 'again')"))
+    let rejected = sql_once(writer, &format!("INSERT INTO {table} VALUES (1, 'again')"))
         .await
         .unwrap();
     assert!(
@@ -125,9 +102,9 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         *writer.status().borrow(),
         onetui_core::provider::ConnectionStatus::Connected
     );
-    assert_eq!(sql_once_pid(&writer).await, pid);
+    assert_eq!(sql_once_pid(writer).await, pid);
     let updated = sql_once(
-        &writer,
+        writer,
         &format!("UPDATE {table} SET label = 'second' WHERE id = 1"),
     )
     .await
@@ -136,7 +113,7 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         matches!(updated, QueryExecution::Write(write) if write.outcome == WriteOutcome::Applied && write.summary.contains("1 rows affected"))
     );
     let page = sql_query(
-        &writer,
+        writer,
         &format!("SELECT label FROM {table} ORDER BY id"),
         None,
     )
@@ -150,7 +127,7 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         Some("second")
     );
     let inserted = sql_once(
-        &writer,
+        writer,
         &format!(
             "INSERT INTO {table} SELECT n, 'more' FROM generate_series(2, 150) AS n RETURNING id"
         ),
@@ -160,7 +137,7 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
     assert!(
         matches!(inserted, QueryExecution::Page(page) if page.rows.len() == 100 && !page.next && page.notice.contains("149 rows"))
     );
-    let count = sql_query(&writer, &format!("SELECT count(*) FROM {table}"), None)
+    let count = sql_query(writer, &format!("SELECT count(*) FROM {table}"), None)
         .await
         .unwrap();
     assert_eq!(
@@ -169,17 +146,16 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
             .and_then(onetui_core::Value::text),
         Some("150")
     );
-    assert!(sql_once(&writer, "SELECT 1; SELECT 2").await.is_err());
-    assert_eq!(sql_once_pid(&writer).await, pid);
-    let search_path = sql_once_text(&writer, "SHOW search_path").await;
-    sql_once(&writer, "SET search_path TO pg_catalog")
+    assert!(sql_once(writer, "SELECT 1; SELECT 2").await.is_err());
+    assert_eq!(sql_once_pid(writer).await, pid);
+    let search_path = sql_once_text(writer, "SHOW search_path").await;
+    sql_once(writer, "SET search_path TO pg_catalog")
         .await
         .unwrap();
-    assert_eq!(
-        sql_once_text(&writer, "SHOW search_path").await,
-        search_path
-    );
+    assert_eq!(sql_once_text(writer, "SHOW search_path").await, search_path);
+}
 
+async fn cancel_blocked_write(writer: &onetui_postgres::PostgresExecutor, table: &str) {
     let blocker = FixturePg::plain(PG_ADMIN).await;
     blocker.client.batch_execute("BEGIN").await.unwrap();
     blocker
@@ -229,7 +205,34 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         matches!(cancelled.unwrap(), QueryExecution::Write(write) if write.outcome == WriteOutcome::Unknown)
     );
     blocker.client.batch_execute("ROLLBACK").await.unwrap();
+}
 
+#[tokio::test]
+#[ignore = "creates and removes a table in the disposable PostgreSQL fixture"]
+async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
+    let mut writer = onetui_postgres::PostgresProvider
+        .configure(&toml::from_str("url_env='DSN'").unwrap(), &|_| {
+            Some(PG_ADMIN.into())
+        })
+        .unwrap();
+    let table = format!("demo.onetui_write_{}", std::process::id());
+    let _ = sql_once(&writer, &format!("DROP TABLE IF EXISTS {table}")).await;
+    let pid = sql_once_pid(&writer).await;
+    let created = sql_once(
+        &writer,
+        &format!("CREATE TABLE {table} (id integer PRIMARY KEY, label text)"),
+    )
+    .await
+    .unwrap();
+    match created {
+        QueryExecution::Write(write) => {
+            assert_eq!(write.outcome, WriteOutcome::Applied, "{}", write.summary);
+        }
+        QueryExecution::Page(_) => panic!("CREATE TABLE returned rows"),
+    }
+
+    check_write_outcomes(&writer, &table, pid).await;
+    cancel_blocked_write(&writer, &table).await;
     sql_once(&writer, &format!("DROP TABLE {table}"))
         .await
         .unwrap();
@@ -239,17 +242,14 @@ async fn one_shot_sql_writes_once_and_keeps_paged_reads() {
         .unwrap();
 }
 
-#[tokio::test]
-#[ignore = "requires the disposable PostgreSQL fixture; read-only"]
-async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
+async fn check_paged_types_and_bookmarks(reader: &onetui_postgres::PostgresExecutor) {
     use onetui_core::Value;
-    let mut reader = provider();
     let sql = "WITH numbers AS (SELECT generate_series(1, 350) AS n) SELECT n, n AS n, NULL::text AS missing, decode('00ff', 'hex') AS bytes, '{\"ok\":true}'::jsonb AS json, 12345678901234567890.123456789::numeric AS exact FROM numbers ORDER BY n;";
     let mut incoming = None;
     let mut bookmarks = Vec::new();
     let mut count = 0;
     loop {
-        let page = sql_query(&reader, sql, incoming.clone()).await.unwrap();
+        let page = sql_query(reader, sql, incoming.clone()).await.unwrap();
         assert_eq!(page.columns[0].name, page.columns[1].name);
         assert_eq!(page.rows[0].cells[2], None);
         assert_eq!(page.rows[0].cells[3], Some(Value::Bytes(vec![0, 255])));
@@ -267,16 +267,20 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
     assert_eq!(count, 350);
     let old_token = bookmarks[1].0.clone();
     for (token, first) in bookmarks.into_iter().rev() {
-        let page = sql_query(&reader, sql, token).await.unwrap();
+        let page = sql_query(reader, sql, token).await.unwrap();
         assert_eq!(page.rows[0].cells[0], first);
     }
     assert!(
-        sql_query(&reader, "SELECT 2", old_token)
+        sql_query(reader, "SELECT 2", old_token)
             .await
             .unwrap_err()
             .to_string()
             .contains("another query")
     );
+}
+
+async fn check_guards_and_session_isolation(reader: &onetui_postgres::PostgresExecutor) {
+    use onetui_core::Value;
     for text in [
         "SELECT 1; SELECT 2",
         "SET transaction_read_only = off",
@@ -286,10 +290,10 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
         "SELECT repeat('x', 20000) FROM generate_series(1, 100)",
         "SELECT $1::text",
     ] {
-        assert!(sql_query(&reader, text, None).await.is_err(), "{text}");
+        assert!(sql_query(reader, text, None).await.is_err(), "{text}");
     }
-    let pid = executor_pid(&reader).await;
-    let error = sql_query(&reader, "SELECT 1/0", None)
+    let pid = executor_pid(reader).await;
+    let error = sql_query(reader, "SELECT 1/0", None)
         .await
         .unwrap_err()
         .to_string();
@@ -297,9 +301,9 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
         error.contains("22012") && error.contains("division by zero"),
         "{error}"
     );
-    assert_eq!(executor_pid(&reader).await, pid);
+    assert_eq!(executor_pid(reader).await, pid);
     let page = sql_query(
-        &reader,
+        reader,
         "SELECT current_setting('transaction_read_only') AS mode",
         None,
     )
@@ -310,14 +314,14 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
         Some("on")
     );
     sql_query(
-        &reader,
+        reader,
         "SELECT set_config('search_path', 'pg_catalog', false)",
         None,
     )
     .await
     .unwrap();
     let page = sql_query(
-        &reader,
+        reader,
         "SELECT current_setting('search_path') AS path",
         None,
     )
@@ -327,6 +331,9 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
         page.rows[0].cells[0].as_ref().and_then(Value::text),
         Some("pg_catalog")
     );
+}
+
+async fn check_cancel(reader: &onetui_postgres::PostgresExecutor) {
     let (cancel, context) = RequestContext::new(Duration::from_secs(5));
     let slow = reader.query_page(
         onetui_core::provider::QueryRequest {
@@ -347,13 +354,22 @@ async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
     );
     assert!(result.unwrap_err().to_string().contains("cancelled"));
     assert_eq!(
-        sql_query(&reader, "SELECT 1 WHERE false", None)
+        sql_query(reader, "SELECT 1 WHERE false", None)
             .await
             .unwrap()
             .rows
             .len(),
         0
     );
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL fixture; read-only"]
+async fn sql_query_types_bookmarks_guards_errors_and_cancel() {
+    let mut reader = provider();
+    check_paged_types_and_bookmarks(&reader).await;
+    check_guards_and_session_isolation(&reader).await;
+    check_cancel(&reader).await;
     reader
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))
         .await
@@ -483,22 +499,10 @@ async fn browse(
     result
 }
 
-#[tokio::test]
-#[ignore = "requires the disposable PostgreSQL fixture"]
-async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
+async fn check_relations_and_columns(reader: &onetui_postgres::PostgresExecutor) {
     use onetui_core::Resource;
-    let mut reader = provider();
-    let schemas = browse(&reader, Resource::new("postgres.schemas", vec![]), None)
-        .await
-        .unwrap();
-    assert!(
-        schemas
-            .rows
-            .iter()
-            .any(|row| row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("public"))
-    );
     let tables = browse(
-        &reader,
+        reader,
         Resource::new("postgres.relations", vec!["public".into()]),
         None,
     )
@@ -511,7 +515,7 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
         .unwrap();
     assert_eq!(sample.target.as_ref().unwrap().id, "postgres.rows");
     let columns = browse(
-        &reader,
+        reader,
         Resource::new(
             "postgres.columns",
             sample.target.as_ref().unwrap().path.clone(),
@@ -536,7 +540,7 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
         })
         .unwrap();
     let columns = browse(
-        &reader,
+        reader,
         Resource::new(
             "postgres.columns",
             quoted.target.as_ref().unwrap().path.clone(),
@@ -551,8 +555,16 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
             .and_then(onetui_core::Value::text),
         Some("odd\"column")
     );
+    assert!(
+        !columns.rows.is_empty(),
+        "cached metadata stays readable after disconnect"
+    );
+}
+
+async fn check_empty_denied_and_paged(reader: &onetui_postgres::PostgresExecutor) {
+    use onetui_core::Resource;
     let empty = browse(
-        &reader,
+        reader,
         Resource::new("postgres.relations", vec!["empty_schema".into()]),
         None,
     )
@@ -560,7 +572,7 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     .unwrap();
     assert!(empty.rows.is_empty());
     let denied = browse(
-        &reader,
+        reader,
         Resource::new(
             "postgres.columns",
             vec!["public".into(), "restricted_rows".into()],
@@ -571,7 +583,7 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     .unwrap_err();
     assert!(denied.to_string().contains("denied"));
     let first = browse(
-        &reader,
+        reader,
         Resource::new("postgres.relations", vec!["pg_catalog".into()]),
         None,
     )
@@ -580,7 +592,7 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     assert_eq!(first.rows.len(), 100);
     assert!(first.next);
     let second = browse(
-        &reader,
+        reader,
         Resource::new("postgres.relations", vec!["pg_catalog".into()]),
         first.continuation.clone(),
     )
@@ -588,6 +600,24 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
     .unwrap();
     assert!(!second.rows.is_empty());
     assert_ne!(first.rows[0].cells[0], second.rows[0].cells[0]);
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL fixture"]
+async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
+    use onetui_core::Resource;
+    let mut reader = provider();
+    let schemas = browse(&reader, Resource::new("postgres.schemas", vec![]), None)
+        .await
+        .unwrap();
+    assert!(
+        schemas
+            .rows
+            .iter()
+            .any(|row| row.cells[0].as_ref().and_then(onetui_core::Value::text) == Some("public"))
+    );
+    check_relations_and_columns(&reader).await;
+    check_empty_denied_and_paged(&reader).await;
     let pid = executor_pid(&reader).await;
     reader
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))
@@ -595,10 +625,6 @@ async fn metadata_browsing_pages_types_permissions_and_connection_cleanup() {
         .unwrap();
     let observer = FixturePg::plain(PG_ADMIN).await;
     wait_for_backend(&observer.client, pid, "gone").await;
-    assert!(
-        !columns.rows.is_empty(),
-        "cached metadata stays readable after disconnect"
-    );
 }
 async fn row_page(
     reader: &onetui_postgres::PostgresExecutor,

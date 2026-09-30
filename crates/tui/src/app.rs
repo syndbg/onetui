@@ -614,7 +614,7 @@ impl App {
     }
 
     /// Availability while a popup or menu owns input. None when no such mode is open.
-    fn modal_available(&self, action: Action) -> Option<bool> {
+    const fn modal_available(&self, action: Action) -> Option<bool> {
         if self.confirm_quit {
             return Some(matches!(
                 action,

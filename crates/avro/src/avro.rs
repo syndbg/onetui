@@ -151,40 +151,54 @@ fn scan(
                 .ok_or_else(|| anyhow!("Unresolved Avro schema reference"))?;
             scan(resolved, names, name.namespace(), input, budget, depth + 1)?;
         }
-        Schema::Array(_) | Schema::Map(_) => loop {
-            let count = long(input)?;
-            if count == 0 {
-                break;
-            }
-            let block_bytes = if count < 0 {
-                Some(usize::try_from(long(input)?)?)
-            } else {
-                None
+        Schema::Array(_) | Schema::Map(_) => {
+            scan_blocks(schema, names, namespace, input, budget, depth)?;
+        }
+    }
+    Ok(())
+}
+
+fn scan_blocks(
+    schema: &Schema,
+    names: &NamesRef<'_>,
+    namespace: Option<&str>,
+    input: &mut &[u8],
+    budget: &mut Budget,
+    depth: usize,
+) -> Result<()> {
+    loop {
+        let count = long(input)?;
+        if count == 0 {
+            break;
+        }
+        let block_bytes = if count < 0 {
+            Some(usize::try_from(long(input)?)?)
+        } else {
+            None
+        };
+        let count = usize::try_from(
+            count
+                .checked_abs()
+                .ok_or_else(|| anyhow!("Avro count overflow"))?,
+        )?;
+        budget.collection(count)?;
+        let before = input.len();
+        for _ in 0..count {
+            let child = match schema {
+                Schema::Array(array) => &array.items,
+                Schema::Map(map) => {
+                    budget.node(depth + 1)?;
+                    bytes(input)?;
+                    &map.types
+                }
+                _ => unreachable!(),
             };
-            let count = usize::try_from(
-                count
-                    .checked_abs()
-                    .ok_or_else(|| anyhow!("Avro count overflow"))?,
-            )?;
-            budget.collection(count)?;
-            let before = input.len();
-            for _ in 0..count {
-                let child = match schema {
-                    Schema::Array(array) => &array.items,
-                    Schema::Map(map) => {
-                        budget.node(depth + 1)?;
-                        bytes(input)?;
-                        &map.types
-                    }
-                    _ => unreachable!(),
-                };
-                scan(child, names, namespace, input, budget, depth + 1)?;
-            }
-            ensure!(
-                block_bytes.is_none_or(|size| size == before - input.len()),
-                "Invalid Avro block byte size"
-            );
-        },
+            scan(child, names, namespace, input, budget, depth + 1)?;
+        }
+        ensure!(
+            block_bytes.is_none_or(|size| size == before - input.len()),
+            "Invalid Avro block byte size"
+        );
     }
     Ok(())
 }

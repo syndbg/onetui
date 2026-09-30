@@ -145,6 +145,27 @@ pub async fn read(
                 resource.path.clone(),
             )
         };
+    metadata_rows(&mut page, &body, array, key, target, &parent, resource)?;
+    let next = body
+        .get(if array == "Streams" {
+            "LastEvaluatedStreamArn"
+        } else {
+            "LastEvaluatedShardId"
+        })
+        .cloned();
+    Ok((page, next))
+}
+
+fn metadata_rows(
+    page: &mut Page,
+    body: &Json,
+    array: &str,
+    key: &str,
+    target: &'static str,
+    parent: &[String],
+    resource: &Resource,
+) -> Result<()> {
+    let shards = matches!(resource.id, "dynamodb.shards" | "dynamodb.shard_details");
     if let Some(values) = body.get(array) {
         let values = values
             .as_array()
@@ -155,7 +176,7 @@ pub async fn read(
         );
         for value in values {
             let name = bounded_string(&value[key], key, 2048)?;
-            let mut path = parent.clone();
+            let mut path = parent.to_vec();
             path.push(name.clone());
             let mut cells = if shards {
                 vec![
@@ -180,14 +201,7 @@ pub async fn read(
             page.rows.push(Row { cells, target });
         }
     }
-    let next = body
-        .get(if array == "Streams" {
-            "LastEvaluatedStreamArn"
-        } else {
-            "LastEvaluatedShardId"
-        })
-        .cloned();
-    Ok((page, next))
+    Ok(())
 }
 
 async fn iterator(
@@ -255,43 +269,7 @@ async fn records(
     replay: Option<(&str, bool)>,
     limit: i32,
 ) -> Result<(Page, Option<Json>)> {
-    let cursor: Option<Cursor> = position.cloned().map(serde_json::from_value).transpose()?;
-    let cursor = cursor.or_else(|| {
-        replay.map(|(sequence, after)| {
-            if after {
-                Cursor::After {
-                    sequence: sequence.into(),
-                    iterator: None,
-                }
-            } else {
-                Cursor::At {
-                    sequence: sequence.into(),
-                    iterator: None,
-                }
-            }
-        })
-    });
-    let (mut after, mut at, existing) = match cursor {
-        Some(Cursor::Closed) => {
-            bail!("DynamoDB Streams shard is closed; select a child shard from the shard list")
-        }
-        Some(Cursor::After {
-            sequence: s,
-            iterator,
-        }) => {
-            sequence(&json!(s))?;
-            (Some(s), None, iterator)
-        }
-        Some(Cursor::At {
-            sequence: s,
-            iterator,
-        }) => {
-            sequence(&json!(s))?;
-            (None, Some(s), iterator)
-        }
-        Some(Cursor::Unanchored { iterator }) => (None, None, Some(iterator)),
-        None => (None, None, None),
-    };
+    let (mut after, mut at, existing) = start_state(position, replay)?;
     let kind = if after.is_some() {
         ShardIteratorType::AfterSequenceNumber
     } else if at.is_some() {
@@ -332,55 +310,7 @@ async fn records(
         usize::try_from(limit).is_ok_and(|limit| values.len() <= limit),
         "DynamoDB Streams response exceeds requested record limit"
     );
-    let mut page = Page {
-        columns: vec![column("sequence", "decimal string"), column("event", "text"), column("record", "JSON (original typed images)")],
-        notice: "Independent shard reads; no offset commits. Records retain keys, old/new images and native attribute tags".into(),
-        ..Page::default()
-    };
-    if let Some(error) = model_error {
-        let _ = write!(
-            page.notice,
-            " | SDK decode error: {error}; showing original JSON"
-        );
-    }
-    let mut cut = false;
-    for value in values {
-        let next_sequence = sequence(&value["dynamodb"]["SequenceNumber"])?;
-        if let Some(previous) = &after {
-            ensure!(
-                decimal_order(&next_sequence, previous).is_gt(),
-                "DynamoDB Streams returned a non-increasing sequence"
-            );
-        }
-        if let Some(start) = &at {
-            ensure!(
-                !decimal_order(&next_sequence, start).is_lt(),
-                "DynamoDB Streams returned a sequence before the requested start"
-            );
-        }
-        page.rows.push(Row {
-            cells: vec![
-                Some(next_sequence.clone().into()),
-                value
-                    .get("eventName")
-                    .and_then(Json::as_str)
-                    .map(|s| s.to_owned().into()),
-                Some(Value::Json(value.to_string())),
-            ],
-            target: None,
-        });
-        if page.bytes() > PAGE_BYTES {
-            page.rows.pop();
-            ensure!(
-                !page.rows.is_empty(),
-                "DynamoDB Streams record exceeds the 1 MiB display limit"
-            );
-            cut = true;
-            break;
-        }
-        after = Some(next_sequence);
-        at = None;
-    }
+    let (mut page, cut) = rows_page(values, model_error, &mut after, &mut at)?;
     let next = body
         .get("NextShardIterator")
         .filter(|v| !v.is_null())
@@ -410,6 +340,107 @@ async fn records(
         Cursor::Closed
     };
     Ok((page, Some(serde_json::to_value(cursor)?)))
+}
+
+fn start_state(
+    position: Option<&Json>,
+    replay: Option<(&str, bool)>,
+) -> Result<(Option<String>, Option<String>, Option<String>)> {
+    let cursor: Option<Cursor> = position.cloned().map(serde_json::from_value).transpose()?;
+    let cursor = cursor.or_else(|| {
+        replay.map(|(sequence, after)| {
+            if after {
+                Cursor::After {
+                    sequence: sequence.into(),
+                    iterator: None,
+                }
+            } else {
+                Cursor::At {
+                    sequence: sequence.into(),
+                    iterator: None,
+                }
+            }
+        })
+    });
+    Ok(match cursor {
+        Some(Cursor::Closed) => {
+            bail!("DynamoDB Streams shard is closed; select a child shard from the shard list")
+        }
+        Some(Cursor::After {
+            sequence: s,
+            iterator,
+        }) => {
+            sequence(&json!(s))?;
+            (Some(s), None, iterator)
+        }
+        Some(Cursor::At {
+            sequence: s,
+            iterator,
+        }) => {
+            sequence(&json!(s))?;
+            (None, Some(s), iterator)
+        }
+        Some(Cursor::Unanchored { iterator }) => (None, None, Some(iterator)),
+        None => (None, None, None),
+    })
+}
+
+fn rows_page(
+    values: &[Json],
+    model_error: Option<String>,
+    after: &mut Option<String>,
+    at: &mut Option<String>,
+) -> Result<(Page, bool)> {
+    let mut page = Page {
+        columns: vec![column("sequence", "decimal string"), column("event", "text"), column("record", "JSON (original typed images)")],
+        notice: "Independent shard reads; no offset commits. Records retain keys, old/new images and native attribute tags".into(),
+        ..Page::default()
+    };
+    if let Some(error) = model_error {
+        let _ = write!(
+            page.notice,
+            " | SDK decode error: {error}; showing original JSON"
+        );
+    }
+    let mut cut = false;
+    for value in values {
+        let next_sequence = sequence(&value["dynamodb"]["SequenceNumber"])?;
+        if let Some(previous) = after.as_ref() {
+            ensure!(
+                decimal_order(&next_sequence, previous).is_gt(),
+                "DynamoDB Streams returned a non-increasing sequence"
+            );
+        }
+        if let Some(start) = at.as_ref() {
+            ensure!(
+                !decimal_order(&next_sequence, start).is_lt(),
+                "DynamoDB Streams returned a sequence before the requested start"
+            );
+        }
+        page.rows.push(Row {
+            cells: vec![
+                Some(next_sequence.clone().into()),
+                value
+                    .get("eventName")
+                    .and_then(Json::as_str)
+                    .map(|s| s.to_owned().into()),
+                Some(Value::Json(value.to_string())),
+            ],
+            target: None,
+        });
+        if page.bytes() > PAGE_BYTES {
+            page.rows.pop();
+            ensure!(
+                !page.rows.is_empty(),
+                "DynamoDB Streams record exceeds the 1 MiB display limit"
+            );
+            cut = true;
+            break;
+        }
+        *after = Some(next_sequence);
+        *at = None;
+    }
+    Ok((page, cut))
 }
 
 fn decimal_order(left: &str, right: &str) -> std::cmp::Ordering {

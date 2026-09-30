@@ -257,6 +257,147 @@ fn request_error(error: anyhow::Error, errors: &StdMutex<Vec<String>>) -> anyhow
     }
 }
 
+struct NativeWorker {
+    config: ClientConfig,
+    status: watch::Sender<ConnectionStatus>,
+    secrets: Vec<String>,
+    oauth: Option<Arc<StdMutex<crate::oauth::Session>>>,
+    identity: u64,
+    client: Option<BaseConsumer<NativeContext>>,
+    producer: Option<BaseProducer<NativeContext>>,
+    decoders: crate::decoding::Bindings,
+}
+
+impl NativeWorker {
+    fn serve(&mut self, job: Job) {
+        let result = self
+            .handle(&job)
+            .map_err(|error| self.describe(error, &job));
+        let native_error = !job
+            .errors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty();
+        if result.is_ok()
+            || (self.client.is_some() && !native_error && Instant::now() < job.deadline)
+        {
+            self.status.send_replace(ConnectionStatus::Connected);
+        } else {
+            self.status.send_replace(ConnectionStatus::Disconnected);
+        }
+        let _ = job.reply.send(result);
+    }
+
+    fn describe(&self, error: anyhow::Error, job: &Job) -> anyhow::Error {
+        let error = request_error(error, &job.errors);
+        let error = onetui_core::diagnostic(
+            &error,
+            &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        match &self.oauth {
+            Some(session) => session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .diagnostic(&error),
+            None => error,
+        }
+    }
+
+    fn handle(&mut self, job: &Job) -> Result<Response> {
+        job.remaining()?;
+        if matches!(job.operation, Operation::Check) {
+            self.decoders.check(|| job.remaining().map(|_| ()))?;
+        }
+        // Idle sessions do not poll tokens. Reconnect after expiry instead of
+        // reauthenticating an expired socket; logical bookmarks remain valid.
+        if self.oauth.as_ref().is_some_and(|session| {
+            session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .expired()
+        }) {
+            self.client.take();
+            if let Some(producer) = self.producer.take() {
+                crate::produce::flush(&producer, Duration::from_secs(1));
+            }
+            job.remaining()?;
+        }
+        let context = || NativeContext {
+            status: self.status.clone(),
+            errors: StdMutex::new(job.errors.clone()),
+            secrets: self.secrets.clone(),
+            oauth: self.oauth.clone(),
+            deadline: StdMutex::new(job.deadline),
+            reports: crate::produce::Reports::default(),
+        };
+        // Producing needs its own native client; one client cannot both
+        // consume and produce. It stays unconnected until a first PRODUCE.
+        if let Operation::Query(request) = &job.operation
+            && let crate::statement::Statement::Produce { target, records } =
+                crate::statement::parse(&request.text)?
+        {
+            if self.producer.is_none() {
+                self.status.send_replace(ConnectionStatus::Connecting);
+                self.producer = Some(
+                    crate::produce::config(&self.config)
+                        .create_with_context::<_, BaseProducer<_>>(context())?,
+                );
+            }
+            let producer = self.producer.as_ref().unwrap();
+            refresh(producer.context(), job);
+            return crate::produce::send(
+                producer,
+                &producer.context().reports,
+                &target,
+                &records,
+                &|| job.remaining(),
+            )
+            .map(Response::Write);
+        }
+        if self.client.is_none() {
+            self.status.send_replace(ConnectionStatus::Connecting);
+            self.client = Some(
+                self.config
+                    .create_with_context::<_, BaseConsumer<_>>(context())?,
+            );
+        }
+        refresh(self.client.as_ref().unwrap().context(), job);
+        let topic = match &job.operation {
+            Operation::Page(request) | Operation::Follow(request) => request.resource.path.first(),
+            Operation::Query(request) => request.page.resource.path.first(),
+            Operation::Check => None,
+        };
+        let raw_limit = topic.map_or(PAGE_BYTES, |topic| self.decoders.raw_page_limit(topic));
+        let result = run(self.client.as_ref().unwrap(), job, self.identity, raw_limit).and_then(
+            |mut response| {
+                let request = match &job.operation {
+                    Operation::Page(request) | Operation::Follow(request) => Some(request),
+                    Operation::Query(request) => Some(&request.page),
+                    Operation::Check => None,
+                };
+                if let (Some(request), Response::Page(page)) = (request, &mut response)
+                    && matches!(request.resource.id, "kafka.records" | "kafka.query")
+                    && let Some(topic) = request.resource.path.first()
+                {
+                    self.decoders
+                        .project(topic, page, || job.remaining().map(|_| ()))?;
+                }
+                Ok(response)
+            },
+        );
+        job.remaining()?;
+        result
+    }
+
+    fn close(mut self) {
+        drop(self.client.take());
+        // Drain before dropping, so a queued record cannot append after close.
+        if let Some(producer) = self.producer.take() {
+            crate::produce::flush(&producer, Duration::from_secs(5));
+        }
+    }
+}
+
 impl KafkaExecutor {
     async fn execute(&self, operation: Operation, mut context: RequestContext) -> Result<Response> {
         ensure!(!self.closed, "Kafka session is closed");
@@ -275,136 +416,21 @@ impl KafkaExecutor {
                 .name("onetui-kafka".into())
                 .spawn(move || {
                     let held = permit;
-                    let mut client = None;
-                    let mut producer: Option<BaseProducer<NativeContext>> = None;
-                    let mut decoders = crate::decoding::Bindings::new(bindings);
+                    let mut worker = NativeWorker {
+                        config,
+                        status,
+                        secrets,
+                        oauth,
+                        identity,
+                        client: None,
+                        producer: None,
+                        decoders: crate::decoding::Bindings::new(bindings),
+                    };
                     while let Ok(job) = receive.recv() {
-                        let result = (|| {
-                            job.remaining()?;
-                            if matches!(job.operation, Operation::Check) {
-                                decoders.check(|| job.remaining().map(|_| ()))?;
-                            }
-                            // Idle sessions do not poll tokens. Reconnect after expiry instead of
-                            // reauthenticating an expired socket; logical bookmarks remain valid.
-                            if oauth.as_ref().is_some_and(|session| {
-                                session
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .expired()
-                            }) {
-                                client.take();
-                                if let Some(producer) = producer.take() {
-                                    crate::produce::flush(&producer, Duration::from_secs(1));
-                                }
-                                job.remaining()?;
-                            }
-                            let context = || NativeContext {
-                                status: status.clone(),
-                                errors: StdMutex::new(job.errors.clone()),
-                                secrets: secrets.clone(),
-                                oauth: oauth.clone(),
-                                deadline: StdMutex::new(job.deadline),
-                                reports: crate::produce::Reports::default(),
-                            };
-                            // Producing needs its own native client; one client cannot both
-                            // consume and produce. It stays unconnected until a first PRODUCE.
-                            if let Operation::Query(request) = &job.operation
-                                && let crate::statement::Statement::Produce { target, records } =
-                                    crate::statement::parse(&request.text)?
-                            {
-                                if producer.is_none() {
-                                    status.send_replace(ConnectionStatus::Connecting);
-                                    producer = Some(
-                                        crate::produce::config(&config)
-                                            .create_with_context::<_, BaseProducer<_>>(context())?,
-                                    );
-                                }
-                                let producer = producer.as_ref().unwrap();
-                                refresh(producer.context(), &job);
-                                return crate::produce::send(
-                                    producer,
-                                    &producer.context().reports,
-                                    &target,
-                                    &records,
-                                    &|| job.remaining(),
-                                )
-                                .map(Response::Write);
-                            }
-                            if client.is_none() {
-                                status.send_replace(ConnectionStatus::Connecting);
-                                client = Some(
-                                    config.create_with_context::<_, BaseConsumer<_>>(context())?,
-                                );
-                            }
-                            refresh(client.as_ref().unwrap().context(), &job);
-                            let topic = match &job.operation {
-                                Operation::Page(request) | Operation::Follow(request) => {
-                                    request.resource.path.first()
-                                }
-                                Operation::Query(request) => request.page.resource.path.first(),
-                                Operation::Check => None,
-                            };
-                            let raw_limit =
-                                topic.map_or(PAGE_BYTES, |topic| decoders.raw_page_limit(topic));
-                            let result = run(client.as_ref().unwrap(), &job, identity, raw_limit)
-                                .and_then(|mut response| {
-                                    let request = match &job.operation {
-                                        Operation::Page(request) | Operation::Follow(request) => {
-                                            Some(request)
-                                        }
-                                        Operation::Query(request) => Some(&request.page),
-                                        Operation::Check => None,
-                                    };
-                                    if let (Some(request), Response::Page(page)) =
-                                        (request, &mut response)
-                                        && matches!(
-                                            request.resource.id,
-                                            "kafka.records" | "kafka.query"
-                                        )
-                                        && let Some(topic) = request.resource.path.first()
-                                    {
-                                        decoders
-                                            .project(topic, page, || job.remaining().map(|_| ()))?;
-                                    }
-                                    Ok(response)
-                                });
-                            job.remaining()?;
-                            result
-                        })();
-                        let result = result.map_err(|error| {
-                            let error = request_error(error, &job.errors);
-                            let error = onetui_core::diagnostic(
-                                &error,
-                                &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-                            );
-                            match &oauth {
-                                Some(session) => session
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .diagnostic(&error),
-                                None => error,
-                            }
-                        });
-                        let native_error = !job
-                            .errors
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .is_empty();
-                        if result.is_ok()
-                            || (client.is_some() && !native_error && Instant::now() < job.deadline)
-                        {
-                            status.send_replace(ConnectionStatus::Connected);
-                        } else {
-                            status.send_replace(ConnectionStatus::Disconnected);
-                        }
-                        let _ = job.reply.send(result);
+                        worker.serve(job);
                     }
-                    drop(client);
-                    // Drain before dropping, so a queued record cannot append after close.
-                    if let Some(producer) = producer.take() {
-                        crate::produce::flush(&producer, Duration::from_secs(5));
-                    }
-                    drop(decoders);
+                    let status = worker.status.clone();
+                    worker.close();
                     // A completed shutdown must make its owner slot immediately reusable.
                     drop(held);
                     status.send_replace(ConnectionStatus::Closed);
@@ -563,141 +589,75 @@ fn transient(error: &KafkaError) -> bool {
         )
 }
 
-fn run(
+fn topic_page(
     client: &BaseConsumer<NativeContext>,
     job: &Job,
+    request: &PageRequest,
     identity: u64,
+    following: bool,
     raw_limit: usize,
 ) -> Result<Response> {
-    // Every read unassigns before returning. Quiet follow batches and successful metadata
-    // reads still need polling, or queued OAuth refresh callbacks starve until expiry.
-    if client.context().oauth.is_some()
-        && let Some(Err(error)) = client.poll(job.remaining()?.min(Duration::from_millis(10)))
-        && !transient(&error)
-        && !matches!(error, KafkaError::PartitionEOF(_))
-    {
-        return Err(error.into());
+    let topic = &request.resource.path[0];
+    let metadata = native_request(client, job, |wait| client.fetch_metadata(Some(topic), wait))?;
+    let metadata = metadata
+        .topics()
+        .iter()
+        .find(|t| t.name() == topic)
+        .ok_or_else(|| anyhow!("Kafka topic missing from metadata; refresh its parent"))?;
+    ensure!(
+        metadata.error().is_none(),
+        "Kafka topic metadata: {:?}",
+        metadata.error()
+    );
+    ensure!(
+        metadata.partitions().len() <= crate::topic::PARTITIONS,
+        "Kafka topic-wide view supports at most 32 partitions; open an individual partition"
+    );
+    let mut windows = Vec::new();
+    for partition in metadata.partitions() {
+        ensure!(
+            partition.error().is_none(),
+            "Kafka partition metadata: {:?}",
+            partition.error()
+        );
+        let (low, end) = native_request(client, job, |wait| {
+            client.fetch_watermarks(topic, partition.id(), wait)
+        })?;
+        windows.push((partition.id(), low, end));
     }
-    job.remaining()?;
-    let prepared;
-    let request = match &job.operation {
-        Operation::Check => {
-            let metadata = native_request(client, job, |wait| client.fetch_metadata(None, wait))?;
-            return Ok(Response::Check(CheckResult {
-                summary: format!(
-                    "Kafka metadata readable ({} brokers, {} topics)",
-                    metadata.brokers().len(),
-                    metadata.topics().len()
+    crate::topic::page(
+        request,
+        identity,
+        following,
+        raw_limit,
+        windows,
+        |partition, window, limit| {
+            read_window(
+                client,
+                job,
+                &onetui_core::Resource::new(
+                    "kafka.records",
+                    vec![topic.clone(), partition.to_string()],
                 ),
-            }));
-        }
-        Operation::Page(request) | Operation::Follow(request) => request,
-        Operation::Query(request) => {
-            prepared = crate::query::prepare(request, identity)?;
-            &prepared.1
-        }
-    };
-    let following = matches!(job.operation, Operation::Follow(_));
-    let position = crate::browse::validate(request, identity, following)?;
-    if request.resource.id == "kafka.records" && request.resource.path.len() == 1 {
-        let topic = &request.resource.path[0];
-        let metadata =
-            native_request(client, job, |wait| client.fetch_metadata(Some(topic), wait))?;
-        let metadata = metadata
-            .topics()
-            .iter()
-            .find(|t| t.name() == topic)
-            .ok_or_else(|| anyhow!("Kafka topic missing from metadata; refresh its parent"))?;
-        ensure!(
-            metadata.error().is_none(),
-            "Kafka topic metadata: {:?}",
-            metadata.error()
-        );
-        ensure!(
-            metadata.partitions().len() <= crate::topic::PARTITIONS,
-            "Kafka topic-wide view supports at most 32 partitions; open an individual partition"
-        );
-        let mut windows = Vec::new();
-        for partition in metadata.partitions() {
-            ensure!(
-                partition.error().is_none(),
-                "Kafka partition metadata: {:?}",
-                partition.error()
-            );
-            let (low, end) = native_request(client, job, |wait| {
-                client.fetch_watermarks(topic, partition.id(), wait)
-            })?;
-            windows.push((partition.id(), low, end));
-        }
-        return crate::topic::page(
-            request,
-            identity,
-            following,
-            raw_limit,
-            windows,
-            |partition, window, limit| {
-                read_window(
-                    client,
-                    job,
-                    &onetui_core::Resource::new(
-                        "kafka.records",
-                        vec![topic.clone(), partition.to_string()],
-                    ),
-                    window,
-                    limit,
-                    true,
-                    raw_limit,
-                )
-            },
-        )
-        .map(Response::Page);
-    }
-    if matches!(
-        request.resource.id,
-        "kafka.topic_config" | "kafka.broker_config" | "kafka.offsets"
-    ) {
-        return crate::inspect::page(
-            client,
-            &request.resource,
-            position.map_or(0, |p| p.offset),
-            identity,
-            || job.remaining(),
-            |topic, partition| {
-                native_request(client, job, |wait| {
-                    client.fetch_watermarks(topic, partition, wait)
-                })
-            },
-        )
-        .map(Response::Page);
-    }
-    if matches!(request.resource.id, "kafka.groups" | "kafka.members") {
-        let groups = native_request(client, job, |wait| {
-            crate::groups::Groups::fetch(
-                client.client(),
-                request.resource.path.first().map(String::as_str),
-                wait,
+                window,
+                limit,
+                true,
+                raw_limit,
             )
-        })?;
-        return groups
-            .page(
-                &request.resource,
-                position.map_or(0, |p| p.offset),
-                identity,
-            )
-            .map(Response::Page);
-    }
-    if request.resource.id != "kafka.records" {
-        let metadata = native_request(client, job, |wait| {
-            client.fetch_metadata(request.resource.path.first().map(String::as_str), wait)
-        })?;
-        return crate::browse::metadata(
-            &request.resource,
-            &metadata,
-            position.map_or(0, |p| p.offset),
-            identity,
-        )
-        .map(Response::Page);
-    }
+        },
+    )
+    .map(Response::Page)
+}
+
+fn partition_page(
+    client: &BaseConsumer<NativeContext>,
+    job: &Job,
+    request: &PageRequest,
+    identity: u64,
+    position: Option<crate::browse::Position>,
+    following: bool,
+    raw_limit: usize,
+) -> Result<Response> {
     let topic = &request.resource.path[0];
     let partition: i32 = request.resource.path[1].parse()?;
     // Watermark lookup may report UnknownPartition while authentication/metadata is still
@@ -790,6 +750,96 @@ fn run(
         following,
     )?;
     response(page, job)
+}
+
+fn run(
+    client: &BaseConsumer<NativeContext>,
+    job: &Job,
+    identity: u64,
+    raw_limit: usize,
+) -> Result<Response> {
+    // Every read unassigns before returning. Quiet follow batches and successful metadata
+    // reads still need polling, or queued OAuth refresh callbacks starve until expiry.
+    if client.context().oauth.is_some()
+        && let Some(Err(error)) = client.poll(job.remaining()?.min(Duration::from_millis(10)))
+        && !transient(&error)
+        && !matches!(error, KafkaError::PartitionEOF(_))
+    {
+        return Err(error.into());
+    }
+    job.remaining()?;
+    let prepared;
+    let request = match &job.operation {
+        Operation::Check => {
+            let metadata = native_request(client, job, |wait| client.fetch_metadata(None, wait))?;
+            return Ok(Response::Check(CheckResult {
+                summary: format!(
+                    "Kafka metadata readable ({} brokers, {} topics)",
+                    metadata.brokers().len(),
+                    metadata.topics().len()
+                ),
+            }));
+        }
+        Operation::Page(request) | Operation::Follow(request) => request,
+        Operation::Query(request) => {
+            prepared = crate::query::prepare(request, identity)?;
+            &prepared.1
+        }
+    };
+    let following = matches!(job.operation, Operation::Follow(_));
+    let position = crate::browse::validate(request, identity, following)?;
+    if request.resource.id == "kafka.records" && request.resource.path.len() == 1 {
+        return topic_page(client, job, request, identity, following, raw_limit);
+    }
+    if matches!(
+        request.resource.id,
+        "kafka.topic_config" | "kafka.broker_config" | "kafka.offsets"
+    ) {
+        return crate::inspect::page(
+            client,
+            &request.resource,
+            position.map_or(0, |p| p.offset),
+            identity,
+            || job.remaining(),
+            |topic, partition| {
+                native_request(client, job, |wait| {
+                    client.fetch_watermarks(topic, partition, wait)
+                })
+            },
+        )
+        .map(Response::Page);
+    }
+    if matches!(request.resource.id, "kafka.groups" | "kafka.members") {
+        let groups = native_request(client, job, |wait| {
+            crate::groups::Groups::fetch(
+                client.client(),
+                request.resource.path.first().map(String::as_str),
+                wait,
+            )
+        })?;
+        return groups
+            .page(
+                &request.resource,
+                position.map_or(0, |p| p.offset),
+                identity,
+            )
+            .map(Response::Page);
+    }
+    if request.resource.id != "kafka.records" {
+        let metadata = native_request(client, job, |wait| {
+            client.fetch_metadata(request.resource.path.first().map(String::as_str), wait)
+        })?;
+        return crate::browse::metadata(
+            &request.resource,
+            &metadata,
+            position.map_or(0, |p| p.offset),
+            identity,
+        )
+        .map(Response::Page);
+    }
+    partition_page(
+        client, job, request, identity, position, following, raw_limit,
+    )
 }
 
 fn read_window(
@@ -996,35 +1046,8 @@ mod tests {
             .unwrap()
     }
 
-    #[tokio::test]
-    async fn native_metadata_paging_bookmarks_cancel_and_shutdown() {
-        let cluster = MockCluster::new(1).unwrap();
-        cluster.create_topic("records", 2, 1).unwrap();
-        let producer: BaseProducer = ClientConfig::new()
-            .set("bootstrap.servers", cluster.bootstrap_servers())
-            .create()
-            .unwrap();
-        for n in 0..250u32 {
-            producer
-                .send(
-                    BaseRecord::to("records")
-                        .partition(0)
-                        .key(&[255u8, 0][..])
-                        .payload(&n.to_be_bytes()[..]),
-                )
-                .unwrap();
-        }
-        producer.flush(Duration::from_secs(5)).unwrap();
-        let options = toml::from_str(&format!(
-            "bootstrap_servers={:?}\nsecurity_protocol='PLAINTEXT'",
-            vec![cluster.bootstrap_servers()]
-        ))
-        .unwrap();
-        let mut executor = KafkaProvider
-            .configure(&options, &|_| panic!("no credentials"))
-            .unwrap();
-        assert_eq!(*executor.status().borrow(), ConnectionStatus::Configured);
-        let menu = fetch(&executor, Resource::new("kafka.resources", vec![]), None).await;
+    async fn assert_local_menu_and_cancel(executor: &KafkaExecutor) {
+        let menu = fetch(executor, Resource::new("kafka.resources", vec![]), None).await;
         assert_eq!(menu.rows.len(), 3);
         assert_eq!(
             menu.rows[0].target,
@@ -1041,24 +1064,27 @@ mod tests {
             executor.owner.lock().await.is_none(),
             "cancelled request must not start native work"
         );
+    }
+
+    async fn browse_pages(executor: &KafkaExecutor) -> (Resource, Resource) {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         let check = executor.check(context).await.unwrap();
         assert!(check.summary.contains("metadata readable"));
-        let topics = fetch(&executor, Resource::new("kafka.topics", vec![]), None).await;
-        let brokers = fetch(&executor, Resource::new("kafka.brokers", vec![]), None).await;
+        let topics = fetch(executor, Resource::new("kafka.topics", vec![]), None).await;
+        let brokers = fetch(executor, Resource::new("kafka.brokers", vec![]), None).await;
         assert_eq!(brokers.rows.len(), 1);
         assert_eq!(brokers.rows[0].cells[0], Some("1".into()));
         assert_eq!(topics.rows.len(), 1);
-        let topic_menu = fetch(&executor, topics.rows[0].target.clone().unwrap(), None).await;
+        let topic_menu = fetch(executor, topics.rows[0].target.clone().unwrap(), None).await;
         assert_eq!(topic_menu.rows.len(), 3);
         assert_eq!(
             topic_menu.rows[1].target.as_ref().unwrap().id,
             "kafka.topic_config"
         );
-        let partitions = fetch(&executor, topic_menu.rows[0].target.clone().unwrap(), None).await;
+        let partitions = fetch(executor, topic_menu.rows[0].target.clone().unwrap(), None).await;
         assert_eq!(partitions.rows.len(), 2);
         let resource = partitions.rows[0].target.clone().unwrap();
-        let first = fetch(&executor, resource.clone(), None).await;
+        let first = fetch(executor, resource.clone(), None).await;
         assert_eq!(first.rows.len(), 100);
         assert_eq!(first.rows[0].cells[0], Some("0".into()));
         assert_eq!(first.rows[0].cells[2], Some(Value::Bytes(vec![255, 0])));
@@ -1066,15 +1092,20 @@ mod tests {
             first.rows[0].cells[3],
             Some(Value::Bytes(0u32.to_be_bytes().to_vec()))
         );
-        let second = fetch(&executor, resource.clone(), first.continuation.clone()).await;
+        let second = fetch(executor, resource.clone(), first.continuation.clone()).await;
         assert_eq!(second.rows[0].cells[0], Some("100".into()));
-        let last = fetch(&executor, resource.clone(), second.continuation).await;
+        let last = fetch(executor, resource.clone(), second.continuation).await;
         assert_eq!(last.rows.len(), 50);
         assert!(!last.next);
-        let previous = fetch(&executor, resource.clone(), first.continuation).await;
+        let previous = fetch(executor, resource.clone(), first.continuation).await;
         assert_eq!(previous.rows[0].cells[0], Some("100".into()));
-        let beginning = fetch(&executor, resource.clone(), None).await;
+        let beginning = fetch(executor, resource.clone(), None).await;
         assert_eq!(beginning.rows[0].cells[0], Some("0".into()));
+        let written = partitions.rows[1].target.clone().unwrap();
+        (resource, written)
+    }
+
+    async fn replay_offsets(executor: &KafkaExecutor, resource: &Resource) {
         let replay_text = format!(
             "CONSUME {}/{} offsets 125..240",
             resource.path[0], resource.path[1]
@@ -1100,10 +1131,12 @@ mod tests {
             continuation = page.continuation;
         }
         assert!(continuation.is_none());
+    }
 
+    async fn produce_and_read_back(executor: &KafkaExecutor, target: &Resource) {
         // Publishing goes through the same editor operation and reports one write result.
         let published = produce(
-            &executor,
+            executor,
             concat!(
                 "PRODUCE records/1\n\n",
                 "{\"key\":\"a\",\"value\":\"first\",\"headers\":{\"src\":\"tui\"}}\n",
@@ -1129,7 +1162,7 @@ mod tests {
         // A per-record partition overrides the verb line's; partition 0 stays untouched
         // so the follow assertions below still start from the seeded 250 records.
         let routed = produce(
-            &executor,
+            executor,
             "PRODUCE records/0\n\n{\"value\":\"third\",\"partition\":1}",
         )
         .await
@@ -1137,7 +1170,7 @@ mod tests {
         assert_eq!(routed.outcome, WriteOutcome::Applied);
         assert!(routed.summary.contains("1:2"), "{}", routed.summary);
         // Read the published records back to prove they were actually appended.
-        let written = fetch(&executor, partitions.rows[1].target.clone().unwrap(), None).await;
+        let written = fetch(executor, target.clone(), None).await;
         assert_eq!(written.rows.len(), 3);
         assert_eq!(written.rows[0].cells[2], Some(Value::Bytes(b"a".to_vec())));
         assert_eq!(
@@ -1150,7 +1183,7 @@ mod tests {
         );
         // Encoded payloads reach the broker as bytes, and a null value is a tombstone.
         let encoded = produce(
-            &executor,
+            executor,
             concat!(
                 "PRODUCE records/1\n\n",
                 "{\"key\":\"6b\",\"key_encoding\":\"hex\",\"value\":\"//4=\",\"value_encoding\":\"base64\"}\n",
@@ -1160,7 +1193,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(encoded.outcome, WriteOutcome::Applied);
-        let written = fetch(&executor, partitions.rows[1].target.clone().unwrap(), None).await;
+        let written = fetch(executor, target.clone(), None).await;
         let encoded_row = written.rows.iter().rev().nth(1).unwrap();
         assert_eq!(encoded_row.cells[2], Some(Value::Bytes(b"k".to_vec())));
         assert_eq!(encoded_row.cells[3], Some(Value::Bytes(vec![255, 254])));
@@ -1169,12 +1202,18 @@ mod tests {
         assert_eq!(tombstone.cells[3], None, "a tombstone stores a null value");
 
         // A rejected statement keeps the session usable (ADR-0013).
-        assert!(produce(&executor, "PRODUCE records/1\n\n{}").await.is_err());
+        assert!(produce(executor, "PRODUCE records/1\n\n{}").await.is_err());
         assert_eq!(*executor.status().borrow(), ConnectionStatus::Connected);
+    }
 
-        let tail = follow(&executor, resource.clone(), None).await;
+    async fn follow_appended_records(
+        executor: &KafkaExecutor,
+        producer: &BaseProducer,
+        resource: &Resource,
+    ) {
+        let tail = follow(executor, resource.clone(), None).await;
         assert!(tail.rows.is_empty() && tail.continuation.is_some());
-        let quiet = follow(&executor, resource.clone(), tail.continuation.clone()).await;
+        let quiet = follow(executor, resource.clone(), tail.continuation.clone()).await;
         assert!(quiet.rows.is_empty());
         assert_eq!(tail.continuation, quiet.continuation);
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
@@ -1204,7 +1243,7 @@ mod tests {
         let mut token = tail.continuation.clone();
         let mut seen = Vec::new();
         for count in [100, 100, 50] {
-            let batch = follow(&executor, resource.clone(), token).await;
+            let batch = follow(executor, resource.clone(), token).await;
             assert_eq!(batch.rows.len(), count);
             seen.extend(batch.rows.iter().map(|row| {
                 row.cells[0]
@@ -1218,9 +1257,9 @@ mod tests {
             token = batch.continuation;
         }
         assert_eq!(seen, (250..500).collect::<Vec<_>>());
-        let replay = follow(&executor, resource.clone(), tail.continuation).await;
+        let replay = follow(executor, resource.clone(), tail.continuation).await;
         assert_eq!(replay.rows[0].cells[0], Some("250".into()));
-        let quiet = follow(&executor, resource.clone(), token).await;
+        let quiet = follow(executor, resource.clone(), token).await;
         assert!(quiet.rows.is_empty());
         // A separate observer checks the private group without committing or subscribing itself.
         let observer: BaseConsumer = executor.config.create().unwrap();
@@ -1234,6 +1273,13 @@ mod tests {
             Offset::Invalid
         );
         drop(observer);
+    }
+
+    async fn survive_broker_outage(
+        mut executor: KafkaExecutor,
+        cluster: &MockCluster<'_, rdkafka::producer::DefaultProducerContext>,
+        options: &toml::Table,
+    ) {
         cluster.broker_down(1).unwrap();
         for _ in 0..5 {
             let started = Instant::now();
@@ -1255,7 +1301,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(NATIVE_OWNER.available_permits(), 1);
-            executor = KafkaProvider.configure(&options, &|_| None).unwrap();
+            executor = KafkaProvider.configure(options, &|_| None).unwrap();
         }
         cluster.broker_up(1).unwrap();
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
@@ -1271,5 +1317,41 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_metadata_paging_bookmarks_cancel_and_shutdown() {
+        let cluster = MockCluster::new(1).unwrap();
+        cluster.create_topic("records", 2, 1).unwrap();
+        let producer: BaseProducer = ClientConfig::new()
+            .set("bootstrap.servers", cluster.bootstrap_servers())
+            .create()
+            .unwrap();
+        for n in 0..250u32 {
+            producer
+                .send(
+                    BaseRecord::to("records")
+                        .partition(0)
+                        .key(&[255u8, 0][..])
+                        .payload(&n.to_be_bytes()[..]),
+                )
+                .unwrap();
+        }
+        producer.flush(Duration::from_secs(5)).unwrap();
+        let options = toml::from_str(&format!(
+            "bootstrap_servers={:?}\nsecurity_protocol='PLAINTEXT'",
+            vec![cluster.bootstrap_servers()]
+        ))
+        .unwrap();
+        let executor = KafkaProvider
+            .configure(&options, &|_| panic!("no credentials"))
+            .unwrap();
+        assert_eq!(*executor.status().borrow(), ConnectionStatus::Configured);
+        assert_local_menu_and_cancel(&executor).await;
+        let (resource, written) = browse_pages(&executor).await;
+        replay_offsets(&executor, &resource).await;
+        produce_and_read_back(&executor, &written).await;
+        follow_appended_records(&executor, &producer, &resource).await;
+        survive_broker_outage(executor, &cluster, &options).await;
     }
 }

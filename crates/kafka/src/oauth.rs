@@ -132,6 +132,46 @@ impl Session {
     }
 
     pub fn token(&mut self, deadline: Instant) -> Result<OAuthToken> {
+        let json = self.fetch_json(deadline)?;
+        let token = json
+            .get("access_token")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("OAuth response has no access_token"))?;
+        ensure!(
+            json.get("token_type")
+                .and_then(|v| v.as_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case("bearer")),
+            "OAuth token_type must be Bearer"
+        );
+        let (principal, claims) = decode_jwt(token)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+        let mut expires = claims
+            .get("exp")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|s| s.checked_mul(1000))
+            .ok_or_else(|| anyhow!("Invalid OAuth JWT exp"))?;
+        if let Some(ttl) = json.get("expires_in") {
+            let ttl = ttl
+                .as_u64()
+                .and_then(|s| s.checked_mul(1000))
+                .ok_or_else(|| anyhow!("Invalid OAuth expires_in"))?;
+            expires = expires.min(
+                u64::try_from(now)?
+                    .checked_add(ttl)
+                    .ok_or_else(|| anyhow!("OAuth expiry overflow"))?,
+            );
+        }
+        ensure!(u128::from(expires) > now, "OAuth access token is expired");
+        let lifetime_ms = expires.try_into()?;
+        self.expires_at = Some(lifetime_ms);
+        Ok(OAuthToken {
+            token: token.into(),
+            principal_name: principal,
+            lifetime_ms,
+        })
+    }
+
+    fn fetch_json(&mut self, deadline: Instant) -> Result<serde_json::Value> {
         ensure!(Instant::now() < deadline, "OAuth request timed out");
         if self.agent.is_none() {
             self.agent = Some(crate::registry::http_agent(self.config.ca_file.as_deref())?);
@@ -188,76 +228,7 @@ impl Session {
         );
         let json = json.map_err(|_| anyhow!("Invalid OAuth JSON response (HTTP {status})"))?;
         ensure!(Instant::now() < deadline, "OAuth request timed out");
-        let token = json
-            .get("access_token")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("OAuth response has no access_token"))?;
-        ensure!(
-            json.get("token_type")
-                .and_then(|v| v.as_str())
-                .is_some_and(|v| v.eq_ignore_ascii_case("bearer")),
-            "OAuth token_type must be Bearer"
-        );
-        let mut parts = token.split('.');
-        let (Some(header), Some(claims), Some(signature), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            return Err(anyhow!("OAuth requires a signed JWT access token"));
-        };
-        ensure!(
-            !signature.is_empty() && URL_SAFE_NO_PAD.decode(signature).is_ok(),
-            "Invalid OAuth JWT signature encoding"
-        );
-        let decode = |part| -> Result<serde_json::Value> {
-            let bytes = URL_SAFE_NO_PAD
-                .decode(part)
-                .map_err(|_| anyhow!("Invalid OAuth JWT encoding"))?;
-            serde_json::from_slice(&bytes).map_err(|_| anyhow!("Invalid OAuth JWT JSON"))
-        };
-        let header = decode(header)?;
-        ensure!(
-            header
-                .get("alg")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none")),
-            "Unsigned OAuth JWT is not supported"
-        );
-        let claims = decode(claims)?;
-        let principal = claims
-            .get("sub")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("OAuth JWT has no sub"))?;
-        ensure!(
-            !principal.is_empty()
-                && principal.len() <= 1024
-                && !principal.chars().any(char::is_control),
-            "Invalid OAuth JWT sub"
-        );
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-        let mut expires = claims
-            .get("exp")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|s| s.checked_mul(1000))
-            .ok_or_else(|| anyhow!("Invalid OAuth JWT exp"))?;
-        if let Some(ttl) = json.get("expires_in") {
-            let ttl = ttl
-                .as_u64()
-                .and_then(|s| s.checked_mul(1000))
-                .ok_or_else(|| anyhow!("Invalid OAuth expires_in"))?;
-            expires = expires.min(
-                u64::try_from(now)?
-                    .checked_add(ttl)
-                    .ok_or_else(|| anyhow!("OAuth expiry overflow"))?,
-            );
-        }
-        ensure!(u128::from(expires) > now, "OAuth access token is expired");
-        let lifetime_ms = expires.try_into()?;
-        self.expires_at = Some(lifetime_ms);
-        Ok(OAuthToken {
-            token: token.into(),
-            principal_name: principal.into(),
-            lifetime_ms,
-        })
+        Ok(json)
     }
 
     pub fn diagnostic(&self, error: &anyhow::Error) -> anyhow::Error {
@@ -277,6 +248,45 @@ impl Session {
             &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
         )
     }
+}
+
+fn decode_jwt(token: &str) -> Result<(String, serde_json::Value)> {
+    let mut parts = token.split('.');
+    let (Some(header), Some(claims), Some(signature), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(anyhow!("OAuth requires a signed JWT access token"));
+    };
+    ensure!(
+        !signature.is_empty() && URL_SAFE_NO_PAD.decode(signature).is_ok(),
+        "Invalid OAuth JWT signature encoding"
+    );
+    let decode = |part| -> Result<serde_json::Value> {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(part)
+            .map_err(|_| anyhow!("Invalid OAuth JWT encoding"))?;
+        serde_json::from_slice(&bytes).map_err(|_| anyhow!("Invalid OAuth JWT JSON"))
+    };
+    let header = decode(header)?;
+    ensure!(
+        header
+            .get("alg")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none")),
+        "Unsigned OAuth JWT is not supported"
+    );
+    let claims = decode(claims)?;
+    let principal = claims
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("OAuth JWT has no sub"))?;
+    ensure!(
+        !principal.is_empty()
+            && principal.len() <= 1024
+            && !principal.chars().any(char::is_control),
+        "Invalid OAuth JWT sub"
+    );
+    Ok((principal.into(), claims))
 }
 
 #[cfg(test)]

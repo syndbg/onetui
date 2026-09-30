@@ -2042,12 +2042,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn focused_row_value_expands_and_scrolls_without_changing_records() {
+    fn row_value_app() -> (App, onetui_core::Value) {
         use super::*;
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        use onetui_core::{Column, Page, Resource, Row as DataRow, Value, catalog::Action};
-        use ratatui::backend::TestBackend;
+
+        use onetui_core::{Column, Page, Resource, Row as DataRow, Value};
+
         let config = onetui_core::config::Config::parse(
             "[connections.sample]\nkind='fake'",
             crate::test_provider::CATALOG,
@@ -2084,25 +2083,35 @@ mod tests {
                 ..Page::default()
             }),
         );
-        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        let render = |app: &mut App, terminal: &mut Terminal<TestBackend>| {
-            terminal
-                .draw(|frame| {
-                    app.viewport = frame.area();
-                    draw(frame, app);
-                })
-                .unwrap();
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(ratatui::buffer::Cell::symbol)
-                .collect::<String>()
-        };
-        assert!(!render(&mut app, &mut terminal).contains("entry_099"));
+        (app, value)
+    }
+
+    fn render_screen(app: &mut App, terminal: &mut Terminal<TestBackend>) -> String {
+        terminal
+            .draw(|frame| {
+                app.viewport = frame.area();
+                draw(frame, app);
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>()
+    }
+
+    fn scroll_row_value(
+        app: &mut App,
+        terminal: &mut Terminal<TestBackend>,
+        value: onetui_core::Value,
+    ) {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use onetui_core::catalog::Action;
+        assert!(!render_screen(app, terminal).contains("entry_099"));
         app.act(Action::Open);
-        let shown = render(&mut app, &mut terminal);
+        let shown = render_screen(app, terminal);
         assert!(
             shown.contains("Row data") && shown.contains("entry_004"),
             "{shown}"
@@ -2117,7 +2126,7 @@ mod tests {
         for _ in 0..100 {
             app.act(Action::PageDown);
         }
-        assert!(render(&mut app, &mut terminal).contains("entry_099"));
+        assert!(render_screen(app, terminal).contains("entry_099"));
         assert_eq!(app.row_value.as_ref().unwrap().text.as_ptr(), cached);
         assert_eq!(app.view.column, 0);
         assert_eq!(app.view.selected, 0);
@@ -2127,6 +2136,11 @@ mod tests {
             app.row_scroll > 0,
             "field boundary must not reset value scrolling"
         );
+    }
+
+    fn toggle_pretty_print(app: &mut App) {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
         for (command, pretty) in [
             ("display pretty-print off", false),
             ("display pretty-print on", true),
@@ -2138,6 +2152,10 @@ mod tests {
             assert_eq!(app.row_value.as_ref().unwrap().text.contains('\n'), pretty);
             assert_eq!(app.row_scroll, 0);
         }
+    }
+
+    fn walk_fields(app: &mut App, terminal: &mut Terminal<TestBackend>) {
+        use onetui_core::catalog::Action;
         app.act(Action::Open);
         assert!(app.detail);
         app.act(Action::Back);
@@ -2145,20 +2163,32 @@ mod tests {
         for _ in 0..100 {
             app.act(Action::PageUp);
         }
-        assert!(render(&mut app, &mut terminal).contains("entry_000"));
+        assert!(render_screen(app, terminal).contains("entry_000"));
         app.act(Action::Down);
         assert_eq!(app.view.column, 1);
         assert_eq!(app.row_scroll, 0);
-        assert!(render(&mut app, &mut terminal).contains("other field"));
+        assert!(render_screen(app, terminal).contains("other field"));
         app.act(Action::Up);
         app.act(Action::PageDown);
         for width in [1, 20, 60, 160] {
             let mut resized = Terminal::new(TestBackend::new(width, 24)).unwrap();
-            render(&mut app, &mut resized);
+            render_screen(app, &mut resized);
             app.act(Action::PageUp);
         }
         app.act(Action::Back);
         assert!(!app.row_detail && app.row_value.is_none());
+        assert!(app.request.is_none());
+    }
+
+    #[test]
+    fn focused_row_value_expands_and_scrolls_without_changing_records() {
+        use ratatui::backend::TestBackend;
+        let (mut app, value) = row_value_app();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        assert!(!render_screen(&mut app, &mut terminal).contains("entry_099"));
+        scroll_row_value(&mut app, &mut terminal, value);
+        toggle_pretty_print(&mut app);
+        walk_fields(&mut app, &mut terminal);
         assert!(app.request.is_none());
     }
 
@@ -2420,26 +2450,8 @@ mod tests {
         assert!(rendered(&terminal).contains("select 1"));
     }
 
-    #[test]
-    fn query_draft_and_results_remain_visible_through_execution_and_errors() {
-        let contents = |terminal: &Terminal<TestBackend>| {
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(ratatui::buffer::Cell::symbol)
-                .collect::<String>()
-        };
-        let mut app = App::new(
-            onetui_core::config::Config::parse(
-                "ask_for_query_confirm = false\n[connections.sample]\nkind='fake'",
-                crate::test_provider::CATALOG,
-            )
-            .unwrap(),
-            Some("sample"),
-        );
-        let page = || Page {
+    fn query_rows() -> Page {
+        Page {
             columns: vec![onetui_core::Column {
                 name: "result_value".into(),
                 datatype: "text".into(),
@@ -2452,18 +2464,42 @@ mod tests {
                 })
                 .collect(),
             ..Page::default()
-        };
+        }
+    }
+
+    fn query_app() -> App {
+        let mut app = App::new(
+            onetui_core::config::Config::parse(
+                "ask_for_query_confirm = false\n[connections.sample]\nkind='fake'",
+                crate::test_provider::CATALOG,
+            )
+            .unwrap(),
+            Some("sample"),
+        );
         let request = app.request.take().unwrap();
-        app.complete(&request, Ok(page()));
+        app.complete(&request, Ok(query_rows()));
         app.act(Action::Query);
         app.query_editor = Some(crate::query::Editor::new("SELECT result_value".into()));
-        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = contents(&terminal);
+        app
+    }
+
+    fn plain_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>()
+    }
+
+    fn check_editor_and_execution(app: &mut App, terminal: &mut Terminal<TestBackend>) {
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let text = plain_text(terminal);
         assert!(text.contains("SELECT result_value") && text.contains("retained_one"));
         assert!(text.contains("Enter/F5") && text.contains("Shift-Enter"));
         let [editor_area, rows_area] =
-            query_panels(panels(terminal.backend().buffer().area, &app)[2], &app);
+            query_panels(panels(terminal.backend().buffer().area, app)[2], app);
         assert!(editor_area.height < rows_area.height);
         assert_eq!(editor_area.bottom(), rows_area.y);
         app.key(crossterm::event::KeyEvent::new(
@@ -2472,24 +2508,27 @@ mod tests {
         ));
         let request = app.request.take().expect("Ctrl-r executes the query");
         assert_eq!(request.query.as_deref(), Some("SELECT result_value"));
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = contents(&terminal);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let text = plain_text(terminal);
         assert!(text.contains("Loading") && text.contains("retained_one"));
         app.complete(&request, Err(anyhow!("native query error")));
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = contents(&terminal);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let text = plain_text(terminal);
         assert!(text.contains("native query error") && text.contains("retained_one"));
         app.key(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::F(5),
             crossterm::event::KeyModifiers::NONE,
         ));
         let request = app.request.take().unwrap();
-        app.complete(&request, Ok(page()));
+        app.complete(&request, Ok(query_rows()));
         assert!(app.query_editor.is_none());
+    }
+
+    fn check_resized_results(app: &App) {
         for (width, height) in [(120, 30), (40, 12)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            terminal.draw(|frame| draw(frame, &app)).unwrap();
-            let text = contents(&terminal);
+            terminal.draw(|frame| draw(frame, app)).unwrap();
+            let text = plain_text(&terminal);
             assert!(text.contains("SELECT result_value") && text.contains("retained_two"));
             assert!(
                 !terminal
@@ -2500,21 +2539,24 @@ mod tests {
                     .any(|c| c.modifier.contains(Modifier::REVERSED))
             );
         }
+    }
+
+    fn check_single_row_and_paging(app: &mut App, terminal: &mut Terminal<TestBackend>) {
         app.act(Action::Query);
         app.key(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::F(5),
             crossterm::event::KeyModifiers::NONE,
         ));
         let request = app.request.take().unwrap();
-        let mut single = page();
+        let mut single = query_rows();
         single.rows.truncate(1);
         app.complete(&request, Ok(single));
         assert!(
             !app.detail,
             "one-cell queries still show the query and result table"
         );
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = contents(&terminal);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let text = plain_text(terminal);
         assert!(text.contains("SELECT result_value") && text.contains("retained_one"));
         app.act(Action::Query);
         app.key(crossterm::event::KeyEvent::new(
@@ -2522,15 +2564,24 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         ));
         let request = app.request.take().unwrap();
-        let mut many = page();
+        let mut many = query_rows();
         many.rows.resize(100, many.rows[0].clone());
         app.complete(&request, Ok(many));
         app.viewport = Rect::new(0, 0, 120, 30);
-        let rows_area = query_panels(panels(app.viewport, &app)[2], &app)[1];
+        let rows_area = query_panels(panels(app.viewport, app)[2], app)[1];
         let step = usize::from(rows_area.height - 3);
-        assert_eq!(page_step(&app, true, false), step);
+        assert_eq!(page_step(app, true, false), step);
         app.act(Action::PageDown);
         assert_eq!(app.view.selected, step);
+    }
+
+    #[test]
+    fn query_draft_and_results_remain_visible_through_execution_and_errors() {
+        let mut app = query_app();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        check_editor_and_execution(&mut app, &mut terminal);
+        check_resized_results(&app);
+        check_single_row_and_paging(&mut app, &mut terminal);
     }
 
     #[test]
@@ -2861,8 +2912,7 @@ mod tests {
         assert_eq!(key.fg, color(app.config.theme.palette().muted));
     }
 
-    fn assert_context_layout(theme: onetui_theme::Theme) {
-        let p = theme.palette();
+    fn layout_app(theme: onetui_theme::Theme) -> App {
         let mut app = App::new(
             onetui_core::config::Config::parse(
                 "[connections.sample]\nkind='fake'\nurl_env='DO_NOT_RENDER'",
@@ -2894,23 +2944,31 @@ mod tests {
             }),
         );
         app.connection_status = Some(onetui_core::provider::ConnectionStatus::Connected);
-        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
-        let contents = |terminal: &Terminal<TestBackend>| {
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .chunks(120)
-                .map(|row| {
-                    row.iter()
-                        .map(ratatui::buffer::Cell::symbol)
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
+        app
+    }
+
+    fn screen(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .chunks(120)
+            .map(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn check_ready_screen(
+        app: &mut App,
+        terminal: &mut Terminal<TestBackend>,
+        p: &onetui_theme::Palette,
+    ) {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = contents(&terminal);
+        let text = screen(&terminal);
         assert!(text.lines().next().unwrap().contains("Context"));
         assert!(!text.contains("read-only"));
         assert!(!text.contains("OneTUI"));
@@ -2953,11 +3011,17 @@ mod tests {
                 .iter()
                 .any(|cell| cell.symbol() == "R" && cell.fg == color(p.success))
         );
+    }
 
+    fn check_loading_screen(
+        app: &mut App,
+        terminal: &mut Terminal<TestBackend>,
+        p: &onetui_theme::Palette,
+    ) {
         app.act(Action::Sort);
         app.loading = true;
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = contents(&terminal);
+        let text = screen(&terminal);
         assert!(text.contains("id ↑"));
         assert!(text.contains("Loading"));
         assert!(text.contains("m      columns"));
@@ -2977,12 +3041,18 @@ mod tests {
                 .iter()
                 .any(|cell| cell.symbol() == "L" && cell.fg == color(p.warning))
         );
+    }
 
+    fn check_mode_screens(
+        app: &mut App,
+        terminal: &mut Terminal<TestBackend>,
+        p: &onetui_theme::Palette,
+    ) {
         app.loading = false;
         app.error = Some("Request cancelled".into());
         app.act(Action::Filter);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = contents(&terminal);
+        let text = screen(&terminal);
         assert!(text.contains("Request cancelled"));
         assert!(text.contains("Filter displayed page"));
         assert!(!text.contains("s      sort"));
@@ -2998,14 +3068,14 @@ mod tests {
         app.filter_input = None;
         app.command = Some("connections".into());
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(contents(&terminal).contains(":connections"));
+        assert!(screen(&terminal).contains(":connections"));
         assert_eq!(terminal.backend().buffer()[(1, 9)].fg, color(p.key_hint));
         assert_eq!(terminal.backend().buffer()[(1, 9)].bg, color(p.surface));
 
         app.command = None;
         app.help = true;
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(contents(&terminal).contains("DESCRIPTION"));
+        assert!(screen(&terminal).contains("DESCRIPTION"));
         assert_eq!(
             terminal.backend().buffer()[(1, 9)].fg,
             color(p.table_heading)
@@ -3016,9 +3086,18 @@ mod tests {
         app.detail = true;
         app.detail_text = "Themed detail".into();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(contents(&terminal).contains("Themed detail"));
+        assert!(screen(&terminal).contains("Themed detail"));
         assert_eq!(terminal.backend().buffer()[(1, 9)].fg, color(p.text));
         assert_eq!(terminal.backend().buffer()[(1, 9)].bg, color(p.background));
+    }
+
+    fn assert_context_layout(theme: onetui_theme::Theme) {
+        let p = theme.palette();
+        let mut app = layout_app(theme);
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        check_ready_screen(&mut app, &mut terminal, p);
+        check_loading_screen(&mut app, &mut terminal, p);
+        check_mode_screens(&mut app, &mut terminal, p);
     }
 
     #[test]
@@ -3298,114 +3377,90 @@ mod tests {
         }
     }
 
-    #[test]
     #[cfg(unix)]
-    fn real_pty_restores_after_quit_connection_error_and_panic() {
-        use nix::fcntl::{FcntlArg, OFlag, fcntl};
-        use nix::pty::{Winsize, openpty};
-        use nix::sys::termios::{LocalFlags, tcgetattr};
-        use std::io::Read;
-        use std::os::unix::process::CommandExt;
-        use std::process::{Command, Stdio};
+    struct KillOnDrop(std::process::Child);
 
-        struct KillOnDrop(std::process::Child);
-        impl Drop for KillOnDrop {
-            fn drop(&mut self) {
-                if self.0.try_wait().ok().flatten().is_none() {
-                    let _ = self.0.kill();
-                    let _ = self.0.wait();
-                }
+    #[cfg(unix)]
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
             }
         }
+    }
 
-        for mode in ["normal", "connection_error", "panic"] {
-            let pair = openpty(
-                &Winsize {
-                    ws_row: 30,
-                    ws_col: 100,
-                    ws_xpixel: 0,
-                    ws_ypixel: 0,
-                },
-                None,
-            )
-            .unwrap();
-            let slave = std::fs::File::from(pair.slave);
-            let before = tcgetattr(&slave).unwrap();
-            let mut master = std::fs::File::from(pair.master);
-            let flags = OFlag::from_bits_truncate(fcntl(&master, FcntlArg::F_GETFL).unwrap());
-            fcntl(&master, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)).unwrap();
-            let mut command = Command::new(std::env::current_exe().unwrap());
-            command
-                .args(["--exact", "ui::tests::terminal_child", "--nocapture"])
-                .env("ONETUI_PTY_TEST_MODE", mode)
-                .env("ONETUI_PTY_DSN", "invalid-fake-secret")
-                .stdin(Stdio::from(slave.try_clone().unwrap()))
-                .stdout(Stdio::from(slave.try_clone().unwrap()))
-                .stderr(Stdio::from(slave.try_clone().unwrap()));
-            // Crossterm opens /dev/tty: the child must own the PTY, never the developer's terminal.
-            unsafe {
-                command.pre_exec(|| {
-                    if nix::libc::setsid() == -1
-                        || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
-                    {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
-            let mut child = KillOnDrop(command.spawn().unwrap());
-            let start = std::time::Instant::now();
-            let mut output = Vec::new();
-            let mut sent_quit = false;
-            let mut sent_confirmation = false;
-            let mut restored_modes = None;
-            let status = loop {
-                let mut buffer = [0; 16384];
-                while let Ok(count) = master.read(&mut buffer) {
-                    if count == 0 {
-                        break;
-                    }
-                    output.extend_from_slice(&buffer[..count]);
+    #[cfg(unix)]
+    fn spawn_pty_child(
+        mode: &str,
+    ) -> (
+        KillOnDrop,
+        std::fs::File,
+        std::fs::File,
+        nix::sys::termios::Termios,
+    ) {
+        use nix::fcntl::{FcntlArg, OFlag, fcntl};
+        use nix::pty::{Winsize, openpty};
+        use nix::sys::termios::tcgetattr;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let pair = openpty(
+            &Winsize {
+                ws_row: 30,
+                ws_col: 100,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            },
+            None,
+        )
+        .unwrap();
+        let slave = std::fs::File::from(pair.slave);
+        let before = tcgetattr(&slave).unwrap();
+        let master = std::fs::File::from(pair.master);
+        let flags = OFlag::from_bits_truncate(fcntl(&master, FcntlArg::F_GETFL).unwrap());
+        fcntl(&master, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)).unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "ui::tests::terminal_child", "--nocapture"])
+            .env("ONETUI_PTY_TEST_MODE", mode)
+            .env("ONETUI_PTY_DSN", "invalid-fake-secret")
+            .stdin(Stdio::from(slave.try_clone().unwrap()))
+            .stdout(Stdio::from(slave.try_clone().unwrap()))
+            .stderr(Stdio::from(slave.try_clone().unwrap()));
+        // Crossterm opens /dev/tty: the child must own the PTY, never the developer's terminal.
+        unsafe {
+            command.pre_exec(|| {
+                if nix::libc::setsid() == -1
+                    || nix::libc::ioctl(0, nix::libc::TIOCSCTTY.into(), 0) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
                 }
-                let text = String::from_utf8_lossy(&output);
-                let ready = if mode == "connection_error" {
-                    text.contains("fake connection")
-                } else {
-                    text.contains("No connections yet")
-                };
-                if mode != "panic" && ready && !sent_quit {
-                    assert!(
-                        !tcgetattr(&slave)
-                            .unwrap()
-                            .local_flags
-                            .contains(LocalFlags::ICANON)
-                    );
-                    // A failed connection opens a modal popup; Enter dismisses it first.
-                    if mode == "connection_error" {
-                        assert!(text.contains("Cannot connect to pg"));
-                        master.write_all(b"\r").unwrap();
-                    }
-                    master.write_all(b"q").unwrap();
-                    sent_quit = true;
-                }
-                if sent_quit && !sent_confirmation && text.contains("Quit OneTUI?") {
-                    master.write_all(b"y").unwrap();
-                    sent_confirmation = true;
-                }
-                if text.contains("ONETUI_TERMINAL_RESTORED") && restored_modes.is_none() {
-                    restored_modes = Some(tcgetattr(&slave).unwrap());
-                    master.write_all(b"\n").unwrap();
-                }
-                if let Some(status) = child.0.try_wait().unwrap() {
-                    break status;
-                }
-                if start.elapsed() > Duration::from_secs(8) {
-                    child.0.kill().unwrap();
-                    child.0.wait().unwrap();
-                    panic!("PTY test timed out ({mode}): {text}");
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            };
+                Ok(())
+            });
+        }
+        let child = KillOnDrop(command.spawn().unwrap());
+        (child, master, slave, before)
+    }
+
+    #[cfg(unix)]
+    fn drive_pty_child(
+        mode: &str,
+        child: &mut KillOnDrop,
+        master: &mut std::fs::File,
+        slave: &std::fs::File,
+    ) -> (
+        std::process::ExitStatus,
+        Vec<u8>,
+        Option<nix::sys::termios::Termios>,
+    ) {
+        use nix::sys::termios::{LocalFlags, tcgetattr};
+        use std::io::Read;
+        let start = std::time::Instant::now();
+        let mut output = Vec::new();
+        let mut sent_quit = false;
+        let mut sent_confirmation = false;
+        let mut restored_modes = None;
+        let status = loop {
             let mut buffer = [0; 16384];
             while let Ok(count) = master.read(&mut buffer) {
                 if count == 0 {
@@ -3413,43 +3468,110 @@ mod tests {
                 }
                 output.extend_from_slice(&buffer[..count]);
             }
-            assert_eq!(status.success(), mode != "panic");
-            let after = restored_modes.expect("child exited before restoration handshake");
-            assert_eq!(after.input_flags, before.input_flags, "{mode}");
-            assert_eq!(after.output_flags, before.output_flags, "{mode}");
-            assert_eq!(after.control_flags, before.control_flags, "{mode}");
-            // PENDIN is kernel-maintained pending-input state, not a raw-mode setting.
-            assert_eq!(
-                after.local_flags & !LocalFlags::PENDIN,
-                before.local_flags & !LocalFlags::PENDIN,
-                "{mode}"
-            );
-            assert_eq!(after.control_chars, before.control_chars, "{mode}");
             let text = String::from_utf8_lossy(&output);
-            assert!(text.contains("\x1b[?1049h"), "{mode}: no alternate screen");
-            // 9 = DISAMBIGUATE_ESCAPE_CODES | REPORT_ALL_KEYS_AS_ESCAPE_CODES. The
-            // second bit is what makes Shift+Enter distinguishable from Enter.
-            assert!(
-                text.contains("\x1b[>9u"),
-                "{mode}: enhanced keys not enabled"
-            );
-            let pop = text.find("\x1b[<1u").expect("keyboard flags restored");
-            let leave = text.find("\x1b[?1049l").expect("alternate screen restored");
-            assert!(
-                pop < leave,
-                "{mode}: restore keyboard before leaving alternate screen"
-            );
-            assert_eq!(
-                text.matches("\x1b[<1u").count(),
-                1,
-                "{mode}: pop exactly once"
-            );
-            assert!(
-                text.contains("\x1b[?1049l"),
-                "{mode}: alternate screen not restored"
-            );
-            assert!(text.contains("\x1b[?25h"), "{mode}: cursor not restored");
-            assert!(!text.contains("invalid-fake-secret"));
+            let ready = if mode == "connection_error" {
+                text.contains("fake connection")
+            } else {
+                text.contains("No connections yet")
+            };
+            if mode != "panic" && ready && !sent_quit {
+                assert!(
+                    !tcgetattr(&slave)
+                        .unwrap()
+                        .local_flags
+                        .contains(LocalFlags::ICANON)
+                );
+                // A failed connection opens a modal popup; Enter dismisses it first.
+                if mode == "connection_error" {
+                    assert!(text.contains("Cannot connect to pg"));
+                    master.write_all(b"\r").unwrap();
+                }
+                master.write_all(b"q").unwrap();
+                sent_quit = true;
+            }
+            if sent_quit && !sent_confirmation && text.contains("Quit OneTUI?") {
+                master.write_all(b"y").unwrap();
+                sent_confirmation = true;
+            }
+            if text.contains("ONETUI_TERMINAL_RESTORED") && restored_modes.is_none() {
+                restored_modes = Some(tcgetattr(&slave).unwrap());
+                master.write_all(b"\n").unwrap();
+            }
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            if start.elapsed() > Duration::from_secs(8) {
+                child.0.kill().unwrap();
+                child.0.wait().unwrap();
+                panic!("PTY test timed out ({mode}): {text}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let mut buffer = [0; 16384];
+        while let Ok(count) = master.read(&mut buffer) {
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count]);
+        }
+        assert_eq!(status.success(), mode != "panic");
+        (status, output, restored_modes)
+    }
+
+    #[cfg(unix)]
+    fn assert_terminal_restored(
+        mode: &str,
+        before: &nix::sys::termios::Termios,
+        after: Option<nix::sys::termios::Termios>,
+        output: &[u8],
+    ) {
+        use nix::sys::termios::LocalFlags;
+        let after = after.expect("child exited before restoration handshake");
+        assert_eq!(after.input_flags, before.input_flags, "{mode}");
+        assert_eq!(after.output_flags, before.output_flags, "{mode}");
+        assert_eq!(after.control_flags, before.control_flags, "{mode}");
+        // PENDIN is kernel-maintained pending-input state, not a raw-mode setting.
+        assert_eq!(
+            after.local_flags & !LocalFlags::PENDIN,
+            before.local_flags & !LocalFlags::PENDIN,
+            "{mode}"
+        );
+        assert_eq!(after.control_chars, before.control_chars, "{mode}");
+        let text = String::from_utf8_lossy(output);
+        assert!(text.contains("\x1b[?1049h"), "{mode}: no alternate screen");
+        // 9 = DISAMBIGUATE_ESCAPE_CODES | REPORT_ALL_KEYS_AS_ESCAPE_CODES. The
+        // second bit is what makes Shift+Enter distinguishable from Enter.
+        assert!(
+            text.contains("\x1b[>9u"),
+            "{mode}: enhanced keys not enabled"
+        );
+        let pop = text.find("\x1b[<1u").expect("keyboard flags restored");
+        let leave = text.find("\x1b[?1049l").expect("alternate screen restored");
+        assert!(
+            pop < leave,
+            "{mode}: restore keyboard before leaving alternate screen"
+        );
+        assert_eq!(
+            text.matches("\x1b[<1u").count(),
+            1,
+            "{mode}: pop exactly once"
+        );
+        assert!(
+            text.contains("\x1b[?1049l"),
+            "{mode}: alternate screen not restored"
+        );
+        assert!(text.contains("\x1b[?25h"), "{mode}: cursor not restored");
+        assert!(!text.contains("invalid-fake-secret"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn real_pty_restores_after_quit_connection_error_and_panic() {
+        for mode in ["normal", "connection_error", "panic"] {
+            let (mut child, mut master, slave, before) = spawn_pty_child(mode);
+            let (status, output, restored) = drive_pty_child(mode, &mut child, &mut master, &slave);
+            assert_eq!(status.success(), mode != "panic");
+            assert_terminal_restored(mode, &before, restored, &output);
         }
     }
 }

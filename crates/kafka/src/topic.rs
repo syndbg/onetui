@@ -66,16 +66,13 @@ fn token(cursor: &Cursor, following: bool) -> Result<String> {
     Ok(token)
 }
 
-pub fn page(
+fn resume_cursor(
     request: &PageRequest,
     identity: u64,
     following: bool,
-    byte_limit: usize,
-    mut windows: Vec<(i32, i64, i64)>,
-    mut read: impl FnMut(i32, Range<i64>, usize) -> Result<(Page, i64)>,
-) -> Result<Page> {
-    let saved = validate(request, identity, following)?;
-    windows.sort_by_key(|w| w.0);
+    saved: Option<Cursor>,
+    windows: &[(i32, i64, i64)],
+) -> Result<Cursor> {
     ensure!(
         windows.len() <= PARTITIONS
             && windows
@@ -105,7 +102,7 @@ pub fn page(
             .eq(windows.iter().map(|w| w.0)),
         "Kafka partition set changed; refresh or restart following"
     );
-    for (partition, &(_, low, stable_end)) in cursor.partitions.iter_mut().zip(&windows) {
+    for (partition, &(_, low, stable_end)) in cursor.partitions.iter_mut().zip(windows) {
         ensure!(
             partition.next >= low && partition.end <= stable_end,
             "Kafka partition {} offsets unavailable or moved backwards; refresh or restart following",
@@ -115,6 +112,20 @@ pub fn page(
             partition.end = stable_end;
         }
     }
+    Ok(cursor)
+}
+
+pub fn page(
+    request: &PageRequest,
+    identity: u64,
+    following: bool,
+    byte_limit: usize,
+    mut windows: Vec<(i32, i64, i64)>,
+    mut read: impl FnMut(i32, Range<i64>, usize) -> Result<(Page, i64)>,
+) -> Result<Page> {
+    let saved = validate(request, identity, following)?;
+    windows.sort_by_key(|w| w.0);
+    let mut cursor = resume_cursor(request, identity, following, saved, &windows)?;
     let mut page = crate::browse::page(
         &request.resource,
         &format!(

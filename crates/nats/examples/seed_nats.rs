@@ -56,27 +56,42 @@ fn framed(id: u32, protobuf: bool, raw: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    prepare()?;
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    if args == ["--prepare"] {
-        return Ok(());
-    }
-    anyhow::ensure!(args.is_empty(), "Usage: seed_nats [--prepare]");
-    let avro_id = register("onetui-nats-avro", "AVRO", avro::SCHEMA)?;
-    let protobuf_id = register(
-        "onetui-nats-protobuf",
-        "PROTOBUF",
-        "syntax='proto3'; package demo; message Event {int64 id=1; string city=2; bytes payload=3;}",
-    )?;
-    let client = async_nats::ConnectOptions::new()
-        .user_and_password("fixture-admin".into(), "fixture-admin-only".into())
-        .max_reconnects(1)
-        .connection_timeout(std::time::Duration::from_secs(1))
-        .connect("nats://127.0.0.1:14222")
-        .await?;
-    let js = async_nats::jetstream::new(client.clone());
+fn payload(name: &str, i: usize, avro_id: u32, protobuf_id: u32) -> Result<Vec<u8>> {
+    Ok(if name == "DEMO_AVRO_REGISTRY" {
+        framed(avro_id, false, avro::message(i as u64))
+    } else if name == "DEMO_PROTOBUF_REGISTRY" {
+        framed(protobuf_id, true, protobuf::message(i as u64))
+    } else if name == "DEMO_AVRO" {
+        avro::message(i as u64)
+    } else if name == "DEMO_PROTOBUF" {
+        protobuf::message(i as u64)
+    } else if name == "DEMO_BINARY" {
+        match i % 4 {
+            0 => vec![],
+            1 => vec![0, 255, 128, 27, 10],
+            2 => "София / 東京 / São Paulo 🌊".as_bytes().to_vec(),
+            _ => br#"{"active":true,"optional":null,"items":[1,"two",false]}"#.to_vec(),
+        }
+    } else if name == "DEMO_WIDE" {
+        serde_json::to_vec(&(0..40).map(|field| (format!("field_{field:02}"), json!({
+            "ordinal": i, "text": "wide value ".repeat(30), "nested": [true, null, {"score": 1.25}]
+        }))).collect::<serde_json::Map<_, _>>())?
+    } else {
+        serde_json::to_vec(&json!({
+            "id": i, "category": (["search", "order", "login"][i % 3]),
+            "active": i % 2 == 0, "price": -1.25, "optional": null,
+            "empty_text": "", "empty_list": [], "empty_object": {},
+            "unicode": "София / 東京 / São Paulo 🌊", "controls": "\n\t\u{1b}[31m",
+            "tags": ["demo", "synthetic"], "nested": {"customer": {"id": i, "rating": 0.5}}
+        }))?
+    })
+}
+
+async fn seed_streams(
+    js: &async_nats::jetstream::Context,
+    avro_id: u32,
+    protobuf_id: u32,
+) -> Result<()> {
     for (name, subject, count) in [
         ("DEMO_EVENTS", "demo.events", 1205),
         ("DEMO_BINARY", "demo.binary", 260),
@@ -101,34 +116,7 @@ async fn main() -> Result<()> {
             continue;
         }
         for i in 1..=count {
-            let payload = if name == "DEMO_AVRO_REGISTRY" {
-                framed(avro_id, false, avro::message(i as u64))
-            } else if name == "DEMO_PROTOBUF_REGISTRY" {
-                framed(protobuf_id, true, protobuf::message(i as u64))
-            } else if name == "DEMO_AVRO" {
-                avro::message(i as u64)
-            } else if name == "DEMO_PROTOBUF" {
-                protobuf::message(i as u64)
-            } else if name == "DEMO_BINARY" {
-                match i % 4 {
-                    0 => vec![],
-                    1 => vec![0, 255, 128, 27, 10],
-                    2 => "София / 東京 / São Paulo 🌊".as_bytes().to_vec(),
-                    _ => br#"{"active":true,"optional":null,"items":[1,"two",false]}"#.to_vec(),
-                }
-            } else if name == "DEMO_WIDE" {
-                serde_json::to_vec(&(0..40).map(|field| (format!("field_{field:02}"), json!({
-                    "ordinal": i, "text": "wide value ".repeat(30), "nested": [true, null, {"score": 1.25}]
-                }))).collect::<serde_json::Map<_, _>>())?
-            } else {
-                serde_json::to_vec(&json!({
-                    "id": i, "category": (["search", "order", "login"][i % 3]),
-                    "active": i % 2 == 0, "price": -1.25, "optional": null,
-                    "empty_text": "", "empty_list": [], "empty_object": {},
-                    "unicode": "София / 東京 / São Paulo 🌊", "controls": "\n\t\u{1b}[31m",
-                    "tags": ["demo", "synthetic"], "nested": {"customer": {"id": i, "rating": 0.5}}
-                }))?
-            };
+            let payload = payload(name, i, avro_id, protobuf_id)?;
             let mut headers = async_nats::HeaderMap::new();
             headers.append("X-Demo", "synthetic");
             headers.append("X-Demo", "repeat");
@@ -138,6 +126,10 @@ async fn main() -> Result<()> {
         }
         println!("{name}: {count} synthetic messages");
     }
+    Ok(())
+}
+
+async fn seed_consumer(js: &async_nats::jetstream::Context) -> Result<()> {
     let stream = js.get_stream("DEMO_EVENTS").await?;
     stream
         .get_or_create_consumer(
@@ -149,6 +141,10 @@ async fn main() -> Result<()> {
             },
         )
         .await?;
+    Ok(())
+}
+
+async fn seed_kv(js: &async_nats::jetstream::Context) -> Result<()> {
     if js.get_key_value("DEMO_SETTINGS").await.is_err() {
         let kv = js
             .create_key_value(async_nats::jetstream::kv::Config {
@@ -176,6 +172,10 @@ async fn main() -> Result<()> {
         kv.purge("purged").await?;
         println!("DEMO_SETTINGS: keys, revisions, binary, empty and deletion markers");
     }
+    Ok(())
+}
+
+async fn seed_objects(js: &async_nats::jetstream::Context) -> Result<()> {
     if js.get_object_store("DEMO_FILES").await.is_err() {
         let objects = js
             .create_object_store(async_nats::jetstream::object_store::Config {
@@ -204,6 +204,34 @@ async fn main() -> Result<()> {
         objects.delete("deleted").await?;
         println!("DEMO_FILES: JSON objects, multi-page binary, empty and deleted objects");
     }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    prepare()?;
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    if args == ["--prepare"] {
+        return Ok(());
+    }
+    anyhow::ensure!(args.is_empty(), "Usage: seed_nats [--prepare]");
+    let avro_id = register("onetui-nats-avro", "AVRO", avro::SCHEMA)?;
+    let protobuf_id = register(
+        "onetui-nats-protobuf",
+        "PROTOBUF",
+        "syntax='proto3'; package demo; message Event {int64 id=1; string city=2; bytes payload=3;}",
+    )?;
+    let client = async_nats::ConnectOptions::new()
+        .user_and_password("fixture-admin".into(), "fixture-admin-only".into())
+        .max_reconnects(1)
+        .connection_timeout(std::time::Duration::from_secs(1))
+        .connect("nats://127.0.0.1:14222")
+        .await?;
+    let js = async_nats::jetstream::new(client.clone());
+    seed_streams(&js, avro_id, protobuf_id).await?;
+    seed_consumer(&js).await?;
+    seed_kv(&js).await?;
+    seed_objects(&js).await?;
     client.flush().await?;
     Ok(())
 }

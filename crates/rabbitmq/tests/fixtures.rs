@@ -47,6 +47,111 @@ async fn fetch(
         .await
 }
 
+async fn check_queue_paging(executor: &RabbitMqExecutor) {
+    let first = fetch(executor, "rabbitmq.queues", vec!["/".into()], None)
+        .await
+        .unwrap();
+    assert_eq!(first.rows.len(), 100);
+    let second = fetch(
+        executor,
+        "rabbitmq.queues",
+        vec!["/".into()],
+        first.continuation.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(second.rows.len(), 23);
+    assert!(!second.next);
+    let names = first
+        .rows
+        .iter()
+        .chain(&second.rows)
+        .map(|r| r.cells[0].as_ref().unwrap().text().unwrap().to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(names.len(), 123);
+    assert!(names.contains("demo_quorum") && names.contains("demo_stream"));
+    let repeated = fetch(
+        executor,
+        "rabbitmq.queues",
+        vec!["/".into()],
+        first.continuation,
+    )
+    .await
+    .unwrap();
+    assert_eq!(repeated.rows[0].cells[0], second.rows[0].cells[0]);
+    assert_eq!(
+        fetch(
+            executor,
+            "rabbitmq.queues",
+            vec!["demo / София".into()],
+            None
+        )
+        .await
+        .unwrap()
+        .rows
+        .len(),
+        1
+    );
+    assert!(
+        !fetch(executor, "rabbitmq.exchanges", vec!["/".into()], None)
+            .await
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    assert_eq!(
+        fetch(executor, "rabbitmq.policies", vec!["/".into()], None)
+            .await
+            .unwrap()
+            .rows
+            .len(),
+        1
+    );
+}
+
+async fn check_bindings_and_traffic(executor: &mut RabbitMqExecutor) {
+    let bindings = fetch(executor, "rabbitmq.bindings", vec!["/".into()], None)
+        .await
+        .unwrap();
+    assert_eq!(bindings.rows.len(), 100);
+    assert!(bindings.next);
+    for id in [
+        "rabbitmq.connections",
+        "rabbitmq.channels",
+        "rabbitmq.consumers",
+    ] {
+        let page = fetch(executor, id, vec!["/".into()], None).await.unwrap();
+        assert!(!page.rows.is_empty(), "{id}: fixture traffic is missing");
+        assert!(matches!(
+            page.rows[0].cells.last(),
+            Some(Some(Value::Json(_)))
+        ));
+    }
+    let all = fetch(executor, "rabbitmq.queues", vec![], None)
+        .await
+        .unwrap();
+    assert_eq!(all.rows.len(), 100);
+    assert!(all.next);
+    let error = fetch(
+        executor,
+        "rabbitmq.queues",
+        vec!["not-present".into()],
+        None,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("404") && error.contains("\"error\":\"Object Not Found\""),
+        "{error}"
+    );
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+    assert_eq!(*executor.status().borrow(), ConnectionStatus::Closed);
+}
+
 #[tokio::test]
 #[ignore = "requires disposable RabbitMQ management and traffic fixtures"]
 async fn native_metadata_metrics_paging_and_scoped_names_are_read_only() {
@@ -73,105 +178,8 @@ async fn native_metadata_metrics_paging_and_scoped_names_are_read_only() {
         .await
         .unwrap();
     assert!(vhosts.rows.iter().any(|r| r.target == Some(Resource::new("rabbitmq.vhost", vec!["demo / София".into()]))));
-    let first = fetch(&executor, "rabbitmq.queues", vec!["/".into()], None)
-        .await
-        .unwrap();
-    assert_eq!(first.rows.len(), 100);
-    let second = fetch(
-        &executor,
-        "rabbitmq.queues",
-        vec!["/".into()],
-        first.continuation.clone(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(second.rows.len(), 23);
-    assert!(!second.next);
-    let names = first
-        .rows
-        .iter()
-        .chain(&second.rows)
-        .map(|r| r.cells[0].as_ref().unwrap().text().unwrap().to_owned())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(names.len(), 123);
-    assert!(names.contains("demo_quorum") && names.contains("demo_stream"));
-    let repeated = fetch(
-        &executor,
-        "rabbitmq.queues",
-        vec!["/".into()],
-        first.continuation,
-    )
-    .await
-    .unwrap();
-    assert_eq!(repeated.rows[0].cells[0], second.rows[0].cells[0]);
-    assert_eq!(
-        fetch(
-            &executor,
-            "rabbitmq.queues",
-            vec!["demo / София".into()],
-            None
-        )
-        .await
-        .unwrap()
-        .rows
-        .len(),
-        1
-    );
-    assert!(
-        !fetch(&executor, "rabbitmq.exchanges", vec!["/".into()], None)
-            .await
-            .unwrap()
-            .rows
-            .is_empty()
-    );
-    assert_eq!(
-        fetch(&executor, "rabbitmq.policies", vec!["/".into()], None)
-            .await
-            .unwrap()
-            .rows
-            .len(),
-        1
-    );
-    let bindings = fetch(&executor, "rabbitmq.bindings", vec!["/".into()], None)
-        .await
-        .unwrap();
-    assert_eq!(bindings.rows.len(), 100);
-    assert!(bindings.next);
-    for id in [
-        "rabbitmq.connections",
-        "rabbitmq.channels",
-        "rabbitmq.consumers",
-    ] {
-        let page = fetch(&executor, id, vec!["/".into()], None).await.unwrap();
-        assert!(!page.rows.is_empty(), "{id}: fixture traffic is missing");
-        assert!(matches!(
-            page.rows[0].cells.last(),
-            Some(Some(Value::Json(_)))
-        ));
-    }
-    let all = fetch(&executor, "rabbitmq.queues", vec![], None)
-        .await
-        .unwrap();
-    assert_eq!(all.rows.len(), 100);
-    assert!(all.next);
-    let error = fetch(
-        &executor,
-        "rabbitmq.queues",
-        vec!["not-present".into()],
-        None,
-    )
-    .await
-    .unwrap_err()
-    .to_string();
-    assert!(
-        error.contains("404") && error.contains("\"error\":\"Object Not Found\""),
-        "{error}"
-    );
-    executor
-        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
-        .await
-        .unwrap();
-    assert_eq!(*executor.status().borrow(), ConnectionStatus::Closed);
+    check_queue_paging(&executor).await;
+    check_bindings_and_traffic(&mut executor).await;
 }
 
 #[tokio::test]

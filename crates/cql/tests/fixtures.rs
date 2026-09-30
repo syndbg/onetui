@@ -111,15 +111,8 @@ async fn all_rows(e: &CqlExecutor, id: &'static str, path: &[&str]) -> Vec<Page>
     pages
 }
 
-#[tokio::test]
-#[ignore = "requires the disposable ScyllaDB fixture"]
-async fn scylla_browses_metadata_pages_and_renders_values_exactly() {
-    let mut e = reader();
-    let summary = check(&e).await.unwrap();
-    assert!(summary.contains("release"), "{summary}");
-    assert_eq!(*e.status().borrow(), ConnectionStatus::Connected);
-
-    let keyspaces = fetch(&e, "cql.keyspaces", &[], None).await.unwrap();
+async fn check_catalog(e: &CqlExecutor) {
+    let keyspaces = fetch(e, "cql.keyspaces", &[], None).await.unwrap();
     let demo = keyspaces
         .rows
         .iter()
@@ -131,14 +124,14 @@ async fn scylla_browses_metadata_pages_and_renders_values_exactly() {
     );
     assert!(names(&keyspaces).contains(&"system_schema".into()));
 
-    let tables = fetch(&e, "cql.tables", &["onetui_demo"], None)
+    let tables = fetch(e, "cql.tables", &["onetui_demo"], None)
         .await
         .unwrap();
     for table in ["events", "profiles", "CaseSensitive"] {
         assert!(names(&tables).contains(&table.into()), "{table}");
     }
 
-    let columns = fetch(&e, "cql.columns", &["onetui_demo", "events"], None)
+    let columns = fetch(e, "cql.columns", &["onetui_demo", "events"], None)
         .await
         .unwrap();
     let amount = columns
@@ -147,9 +140,11 @@ async fn scylla_browses_metadata_pages_and_renders_values_exactly() {
         .find(|row| row.cells[0] == Some("amount".into()))
         .unwrap();
     assert_eq!(amount.cells[3], Some("decimal".into()));
+}
 
+async fn check_paging_and_value_rendering(e: &CqlExecutor) -> Option<String> {
     // 250 rows in one partition and one in another: pages of 100, 100 and 51.
-    let pages = all_rows(&e, "cql.rows", &["onetui_demo", "events"]).await;
+    let pages = all_rows(e, "cql.rows", &["onetui_demo", "events"]).await;
     assert_eq!(
         pages.iter().map(|p| p.rows.len()).sum::<usize>(),
         251,
@@ -208,14 +203,17 @@ async fn scylla_browses_metadata_pages_and_renders_values_exactly() {
             .datatype,
         "map<text, int>"
     );
+    first.continuation.clone()
+}
 
+async fn check_quoted_and_composite_values(e: &CqlExecutor) {
     // A case-sensitive name is quoted, not folded.
-    let quoted = fetch(&e, "cql.rows", &["onetui_demo", "CaseSensitive"], None)
+    let quoted = fetch(e, "cql.rows", &["onetui_demo", "CaseSensitive"], None)
         .await
         .unwrap();
     assert_eq!(cell(&quoted, 0, "Value"), Some(&"quoted".into()));
 
-    let profiles = fetch(&e, "cql.rows", &["onetui_demo", "profiles"], None)
+    let profiles = fetch(e, "cql.rows", &["onetui_demo", "profiles"], None)
         .await
         .unwrap();
     assert_eq!(
@@ -228,20 +226,30 @@ async fn scylla_browses_metadata_pages_and_renders_values_exactly() {
         cell(&profiles, 0, "pair"),
         Some(&Value::Json(r#"["7","seven"]"#.into()))
     );
+}
 
+async fn check_foreign_continuation(token: Option<String>) {
     // A continuation from one executor cannot resume another's read.
     let other = reader();
     assert!(
-        fetch(
-            &other,
-            "cql.rows",
-            &["onetui_demo", "events"],
-            first.continuation.clone()
-        )
-        .await
-        .is_err()
+        fetch(&other, "cql.rows", &["onetui_demo", "events"], token)
+            .await
+            .is_err()
     );
+}
 
+#[tokio::test]
+#[ignore = "requires the disposable ScyllaDB fixture"]
+async fn scylla_browses_metadata_pages_and_renders_values_exactly() {
+    let mut e = reader();
+    let summary = check(&e).await.unwrap();
+    assert!(summary.contains("release"), "{summary}");
+    assert_eq!(*e.status().borrow(), ConnectionStatus::Connected);
+
+    check_catalog(&e).await;
+    let token = check_paging_and_value_rendering(&e).await;
+    check_quoted_and_composite_values(&e).await;
+    check_foreign_continuation(token).await;
     e.shutdown(ShutdownContext::new(Duration::from_secs(1)))
         .await
         .unwrap();

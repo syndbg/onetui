@@ -131,6 +131,72 @@ fn registry_reader_keeps_exact_writer_identity_and_native_values() {
     assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
 
+fn rejects_redirects_and_oversized_responses() {
+    for (status, body) in [
+        (302, "redirect".into()),
+        (200, "x".repeat(RESPONSE_BYTES + 1)),
+    ] {
+        let server = Server::start(false, move |_| (status, body.clone()));
+        let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
+        assert!(registry.preview(&envelope(1, &[14]), &|| Ok(())).1.is_err());
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    }
+}
+
+fn cancellation_isolation_and_reopen(server: &Server) {
+    let mut registry = Registry::new(config(server), Format::Avro).unwrap();
+    assert!(
+        registry
+            .preview(&envelope(1, &[14]), &|| anyhow::bail!("cancelled"))
+            .1
+            .is_err()
+    );
+    assert!(server.requests.lock().unwrap().is_empty());
+    assert_eq!(
+        registry
+            .preview(&envelope(1, &[14]), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
+        "7"
+    );
+    let other = Server::start(false, |_| {
+        (200, serde_json::json!({"schema":"\"string\""}).to_string())
+    });
+    let mut isolated = Registry::new(config(&other), Format::Avro).unwrap();
+    assert_eq!(
+        isolated
+            .preview(&envelope(1, &[2, b'a']), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
+        "\"a\""
+    );
+    assert_eq!(other.requests.lock().unwrap().len(), 1);
+    let before = server.requests.lock().unwrap().len();
+    let mut reopened = Registry::new(config(server), Format::Avro).unwrap();
+    assert_eq!(
+        reopened
+            .preview(&envelope(1, &[14]), &|| Ok(()))
+            .1
+            .unwrap()
+            .json
+            .unwrap(),
+        "7"
+    );
+    assert_eq!(server.requests.lock().unwrap().len(), before + 1);
+}
+
+fn remote_and_credentialed_urls_are_rejected(server: &Server) {
+    let mut cfg = config(server);
+    cfg.url = "http://remote.invalid".into();
+    assert!(cfg.validate().is_err());
+    cfg.url = "https://user:secret@example.test".into();
+    assert!(cfg.validate().is_err());
+}
+
 #[test]
 fn tls_auth_isolation_redaction_redirects_and_bounds() {
     let server = Server::start(true, |request| {
@@ -175,66 +241,12 @@ fn tls_auth_isolation_redaction_redirects_and_bounds() {
             .check(&|| Ok(()))
             .is_err()
     );
-    for (status, body) in [
-        (302, "redirect".into()),
-        (200, "x".repeat(RESPONSE_BYTES + 1)),
-    ] {
-        let server = Server::start(false, move |_| (status, body.clone()));
-        let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
-        assert!(registry.preview(&envelope(1, &[14]), &|| Ok(())).1.is_err());
-        assert_eq!(server.requests.lock().unwrap().len(), 1);
-    }
+    rejects_redirects_and_oversized_responses();
     let server = Server::start(false, |_| {
         (200, serde_json::json!({"schema":"\"long\""}).to_string())
     });
-    let mut registry = Registry::new(config(&server), Format::Avro).unwrap();
-    assert!(
-        registry
-            .preview(&envelope(1, &[14]), &|| anyhow::bail!("cancelled"))
-            .1
-            .is_err()
-    );
-    assert!(server.requests.lock().unwrap().is_empty());
-    assert_eq!(
-        registry
-            .preview(&envelope(1, &[14]), &|| Ok(()))
-            .1
-            .unwrap()
-            .json
-            .unwrap(),
-        "7"
-    );
-    let other = Server::start(false, |_| {
-        (200, serde_json::json!({"schema":"\"string\""}).to_string())
-    });
-    let mut isolated = Registry::new(config(&other), Format::Avro).unwrap();
-    assert_eq!(
-        isolated
-            .preview(&envelope(1, &[2, b'a']), &|| Ok(()))
-            .1
-            .unwrap()
-            .json
-            .unwrap(),
-        "\"a\""
-    );
-    assert_eq!(other.requests.lock().unwrap().len(), 1);
-    let before = server.requests.lock().unwrap().len();
-    let mut reopened = Registry::new(config(&server), Format::Avro).unwrap();
-    assert_eq!(
-        reopened
-            .preview(&envelope(1, &[14]), &|| Ok(()))
-            .1
-            .unwrap()
-            .json
-            .unwrap(),
-        "7"
-    );
-    assert_eq!(server.requests.lock().unwrap().len(), before + 1);
-    let mut cfg = config(&server);
-    cfg.url = "http://remote.invalid".into();
-    assert!(cfg.validate().is_err());
-    cfg.url = "https://user:secret@example.test".into();
-    assert!(cfg.validate().is_err());
+    cancellation_isolation_and_reopen(&server);
+    remote_and_credentialed_urls_are_rejected(&server);
 }
 
 #[test]

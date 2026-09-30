@@ -281,25 +281,14 @@ async fn fixture_partiql_select_batch_and_transaction_read_existing_items() {
     assert!(!page.next);
 }
 
-#[tokio::test]
-#[ignore = "creates and deletes only its own DynamoDB Local table"]
-async fn fixture_follow_observes_insert_modify_remove_without_consuming_records() {
+async fn create_stream_table(client: &aws_sdk_dynamodb::Client, name: &str) -> String {
     use aws_sdk_dynamodb::types::{
-        AttributeDefinition, AttributeValue as A, BillingMode, KeySchemaElement, KeyType,
-        ScalarAttributeType, StreamSpecification, StreamViewType,
+        AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
+        StreamSpecification, StreamViewType,
     };
-    let client = support::client();
-    let name = format!(
-        "onetui_stream_test_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
     let table = client
         .create_table()
-        .table_name(&name)
+        .table_name(name)
         .billing_mode(BillingMode::PayPerRequest)
         .attribute_definitions(
             AttributeDefinition::builder()
@@ -325,90 +314,115 @@ async fn fixture_follow_observes_insert_modify_remove_without_consuming_records(
         .send()
         .await
         .unwrap();
-    let arn = table.table_description.unwrap().latest_stream_arn.unwrap();
-    let owned_table = name.clone();
-    let result = tokio::spawn(async move {
-        let e = executor();
-        let shards = fetch(&e, "dynamodb.shards", &[&arn]).await;
-        let resource = shards.rows[0].target.clone().unwrap();
+    table.table_description.unwrap().latest_stream_arn.unwrap()
+}
+
+async fn write_test_items(table: &str) {
+    use aws_sdk_dynamodb::types::AttributeValue as A;
+    let writer = support::client();
+    writer
+        .put_item()
+        .table_name(table)
+        .item("pk", A::S("owned-test-key".into()))
+        .item("value", A::S("before".into()))
+        .send()
+        .await
+        .unwrap();
+    writer
+        .put_item()
+        .table_name(table)
+        .item("pk", A::S("owned-test-key".into()))
+        .item("value", A::S("after".into()))
+        .send()
+        .await
+        .unwrap();
+    writer
+        .delete_item()
+        .table_name(table)
+        .key("pk", A::S("owned-test-key".into()))
+        .send()
+        .await
+        .unwrap();
+}
+
+async fn read_stream_records(e: &DynamoDbExecutor, resource: Resource, initial: Page) {
+    let mut bookmark = initial.continuation;
+    let mut records = Vec::new();
+    for _ in 0..20 {
         let (_cancel, ctx) = RequestContext::new(Duration::from_secs(5));
-        let initial = e
+        let page = e
             .follow_page(
                 PageRequest {
                     resource: resource.clone(),
-                    continuation: None,
+                    continuation: bookmark,
                 },
                 ctx,
             )
             .await
             .unwrap();
-        assert!(initial.rows.is_empty());
-        let writer = support::client();
-        let table = owned_table.as_str();
-        writer
-            .put_item()
-            .table_name(table)
-            .item("pk", A::S("owned-test-key".into()))
-            .item("value", A::S("before".into()))
-            .send()
-            .await
-            .unwrap();
-        writer
-            .put_item()
-            .table_name(table)
-            .item("pk", A::S("owned-test-key".into()))
-            .item("value", A::S("after".into()))
-            .send()
-            .await
-            .unwrap();
-        writer
-            .delete_item()
-            .table_name(table)
-            .key("pk", A::S("owned-test-key".into()))
-            .send()
-            .await
-            .unwrap();
-        let mut bookmark = initial.continuation;
-        let mut records = Vec::new();
-        for _ in 0..20 {
-            let (_cancel, ctx) = RequestContext::new(Duration::from_secs(5));
-            let page = e
-                .follow_page(
-                    PageRequest {
-                        resource: resource.clone(),
-                        continuation: bookmark,
-                    },
-                    ctx,
-                )
-                .await
-                .unwrap();
-            records.extend((0..page.rows.len()).map(|row| cell(&page, row, "record")));
-            bookmark = page.continuation;
-            if records.len() == 3 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        records.extend((0..page.rows.len()).map(|row| cell(&page, row, "record")));
+        bookmark = page.continuation;
+        if records.len() == 3 {
+            break;
         }
-        assert_eq!(records.len(), 3);
-        assert_eq!(records[0]["eventName"], "INSERT");
-        assert_eq!(records[1]["eventName"], "MODIFY");
-        assert_eq!(records[1]["dynamodb"]["OldImage"]["value"]["S"], "before");
-        assert_eq!(records[1]["dynamodb"]["NewImage"]["value"]["S"], "after");
-        assert_eq!(records[2]["eventName"], "REMOVE");
-        let (_cancel, ctx) = RequestContext::new(Duration::from_secs(5));
-        let retained = e
-            .fetch_page(
-                PageRequest {
-                    resource,
-                    continuation: None,
-                },
-                ctx,
-            )
-            .await
-            .unwrap();
-        assert_eq!(retained.rows.len(), 3);
-    })
-    .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0]["eventName"], "INSERT");
+    assert_eq!(records[1]["eventName"], "MODIFY");
+    assert_eq!(records[1]["dynamodb"]["OldImage"]["value"]["S"], "before");
+    assert_eq!(records[1]["dynamodb"]["NewImage"]["value"]["S"], "after");
+    assert_eq!(records[2]["eventName"], "REMOVE");
+    let (_cancel, ctx) = RequestContext::new(Duration::from_secs(5));
+    let retained = e
+        .fetch_page(
+            PageRequest {
+                resource,
+                continuation: None,
+            },
+            ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(retained.rows.len(), 3);
+}
+
+async fn observe_stream(arn: String, table: String) {
+    let e = executor();
+    let shards = fetch(&e, "dynamodb.shards", &[&arn]).await;
+    let resource = shards.rows[0].target.clone().unwrap();
+    let (_cancel, ctx) = RequestContext::new(Duration::from_secs(5));
+    let initial = e
+        .follow_page(
+            PageRequest {
+                resource: resource.clone(),
+                continuation: None,
+            },
+            ctx,
+        )
+        .await
+        .unwrap();
+    assert!(initial.rows.is_empty());
+    write_test_items(&table).await;
+    read_stream_records(&e, resource, initial).await;
+}
+
+#[tokio::test]
+#[ignore = "creates and deletes only its own DynamoDB Local table"]
+async fn fixture_follow_observes_insert_modify_remove_without_consuming_records() {
+    let client = support::client();
+    let name = format!(
+        "onetui_stream_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let arn = create_stream_table(&client, &name).await;
+    let owned_table = name.clone();
+    let result = tokio::spawn(observe_stream(arn, owned_table)).await;
+
     client
         .delete_table()
         .table_name(&name)

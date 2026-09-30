@@ -164,122 +164,138 @@ fn array<'a>(value: &'a Json, key: &str) -> Result<&'a Vec<Json>> {
     Ok(array)
 }
 
+fn cluster_rows(
+    resource: &Resource,
+    value: &Json,
+    offset: usize,
+    notice: &mut String,
+) -> Result<Vec<Row>> {
+    Ok({
+        let status = value["status"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Qdrant cluster response is missing status"))?;
+        ensure!(
+            matches!(status, "enabled" | "disabled"),
+            "Unknown Qdrant cluster status: {status}"
+        );
+        if status == "disabled" {
+            *notice = "Distributed mode is disabled on the REST node".into();
+        }
+        if resource.id == "qdrant.cluster" {
+            let raft = &value["raft_info"];
+            vec![row(&[
+                &value["status"],
+                &value["peer_id"],
+                &raft["leader"],
+                &raft["role"],
+                &raft["term"],
+                &raft["commit"],
+                &raft["pending_operations"],
+                value,
+            ])]
+        } else if status == "disabled" {
+            Vec::new()
+        } else {
+            let peers = value["peers"]
+                .as_object()
+                .ok_or_else(|| anyhow!("Qdrant cluster response is missing peers"))?;
+            let mut peers = peers
+                .iter()
+                .map(|(id, info)| Ok((id.parse::<u64>()?, info)))
+                .collect::<Result<Vec<_>>>()?;
+            peers.sort_by_key(|(id, _)| *id);
+            peers
+                .into_iter()
+                .skip(offset)
+                .take(PAGE_ROWS + 1)
+                .map(|(id, info)| {
+                    row(&[
+                        &json!(id),
+                        &info["uri"],
+                        &json!(value["peer_id"].as_u64().map(|peer| peer == id)),
+                        &json!(value["raft_info"]["leader"].as_u64().map(|peer| peer == id)),
+                        info,
+                    ])
+                })
+                .collect()
+        }
+    })
+}
+
+fn shard_rows(value: &Json, offset: usize) -> Result<Vec<Row>> {
+    Ok({
+        ensure!(
+            value["peer_id"].is_u64(),
+            "Qdrant collection topology is missing peer_id"
+        );
+        let mut shards = Vec::new();
+        for (key, location) in [("local_shards", "local"), ("remote_shards", "remote")] {
+            for shard in array(value, key)? {
+                let peer = if location == "local" {
+                    &value["peer_id"]
+                } else {
+                    &shard["peer_id"]
+                };
+                ensure!(
+                    shard["shard_id"].is_u64() && peer.is_u64(),
+                    "Qdrant shard is missing its ID or peer ID"
+                );
+                shards.push((shard, peer, location));
+            }
+        }
+        shards.sort_by_key(|(shard, peer, location)| {
+            (shard["shard_id"].as_u64(), peer.as_u64(), *location)
+        });
+        shards
+            .into_iter()
+            .skip(offset)
+            .take(PAGE_ROWS + 1)
+            .map(|(s, p, location)| {
+                row(&[
+                    &s["shard_id"],
+                    p,
+                    &json!(location),
+                    &s["state"],
+                    &s["points_count"],
+                    &s["shard_key"],
+                    s,
+                ])
+            })
+            .collect()
+    })
+}
+
+fn transfer_rows(value: &Json, offset: usize) -> Result<Vec<Row>> {
+    Ok({
+        let mut transfers = array(value, "shard_transfers")?.iter().collect::<Vec<_>>();
+        transfers.sort_by_key(|s| (s["shard_id"].as_u64(), s["from"].as_u64(), s["to"].as_u64()));
+        transfers
+            .into_iter()
+            .skip(offset)
+            .take(PAGE_ROWS + 1)
+            .map(|s| {
+                row(&[
+                    &s["shard_id"],
+                    &s["from"],
+                    &s["to"],
+                    &s["sync"],
+                    &s["method"],
+                    &s["to_shard_id"],
+                    &s["comment"],
+                    s,
+                ])
+            })
+            .collect()
+    })
+}
+
 pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> Result<Page> {
     let mut notice =
         "Topology observed by the REST node; re-read per page, not a snapshot".to_owned();
     let rows = match resource.id {
-        "qdrant.cluster" | "qdrant.peers" => {
-            let status = value["status"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Qdrant cluster response is missing status"))?;
-            ensure!(
-                matches!(status, "enabled" | "disabled"),
-                "Unknown Qdrant cluster status: {status}"
-            );
-            if status == "disabled" {
-                notice = "Distributed mode is disabled on the REST node".into();
-            }
-            if resource.id == "qdrant.cluster" {
-                let raft = &value["raft_info"];
-                vec![row(&[
-                    &value["status"],
-                    &value["peer_id"],
-                    &raft["leader"],
-                    &raft["role"],
-                    &raft["term"],
-                    &raft["commit"],
-                    &raft["pending_operations"],
-                    value,
-                ])]
-            } else if status == "disabled" {
-                Vec::new()
-            } else {
-                let peers = value["peers"]
-                    .as_object()
-                    .ok_or_else(|| anyhow!("Qdrant cluster response is missing peers"))?;
-                let mut peers = peers
-                    .iter()
-                    .map(|(id, info)| Ok((id.parse::<u64>()?, info)))
-                    .collect::<Result<Vec<_>>>()?;
-                peers.sort_by_key(|(id, _)| *id);
-                peers
-                    .into_iter()
-                    .skip(offset)
-                    .take(PAGE_ROWS + 1)
-                    .map(|(id, info)| {
-                        row(&[
-                            &json!(id),
-                            &info["uri"],
-                            &json!(value["peer_id"].as_u64().map(|peer| peer == id)),
-                            &json!(value["raft_info"]["leader"].as_u64().map(|peer| peer == id)),
-                            info,
-                        ])
-                    })
-                    .collect()
-            }
-        }
-        "qdrant.shards" => {
-            ensure!(
-                value["peer_id"].is_u64(),
-                "Qdrant collection topology is missing peer_id"
-            );
-            let mut shards = Vec::new();
-            for (key, location) in [("local_shards", "local"), ("remote_shards", "remote")] {
-                for shard in array(value, key)? {
-                    let peer = if location == "local" {
-                        &value["peer_id"]
-                    } else {
-                        &shard["peer_id"]
-                    };
-                    ensure!(
-                        shard["shard_id"].is_u64() && peer.is_u64(),
-                        "Qdrant shard is missing its ID or peer ID"
-                    );
-                    shards.push((shard, peer, location));
-                }
-            }
-            shards.sort_by_key(|(shard, peer, location)| {
-                (shard["shard_id"].as_u64(), peer.as_u64(), *location)
-            });
-            shards
-                .into_iter()
-                .skip(offset)
-                .take(PAGE_ROWS + 1)
-                .map(|(s, p, location)| {
-                    row(&[
-                        &s["shard_id"],
-                        p,
-                        &json!(location),
-                        &s["state"],
-                        &s["points_count"],
-                        &s["shard_key"],
-                        s,
-                    ])
-                })
-                .collect()
-        }
-        "qdrant.transfers" => {
-            let mut transfers = array(value, "shard_transfers")?.iter().collect::<Vec<_>>();
-            transfers
-                .sort_by_key(|s| (s["shard_id"].as_u64(), s["from"].as_u64(), s["to"].as_u64()));
-            transfers
-                .into_iter()
-                .skip(offset)
-                .take(PAGE_ROWS + 1)
-                .map(|s| {
-                    row(&[
-                        &s["shard_id"],
-                        &s["from"],
-                        &s["to"],
-                        &s["sync"],
-                        &s["method"],
-                        &s["to_shard_id"],
-                        &s["comment"],
-                        s,
-                    ])
-                })
-                .collect()
-        }
+        "qdrant.cluster" | "qdrant.peers" => cluster_rows(resource, value, offset, &mut notice)?,
+        "qdrant.shards" => shard_rows(value, offset)?,
+        "qdrant.transfers" => transfer_rows(value, offset)?,
         "qdrant.collection_cluster" => vec![row(&[value])],
         _ => bail!("Unsupported Qdrant topology resource"),
     };
