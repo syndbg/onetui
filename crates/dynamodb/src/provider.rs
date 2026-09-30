@@ -251,11 +251,11 @@ impl DynamoDbExecutor {
                     let transaction = matches!(query, crate::query::Read::TransactGetItems { .. } | crate::query::Read::ExecuteTransaction { .. });
                     let statement_batch = matches!(query, crate::query::Read::BatchExecuteStatement { .. });
                     let statement_limit = match &query {
-                        crate::query::Read::ExecuteStatement { limit, .. } => Some(*limit as usize),
+                        crate::query::Read::ExecuteStatement { limit, .. } => usize::try_from(*limit).ok(),
                         _ => None,
                     };
                     let vector_limit = match &query {
-                        crate::query::Read::SearchVectors { top_k, .. } => Some(*top_k as usize),
+                        crate::query::Read::SearchVectors { top_k, .. } => usize::try_from(*top_k).ok(),
                         _ => None,
                     };
                     dispatched = true;

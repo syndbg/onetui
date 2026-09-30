@@ -43,7 +43,7 @@ fn register(subject: &str, kind: &str, schema: &str) -> Result<u32> {
         .as_u64()
         .filter(|id| *id > 0 && i32::try_from(*id).is_ok())
         .ok_or_else(|| anyhow::anyhow!("Invalid fixture schema ID: {value}"))?;
-    Ok(id as u32)
+    Ok(u32::try_from(id)?)
 }
 
 fn framed(id: u32, protobuf: bool, raw: Vec<u8>) -> Vec<u8> {
@@ -193,7 +193,9 @@ async fn main() -> Result<()> {
                 )
                 .await?;
         }
-        let bytes: Vec<u8> = (0..1_200_000).map(|i| (i % 256) as u8).collect();
+        let bytes: Vec<u8> = (0..1_200_000)
+            .map(|i| u8::try_from(i % 256).unwrap())
+            .collect();
         objects
             .put("София / 東京.bin", &mut bytes.as_slice())
             .await?;

@@ -337,7 +337,7 @@ async fn cassandra_speaks_the_same_protocol() {
         Some(&Value::Bytes(vec![0, 255]))
     );
 
-    let id = std::process::id() as i32;
+    let id = i32::try_from(std::process::id()).unwrap();
     let (outcome, summary) = write(
         run(
             &e,

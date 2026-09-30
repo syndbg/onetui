@@ -6,6 +6,7 @@ pub use value::Value;
 #[cfg(test)]
 mod test_provider;
 
+pub const PAGE_ROWS: usize = 100;
 pub const PAGE_SIZE: i64 = 100;
 pub const PAGE_BYTES: usize = 1024 * 1024;
 

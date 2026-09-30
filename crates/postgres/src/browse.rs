@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, bail, ensure};
 use tokio_postgres::{Client, types::ToSql};
 
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, PAGE_SIZE, Page, Resource, Row, Value};
 
 pub fn pg_error(error: tokio_postgres::Error) -> anyhow::Error {
     let Some(db) = error.as_db_error() else {
@@ -41,12 +41,12 @@ pub async fn metadata(client: &Client, resource: &Resource, offset: i64) -> Resu
         _ => bail!("Unsupported PostgreSQL metadata resource or path"),
     };
     let mut page = Page {
-        next: rows.len() > PAGE_SIZE as usize,
+        next: rows.len() > PAGE_ROWS,
         rows: Vec::new(),
         ..Page::default()
     };
     let mut bytes = 0;
-    for row in rows.into_iter().take(PAGE_SIZE as usize) {
+    for row in rows.into_iter().take(PAGE_ROWS) {
         let name: String = row.try_get(0).map_err(pg_error)?;
         let target = match (resource.id, resource.path.as_slice()) {
             ("postgres.schemas", []) => Some(Resource::new("postgres.relations", vec![name])),

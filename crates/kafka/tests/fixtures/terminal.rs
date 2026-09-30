@@ -321,14 +321,14 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
     if result.is_err() {
         let _ = producer.kill();
     }
-    let produced = producer.wait_with_output().unwrap();
+    let finished = producer.wait_with_output().unwrap();
     result.unwrap();
     assert!(
-        produced.status.success(),
+        finished.status.success(),
         "{}",
-        String::from_utf8_lossy(&produced.stderr)
+        String::from_utf8_lossy(&finished.stderr)
     );
-    let output = String::from_utf8_lossy(&produced.stdout);
+    let output = String::from_utf8_lossy(&finished.stdout);
     assert_eq!(output.lines().count(), 2);
     assert!(output.contains("sequence=0") && output.contains("sequence=1"));
 }

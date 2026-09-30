@@ -8,7 +8,7 @@ pub fn message(id: u64) -> Vec<u8> {
     .build()
     .unwrap()
     .write_value_to_vec(Value::Record(vec![
-        ("id".into(), Value::Long(id as i64)),
+        ("id".into(), Value::Long(i64::try_from(id).unwrap())),
         ("city".into(), Value::String("София / 東京".into())),
         ("payload".into(), Value::Bytes(vec![0, 255, 128])),
         (

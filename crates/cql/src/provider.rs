@@ -203,7 +203,7 @@ impl CqlExecutor {
     ) -> Result<Outcome> {
         let session = self.session().await?;
         let mut prepared = session.prepare(text).await?;
-        prepared.set_page_size(PAGE_SIZE as i32);
+        prepared.set_page_size(i32::try_from(PAGE_SIZE)?);
         prepared.set_request_timeout(Some(remaining(deadline)));
         let state = state.map_or_else(PagingState::start, PagingState::new_from_raw_bytes);
         let (result, next) = session

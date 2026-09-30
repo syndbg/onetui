@@ -27,12 +27,12 @@ fn main() -> Result<()> {
         "Schema file exceeds 256 KiB"
     );
     let decoder = Decoder::new(std::str::from_utf8(&schema)?)?;
-    let decoded = decoder.decode(&raw)?;
+    let outcome = decoder.decode(&raw)?;
     eprintln!(
         "Schema: {:?}; raw bytes: {}",
-        decoded.schema_id(),
-        decoded.raw().len()
+        outcome.schema_id(),
+        outcome.raw().len()
     );
-    println!("{}", decoded.json()?);
+    println!("{}", outcome.json()?);
     Ok(())
 }

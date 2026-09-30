@@ -47,7 +47,8 @@ fn long(input: &mut &[u8]) -> Result<i64> {
         ensure!(shift != 63 || byte <= 1, "Avro long overflow");
         n |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
-            return Ok((n >> 1) as i64 ^ -((n & 1) as i64));
+            let magnitude = i64::try_from(n >> 1)?;
+            return Ok(magnitude ^ -i64::from(n & 1 == 1));
         }
     }
     anyhow::bail!("Avro long overflow")

@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 use futures_util::TryStreamExt;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value, display};
+use onetui_core::{Column, PAGE_BYTES, PAGE_ROWS, PAGE_SIZE, Page, Resource, Row, Value, display};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, types::ToSql};
 
@@ -96,7 +96,7 @@ pub async fn fetch(
         let numbers: Vec<i16> = index.get(1);
         let keys = numbers
             .iter()
-            .take(key_count as usize)
+            .take(usize::try_from(key_count).unwrap_or(0))
             .map(|number| {
                 attributes
                     .iter()
@@ -238,7 +238,7 @@ pub async fn fetch(
     };
     let mut last_key = Vec::new();
     while let Some(row) = stream.try_next().await.map_err(pg_error)? {
-        if page.rows.len() == PAGE_SIZE as usize {
+        if page.rows.len() == PAGE_ROWS {
             page.next = true;
             break;
         }

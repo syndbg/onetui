@@ -96,8 +96,8 @@ impl Dataset {
         let payload: Payload = json!({
             "title": format!("Synthetic item {n}"), "sku": format!("DEMO-{n:06}"),
             "category": (["books", "electronics", "home", "outdoors"][(n % 4) as usize]),
-            "price": (n % 10000) as f64 / 100.0, "stock": n % 250,
-            "active": !n.is_multiple_of(3), "rating": (n % 50) as f64 / 10.0,
+            "price": f64::from(u32::try_from(n % 10000).unwrap()) / 100.0, "stock": n % 250,
+            "active": !n.is_multiple_of(3), "rating": f64::from(u32::try_from(n % 50).unwrap()) / 10.0,
             "tags": ["demo", "synthetic", "browse"], "scores": [1, 2, 3],
             "available": [true, false], "optional": null, "empty_text": "",
             "empty_list": [], "empty_object": {}, "uuid": uuid,
@@ -121,7 +121,10 @@ impl Dataset {
                     .add_vector("dense", Vector::new_dense(dense(n, 8)))
                     .add_vector(
                         "sparse",
-                        Vector::new_sparse(vec![1, 100 + n as u32], vec![0.5, 1.5]),
+                        Vector::new_sparse(
+                            vec![1, 100 + u32::try_from(n).unwrap()],
+                            vec![0.5, 1.5],
+                        ),
                     )
                     .add_vector(
                         "multi",
@@ -153,7 +156,9 @@ impl Dataset {
 
 fn dense(n: u64, dimensions: usize) -> Vec<f32> {
     (0..dimensions)
-        .map(|i| (((n + i as u64) % 19) as f32 + 1.0) / 20.0)
+        .map(|i| {
+            (f32::from(u8::try_from((n + u64::try_from(i).unwrap()) % 19).unwrap()) + 1.0) / 20.0
+        })
         .collect()
 }
 

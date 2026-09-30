@@ -27,9 +27,9 @@ fn sources_imports_and_nested_declaration_indexes() {
     let decoder = schema.decoder(&[1, 0]).unwrap();
     assert!(decoder.schema_id().ends_with(":demo.Outer.Inner"));
     let raw = [10, 4, 10, 2, b'H', b'i'];
-    let decoded = decoder.decode(&raw).unwrap();
-    assert_eq!(decoded.raw(), raw);
-    assert_eq!(decoded.json().unwrap(), r#"{"child":{"name":"Hi"}}"#);
+    let outcome = decoder.decode(&raw).unwrap();
+    assert_eq!(outcome.raw(), raw);
+    assert_eq!(outcome.json().unwrap(), r#"{"child":{"name":"Hi"}}"#);
     for indexes in [&[][..], &[2], &[1, 1], &[0, 0], &[0; 33]] {
         assert!(schema.decoder(indexes).is_err());
     }

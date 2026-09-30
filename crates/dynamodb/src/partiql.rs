@@ -28,7 +28,8 @@ impl std::error::Error for Failure {}
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Statement {
-    pub statement: String,
+    #[serde(rename = "statement")]
+    pub text: String,
     pub parameters: Option<Vec<Value>>,
     pub consistent_read: Option<bool>,
 }

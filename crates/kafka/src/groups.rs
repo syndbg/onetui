@@ -2,7 +2,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, ensure};
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, Page, Resource, Row, Value};
 use rdkafka::bindings as native;
 use rdkafka::client::{Client, ClientContext};
 use rdkafka::error::{KafkaError, RDKafkaErrorCode};
@@ -34,7 +34,9 @@ impl Groups {
                 client.native_ptr(),
                 group.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
                 &raw mut list.0,
-                timeout.as_millis().clamp(1, i32::MAX as u128) as i32,
+                i32::try_from(timeout.as_millis())
+                    .unwrap_or(i32::MAX)
+                    .max(1),
             )
         };
         if error != native::rd_kafka_resp_err_t::RD_KAFKA_RESP_ERR_NO_ERROR {
@@ -66,7 +68,7 @@ impl Groups {
             let total;
             if resource.id == "kafka.groups" {
                 total = named.len();
-                for (name, group) in named.into_iter().skip(offset).take(PAGE_SIZE as usize) {
+                for (name, group) in named.into_iter().skip(offset).take(PAGE_ROWS) {
                     check_error(group.err)?;
                     ensure!(
                         crate::browse::valid_group(name),
@@ -102,7 +104,7 @@ impl Groups {
                     .collect::<Result<Vec<_>>>()?;
                 members.sort_by_key(|(id, _)| *id);
                 total = members.len();
-                for (id, member) in members.into_iter().skip(offset).take(PAGE_SIZE as usize) {
+                for (id, member) in members.into_iter().skip(offset).take(PAGE_ROWS) {
                     page.rows.push(Row {
                         cells: vec![
                             Some(id.into()),
@@ -125,7 +127,7 @@ impl Groups {
                 page,
                 resource,
                 identity,
-                (next < total).then_some((next as i64, None)),
+                (next < total).then_some((i64::try_from(next).unwrap_or(i64::MAX), None)),
                 false,
             )
         }
@@ -276,7 +278,7 @@ mod tests {
             assert_eq!(bytes(std::ptr::null(), 0).unwrap(), None);
             assert!(bytes(std::ptr::null(), 1).is_err());
             assert!(bytes(raw.as_ptr().cast(), -1).is_err());
-            assert!(bytes(raw.as_ptr().cast(), PAGE_BYTES as i32 + 1).is_err());
+            assert!(bytes(raw.as_ptr().cast(), i32::try_from(PAGE_BYTES).unwrap() + 1).is_err());
             assert!(slice::<u8>(std::ptr::null(), 1).is_err());
             assert!(slice::<u8>(std::ptr::null(), -1).is_err());
         }

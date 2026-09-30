@@ -97,7 +97,7 @@ async fn protobuf_registry_versions_imports_indexes_replay_and_following() {
         let first = fetch(&executor, resource.clone(), None).await;
         assert_eq!(first.rows.len(), 100);
         for (n, row) in first.rows.iter().enumerate() {
-            assert_eq!(row.cells[3], Some(Value::Bytes(message(n as u8, ids))));
+            assert_eq!(row.cells[3], Some(Value::Bytes(message(u8::try_from(n).unwrap(), ids))));
             assert_eq!(row.cells[7], None, "{:?}", row.cells);
             let value: serde_json::Value = serde_json::from_str(row.cells[5].as_ref().unwrap().text().unwrap()).unwrap();
             // Protobuf JSON omits zero-valued scalar fields.

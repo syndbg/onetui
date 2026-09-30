@@ -3,7 +3,7 @@ use std::ptr;
 use std::time::Duration;
 
 use anyhow::{Result, ensure};
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, Page, Resource, Row, Value};
 use rdkafka::bindings as native;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext};
 
@@ -35,7 +35,9 @@ pub fn page<C: ConsumerContext>(
     remaining: impl Fn() -> Result<Duration>,
     watermarks: impl Fn(&str, i32) -> Result<(i64, i64)>,
 ) -> Result<Page> {
-    let timeout = remaining()?.as_millis().clamp(1, i32::MAX as u128) as i32;
+    let timeout = i32::try_from(remaining()?.as_millis())
+        .unwrap_or(i32::MAX)
+        .max(1);
     let name = CString::new(resource.path[0].as_str())?;
     // librdkafka copies request arguments when enqueued. The client outlives the
     // queue and event; result pointers are borrowed only while the event is owned.
@@ -175,7 +177,7 @@ unsafe fn configs(
         for (name, entry) in entries
             .into_iter()
             .skip(usize::try_from(offset)?)
-            .take(PAGE_SIZE as usize)
+            .take(PAGE_ROWS)
         {
             let sensitive = native::rd_kafka_ConfigEntry_is_sensitive(entry) != 0;
             let value = native::rd_kafka_ConfigEntry_value(entry);
@@ -327,7 +329,7 @@ unsafe fn offsets(
         for (topic, p) in partitions
             .into_iter()
             .skip(usize::try_from(offset)?)
-            .take(PAGE_SIZE as usize)
+            .take(PAGE_ROWS)
         {
             check(p.err, ptr::null())?;
             let (low, end) = watermarks(topic, p.partition)?;
@@ -388,7 +390,7 @@ fn finish(
         page,
         resource,
         identity,
-        (next < total).then_some((next as i64, None)),
+        (next < total).then_some((i64::try_from(next).unwrap_or(i64::MAX), None)),
         false,
     )
 }

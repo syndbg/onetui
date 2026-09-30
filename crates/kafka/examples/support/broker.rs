@@ -52,7 +52,7 @@ pub fn register(subject: &str, body: &serde_json::Value) -> Result<u32> {
         id > 0 && i32::try_from(id).is_ok(),
         "Invalid registry schema ID"
     );
-    Ok(id as u32)
+    Ok(u32::try_from(id)?)
 }
 
 pub async fn send_keyed(
@@ -72,7 +72,11 @@ pub async fn send_keyed(
 }
 
 #[allow(dead_code)]
-pub async fn seed(topic: &str, count: u32, message: impl Fn(u32) -> Result<Vec<u8>>) -> Result<()> {
+pub async fn seed(
+    topic: &str,
+    count: u32,
+    message: impl Fn(u32) -> Result<Vec<u8>> + Sync,
+) -> Result<()> {
     seed_keyed(topic, count, |n| Ok((b"demo".to_vec(), message(n)?))).await
 }
 

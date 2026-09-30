@@ -297,14 +297,14 @@ fn actual_cli_nats_browsing_and_following() {
     if tested.is_err() {
         let _ = producer.kill();
     }
-    let produced = producer.wait_with_output().unwrap();
+    let finished = producer.wait_with_output().unwrap();
     tested.unwrap();
     assert!(
-        produced.status.success(),
+        finished.status.success(),
         "{}",
-        String::from_utf8_lossy(&produced.stderr)
+        String::from_utf8_lossy(&finished.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&produced.stdout).lines().count(), 2);
+    assert_eq!(String::from_utf8_lossy(&finished.stdout).lines().count(), 2);
     assert!(
         tcgetattr(&slave)
             .unwrap()

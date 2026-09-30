@@ -28,7 +28,7 @@ async fn redpanda_registry_versions_references_paging_and_following() {
         let first = fetch(&executor, resource.clone(), None).await;
         assert_eq!(first.rows.len(), 100);
         for (n, row) in first.rows.iter().enumerate() {
-            assert_eq!(row.cells[3], Some(Value::Bytes(fixture::message(n as u32, ids).unwrap())));
+            assert_eq!(row.cells[3], Some(Value::Bytes(fixture::message(u32::try_from(n).unwrap(), ids).unwrap())));
             assert_eq!(row.cells[7], None, "{:?}", row.cells);
             let decoded: serde_json::Value = serde_json::from_str(row.cells[5].as_ref().unwrap().text().unwrap()).unwrap();
             assert_eq!(decoded["id"], n);

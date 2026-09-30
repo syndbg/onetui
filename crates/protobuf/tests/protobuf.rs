@@ -68,11 +68,11 @@ fn raw_typed_fields_unknown_enum_and_unknown_fields_survive() {
     ];
     prost::encoding::encode_key(99, prost::encoding::WireType::Varint, &mut raw);
     prost::encoding::encode_varint(123, &mut raw);
-    let decoded = decoder.decode(&raw).unwrap();
-    assert_eq!(decoded.raw(), raw);
-    assert_eq!(decoded.schema_id(), decoder.schema_id());
-    assert!(decoded.schema_id().starts_with("protobuf:sha256:"));
-    let message = decoded.value();
+    let outcome = decoder.decode(&raw).unwrap();
+    assert_eq!(outcome.raw(), raw);
+    assert_eq!(outcome.schema_id(), decoder.schema_id());
+    assert!(outcome.schema_id().starts_with("protobuf:sha256:"));
+    let message = outcome.value();
     assert_eq!(
         message
             .get_field_by_name("data")
@@ -87,12 +87,12 @@ fn raw_typed_fields_unknown_enum_and_unknown_fields_survive() {
         Some(99)
     );
     assert_eq!(message.unknown_fields().count(), 1);
-    let json: serde_json::Value = serde_json::from_str(&decoded.json().unwrap()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&outcome.json().unwrap()).unwrap();
     assert_eq!(json["id"], "7");
     assert_eq!(json["data"], "/wA=");
     assert_eq!(json["state"], 99);
     assert_eq!(json["scores"], serde_json::json!([1, 2, 3]));
-    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    let native: serde_json::Value = serde_json::from_str(&outcome.native().unwrap()).unwrap();
     assert_eq!(native["type"], "demo.Event");
     assert_eq!(native["fields"][0]["datatype"], "int64");
     assert_eq!(native["fields"][0]["value"]["value"], 7);
@@ -208,12 +208,12 @@ fn any_unpacked_json_is_an_error_without_losing_typed_or_raw_data() {
     .encode_to_vec();
     let decoder = Decoder::new(&descriptor, "google.protobuf.Any").unwrap();
     let raw = [18, 2, 255, 0];
-    let decoded = decoder.decode(&raw).unwrap();
-    assert!(decoded.json().unwrap_err().to_string().contains("Any JSON"));
-    assert!(decoded.native().unwrap().contains("bytes"));
-    assert_eq!(decoded.raw(), raw);
+    let outcome = decoder.decode(&raw).unwrap();
+    assert!(outcome.json().unwrap_err().to_string().contains("Any JSON"));
+    assert!(outcome.native().unwrap().contains("bytes"));
+    assert_eq!(outcome.raw(), raw);
     assert_eq!(
-        decoded
+        outcome
             .value()
             .get_field_by_name("value")
             .unwrap()
@@ -231,8 +231,8 @@ fn json_output_expansion_is_bounded_before_allocation() {
     descriptor.file[0].message_type[0].field[5].label = Some(Label::Repeated as i32);
     let decoder = Decoder::new(&descriptor.encode_to_vec(), "demo.Event").unwrap();
     let raw: Vec<_> = (0..1000).flat_map(|_| [50, 3, 18, 1, b'a']).collect();
-    let decoded = decoder.decode(&raw).unwrap();
-    assert!(decoded.json().unwrap_err().to_string().contains("1 MiB"));
-    assert!(decoded.native().unwrap_err().to_string().contains("1 MiB"));
-    assert_eq!(decoded.raw(), raw);
+    let outcome = decoder.decode(&raw).unwrap();
+    assert!(outcome.json().unwrap_err().to_string().contains("1 MiB"));
+    assert!(outcome.native().unwrap_err().to_string().contains("1 MiB"));
+    assert_eq!(outcome.raw(), raw);
 }

@@ -46,7 +46,7 @@ struct Event {
 
 pub fn message(id: u64) -> Vec<u8> {
     let mut bytes = Event {
-        id: id as i64,
+        id: i64::try_from(id).unwrap(),
         city: "София / 東京".into(),
         payload: vec![0, 255, 128],
     }

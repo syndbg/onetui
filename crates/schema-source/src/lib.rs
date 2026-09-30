@@ -21,10 +21,10 @@ impl Preview {
     ///
     /// Returns an error when the payload cannot be decoded.
     pub fn avro(decoder: &onetui_avro::Decoder, raw: &[u8]) -> Result<Self> {
-        let decoded = decoder.decode(raw)?;
+        let outcome = decoder.decode(raw)?;
         Ok(Self {
-            json: decoded.json(),
-            native: decoded.native(),
+            json: outcome.json(),
+            native: outcome.native(),
         })
     }
 
@@ -32,10 +32,10 @@ impl Preview {
     ///
     /// Returns an error when the payload cannot be decoded.
     pub fn protobuf(decoder: &onetui_protobuf::Decoder, raw: &[u8]) -> Result<Self> {
-        let decoded = decoder.decode(raw)?;
+        let outcome = decoder.decode(raw)?;
         Ok(Self {
-            json: decoded.json(),
-            native: decoded.native(),
+            json: outcome.json(),
+            native: outcome.native(),
         })
     }
 }

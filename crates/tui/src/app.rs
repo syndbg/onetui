@@ -2842,7 +2842,8 @@ mod tests {
         app.complete(&first, Ok(page(true)));
         app.view.previous = (0..BOOKMARK_LIMIT)
             .map(|index| PageBookmark {
-                offset: index as i64 * PAGE_SIZE,
+                offset: i64::try_from(index)
+                    .map_or(i64::MAX, |index| index.saturating_mul(PAGE_SIZE)),
                 position: None,
                 selected: None,
                 page: None,

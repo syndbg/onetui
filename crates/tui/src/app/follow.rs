@@ -1,4 +1,5 @@
-use super::{App, PAGE_BYTES, PAGE_SIZE, Page, Request, Result, display, projections};
+use super::{App, PAGE_BYTES, Page, Request, Result, display, projections};
+use onetui_core::PAGE_ROWS;
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -42,7 +43,7 @@ impl App {
     pub(super) fn complete_follow(&mut self, request: &Request, result: Result<Page>) {
         let result = result.and_then(|page| {
             anyhow::ensure!(
-                page.rows.len() <= PAGE_SIZE as usize && page.bytes() <= PAGE_BYTES,
+                page.rows.len() <= PAGE_ROWS && page.bytes() <= PAGE_BYTES,
                 "Live batch exceeds 100 rows or 1 MiB; following stopped"
             );
             anyhow::ensure!(
@@ -91,7 +92,7 @@ impl App {
                 page.rows = combined;
                 page.next = false;
                 let mut removed = 0;
-                while page.rows.len() > PAGE_SIZE as usize
+                while page.rows.len() > PAGE_ROWS
                     || page.bytes() > PAGE_BYTES
                     || projections(&page).is_err()
                 {

@@ -2,7 +2,7 @@ use anyhow::{Result, ensure};
 use futures_util::TryStreamExt;
 use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::provider::{QueryExecution, WriteOutcome, WriteResult};
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Row, Value, display};
+use onetui_core::{Column, PAGE_BYTES, PAGE_ROWS, PAGE_SIZE, Page, Row, Value, display};
 use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::browse::pg_error;
@@ -79,7 +79,7 @@ pub async fn fetch(client: &Client, sql: &str, offset: i64) -> Result<Page> {
         ..Page::default()
     };
     while let Some(row) = stream.try_next().await.map_err(pg_error)? {
-        if page.rows.len() == PAGE_SIZE as usize {
+        if page.rows.len() == PAGE_ROWS {
             page.next = true;
             break;
         }
@@ -145,7 +145,7 @@ pub async fn execute_once(client: &Client, sql: &str) -> Result<QueryExecution> 
                 );
             }
             SimpleQueryMessage::Row(row) => {
-                if truncated || page.rows.len() == PAGE_SIZE as usize {
+                if truncated || page.rows.len() == PAGE_ROWS {
                     truncated = true;
                     continue;
                 }
