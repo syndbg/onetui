@@ -139,6 +139,21 @@ impl Read {
         );
         let query: Self = serde_json::from_str(text)?;
         match &query {
+            Self::ExecuteStatement { .. }
+            | Self::BatchExecuteStatement { .. }
+            | Self::ExecuteTransaction { .. } => query.validate_partiql()?,
+            Self::SearchVectors { .. } => query.validate_vectors()?,
+            Self::BatchGetItem { .. } | Self::TransactGetItems { .. } | Self::GetItem { .. } => {
+                query.validate_lookup()?;
+            }
+            Self::GetRecords { .. } => query.validate_records()?,
+            Self::Scan { .. } | Self::Query { .. } => query.validate_table_read()?,
+        }
+        Ok(query)
+    }
+
+    fn validate_partiql(&self) -> Result<()> {
+        match self {
             Self::ExecuteStatement {
                 parameters, limit, ..
             } => {
@@ -150,7 +165,7 @@ impl Read {
             }
             Self::BatchExecuteStatement { statements }
             | Self::ExecuteTransaction { statements } => {
-                let transaction = matches!(&query, Self::ExecuteTransaction { .. });
+                let transaction = matches!(self, Self::ExecuteTransaction { .. });
                 let max = if transaction { 100 } else { 25 };
                 ensure!(
                     (1..=max).contains(&statements.len()),
@@ -164,38 +179,50 @@ impl Read {
                     );
                 }
             }
-            Self::SearchVectors {
-                index,
-                search_vector,
-                top_k,
-                expression_attribute_values,
-                ..
-            } => {
-                ensure!(
-                    (3..=255).contains(&index.len())
-                        && index
-                            .bytes()
-                            .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c)),
-                    "Invalid DynamoDB vector index name"
-                );
-                ensure!(
-                    (1..=4096).contains(&search_vector.len()),
-                    "SearchVectors requires 1..4096 dimensions"
-                );
-                ensure!(
-                    search_vector
-                        .iter()
-                        .all(|n| n.to_string().parse::<f32>().is_ok_and(f32::is_finite)),
-                    "SearchVectors dimensions must fit finite 32-bit floats"
-                );
-                ensure!(
-                    (1..=100).contains(top_k),
-                    "SearchVectors top_k must be 1..100"
-                );
-                if let Some(values) = expression_attribute_values {
-                    crate::attributes::item(values)?;
-                }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn validate_vectors(&self) -> Result<()> {
+        if let Self::SearchVectors {
+            index,
+            search_vector,
+            top_k,
+            expression_attribute_values,
+            ..
+        } = self
+        {
+            ensure!(
+                (3..=255).contains(&index.len())
+                    && index
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c)),
+                "Invalid DynamoDB vector index name"
+            );
+            ensure!(
+                (1..=4096).contains(&search_vector.len()),
+                "SearchVectors requires 1..4096 dimensions"
+            );
+            ensure!(
+                search_vector
+                    .iter()
+                    .all(|n| n.to_string().parse::<f32>().is_ok_and(f32::is_finite)),
+                "SearchVectors dimensions must fit finite 32-bit floats"
+            );
+            ensure!(
+                (1..=100).contains(top_k),
+                "SearchVectors top_k must be 1..100"
+            );
+            if let Some(values) = expression_attribute_values {
+                crate::attributes::item(values)?;
             }
+        }
+        Ok(())
+    }
+
+    fn validate_lookup(&self) -> Result<()> {
+        match self {
             Self::BatchGetItem { keys, .. } => validate_keys(keys)?,
             Self::TransactGetItems { items } => {
                 ensure!(
@@ -206,29 +233,47 @@ impl Read {
                     validate_keys(std::slice::from_ref(&item.key))?;
                 }
             }
-            Self::GetRecords {
-                shard_id,
-                sequence_number,
-                limit,
-                ..
-            } => {
+            Self::GetItem { key, .. } => {
                 ensure!(
-                    !shard_id.is_empty()
-                        && shard_id.len() <= 240
-                        && !shard_id.chars().any(char::is_control),
-                    "Invalid DynamoDB Streams shard_id"
-                );
-                ensure!(
-                    !sequence_number.is_empty()
-                        && sequence_number.len() <= 40
-                        && sequence_number.bytes().all(|c| c.is_ascii_digit()),
-                    "DynamoDB Streams sequence_number requires 1..40 decimal digits"
-                );
-                ensure!(
-                    (1..=100).contains(limit),
-                    "DynamoDB Streams limit must be 1..100 records"
+                    !crate::attributes::item(key)?.is_empty(),
+                    "GetItem requires a nonempty key"
                 );
             }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn validate_records(&self) -> Result<()> {
+        if let Self::GetRecords {
+            shard_id,
+            sequence_number,
+            limit,
+            ..
+        } = self
+        {
+            ensure!(
+                !shard_id.is_empty()
+                    && shard_id.len() <= 240
+                    && !shard_id.chars().any(char::is_control),
+                "Invalid DynamoDB Streams shard_id"
+            );
+            ensure!(
+                !sequence_number.is_empty()
+                    && sequence_number.len() <= 40
+                    && sequence_number.bytes().all(|c| c.is_ascii_digit()),
+                "DynamoDB Streams sequence_number requires 1..40 decimal digits"
+            );
+            ensure!(
+                (1..=100).contains(limit),
+                "DynamoDB Streams limit must be 1..100 records"
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_table_read(&self) -> Result<()> {
+        match self {
             Self::Scan {
                 limit,
                 expression_attribute_values,
@@ -247,14 +292,9 @@ impl Read {
                     crate::attributes::item(values)?;
                 }
             }
-            Self::GetItem { key, .. } => {
-                ensure!(
-                    !crate::attributes::item(key)?.is_empty(),
-                    "GetItem requires a nonempty key"
-                );
-            }
+            _ => {}
         }
-        Ok(query)
+        Ok(())
     }
 }
 

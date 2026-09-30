@@ -41,6 +41,76 @@ async fn wait_for_subscription(subject: &str) {
     }
 }
 
+async fn reads_over_mtls(tls: &str, name: &str) {
+    for tls_first in [false, true] {
+        let mut executor = NatsProvider
+            .configure(
+                &toml::from_str(&format!("{tls}\ntls_first={tls_first}")).unwrap(),
+                &|_| Some(SEED.into()),
+            )
+            .unwrap();
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        executor.check(context).await.unwrap();
+        let page = read(&executor, "nats.messages", &[name], None, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            page.rows[0].cells[3],
+            Some(Value::Bytes(b"secure data".to_vec()))
+        );
+        close(&mut executor).await;
+    }
+}
+
+async fn rejects_bad_setups(tls: &str, wrong_key: &std::path::Path) {
+    for extra in [
+        "wrong-domain",
+        "missing-cert",
+        "untrusted",
+        "bad-seed",
+        "mismatched-key",
+    ] {
+        let mut options: toml::Table = toml::from_str(tls).unwrap();
+        match extra {
+            "wrong-domain" => {
+                options.insert("domain".into(), "OTHER".into());
+            }
+            "missing-cert" => {
+                options.remove("cert_file");
+                options.remove("key_file");
+            }
+            "untrusted" => {
+                options.remove("ca_file");
+            }
+            "mismatched-key" => {
+                options.insert("key_file".into(), wrong_key.to_str().unwrap().into());
+            }
+            _ => {}
+        }
+        let seed = if extra == "bad-seed" {
+            "invalid-fixture-secret"
+        } else {
+            SEED
+        };
+        let mut executor = NatsProvider
+            .configure(&options, &|_| Some(seed.into()))
+            .unwrap();
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(3));
+        let error = executor
+            .check(context)
+            .await
+            .err()
+            .expect(extra)
+            .to_string();
+        assert!(
+            !error.contains(SEED) && !error.contains("invalid-fixture-secret"),
+            "{error}"
+        );
+        assert!(!error.is_empty());
+        close(&mut executor).await;
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires disposable NATS mTLS/NKEY/domain listener"]
 async fn nkey_mtls_domain_reads_trust_errors_and_reopen() {
@@ -78,71 +148,10 @@ async fn nkey_mtls_domain_reads_trust_errors_and_reopen() {
         .await
         .unwrap();
     let name = stream.clone();
+    let wrong_key_path = wrong_key.path().to_path_buf();
     let tested = tokio::spawn(async move {
-        for tls_first in [false, true] {
-            let mut executor = NatsProvider
-                .configure(
-                    &toml::from_str(&format!("{tls}\ntls_first={tls_first}")).unwrap(),
-                    &|_| Some(SEED.into()),
-                )
-                .unwrap();
-            let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-            executor.check(context).await.unwrap();
-            let page = read(&executor, "nats.messages", &[&name], None, false)
-                .await
-                .unwrap();
-            assert_eq!(
-                page.rows[0].cells[3],
-                Some(Value::Bytes(b"secure data".to_vec()))
-            );
-            close(&mut executor).await;
-        }
-        for extra in [
-            "wrong-domain",
-            "missing-cert",
-            "untrusted",
-            "bad-seed",
-            "mismatched-key",
-        ] {
-            let mut options: toml::Table = toml::from_str(&tls).unwrap();
-            match extra {
-                "wrong-domain" => {
-                    options.insert("domain".into(), "OTHER".into());
-                }
-                "missing-cert" => {
-                    options.remove("cert_file");
-                    options.remove("key_file");
-                }
-                "untrusted" => {
-                    options.remove("ca_file");
-                }
-                "mismatched-key" => {
-                    options.insert("key_file".into(), wrong_key.path().to_str().unwrap().into());
-                }
-                _ => {}
-            }
-            let seed = if extra == "bad-seed" {
-                "invalid-fixture-secret"
-            } else {
-                SEED
-            };
-            let mut executor = NatsProvider
-                .configure(&options, &|_| Some(seed.into()))
-                .unwrap();
-            let (_cancel, context) = RequestContext::new(Duration::from_secs(3));
-            let error = executor
-                .check(context)
-                .await
-                .err()
-                .expect(extra)
-                .to_string();
-            assert!(
-                !error.contains(SEED) && !error.contains("invalid-fixture-secret"),
-                "{error}"
-            );
-            assert!(!error.is_empty());
-            close(&mut executor).await;
-        }
+        reads_over_mtls(&tls, &name).await;
+        rejects_bad_setups(&tls, &wrong_key_path).await;
     })
     .await;
     js.delete_stream(&stream).await.unwrap();

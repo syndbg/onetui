@@ -173,16 +173,12 @@ async fn buf_descriptor_core_follow_and_reopen_cache() {
     close(&mut reopened).await;
 }
 
-#[tokio::test]
-#[ignore = "uses a disposable Core subject and local Protobuf catalog with imports"]
-async fn protobuf_catalog_imports_core_follow_and_cached_schema_errors() {
-    use prost::Message;
+fn catalog_descriptor() -> prost_types::FileDescriptorSet {
     use prost_types::{
         DescriptorProto, FieldDescriptorProto, FileDescriptorProto, FileDescriptorSet,
         field_descriptor_proto::Type,
     };
-    let directory = tempfile::tempdir().unwrap();
-    let descriptor = FileDescriptorSet {
+    FileDescriptorSet {
         file: vec![
             FileDescriptorProto {
                 name: Some("common.proto".into()),
@@ -219,7 +215,56 @@ async fn protobuf_catalog_imports_core_follow_and_cached_schema_errors() {
                 ..Default::default()
             },
         ],
-    };
+    }
+}
+
+async fn collect_rows(
+    executor: &NatsExecutor,
+    subject: &str,
+    start: Page,
+) -> Vec<onetui_core::Row> {
+    let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut cursor = start.continuation;
+    let mut rows = Vec::new();
+    while rows.len() < 2 {
+        let page = read(executor, "nats.core_messages", &[subject], cursor, true)
+            .await
+            .unwrap();
+        assert_eq!(page.columns.len(), start.columns.len());
+        cursor = page.continuation;
+        rows.extend(page.rows);
+        assert!(tokio::time::Instant::now() < until);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    rows
+}
+
+fn assert_decoded_rows(rows: &[onetui_core::Row], raw: Vec<u8>) {
+    assert_eq!(rows[0].cells[2], Some(Value::Bytes(raw)));
+    let value: Json =
+        serde_json::from_str(rows[0].cells[6].as_ref().unwrap().text().unwrap()).unwrap();
+    assert_eq!(value["child"]["id"], "42");
+    assert!(
+        rows[0].cells[7]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("#schema=event:")
+    );
+    let native: Json =
+        serde_json::from_str(rows[0].cells[9].as_ref().unwrap().text().unwrap()).unwrap();
+    assert_eq!(native["unknown_fields"][0]["number"], 99);
+    assert_eq!(rows[1].cells[2], Some(Value::Bytes(vec![255])));
+    assert!(rows[1].cells[8].is_some());
+}
+
+#[tokio::test]
+#[ignore = "uses a disposable Core subject and local Protobuf catalog with imports"]
+async fn protobuf_catalog_imports_core_follow_and_cached_schema_errors() {
+    use prost::Message;
+    let directory = tempfile::tempdir().unwrap();
+    let descriptor = catalog_descriptor();
     let schema = directory.path().join("event.pb");
     std::fs::write(&schema, descriptor.encode_to_vec()).unwrap();
     let subject = format!("demo.proto_catalog_{}", std::process::id());
@@ -262,36 +307,8 @@ async fn protobuf_catalog_imports_core_follow_and_cached_schema_errors() {
         .await
         .unwrap();
     admin.flush().await.unwrap();
-    let until = tokio::time::Instant::now() + Duration::from_secs(5);
-    let mut cursor = start.continuation;
-    let mut rows = Vec::new();
-    while rows.len() < 2 {
-        let page = read(&executor, "nats.core_messages", &[&subject], cursor, true)
-            .await
-            .unwrap();
-        assert_eq!(page.columns.len(), start.columns.len());
-        cursor = page.continuation;
-        rows.extend(page.rows);
-        assert!(tokio::time::Instant::now() < until);
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert_eq!(rows[0].cells[2], Some(Value::Bytes(raw)));
-    let value: Json =
-        serde_json::from_str(rows[0].cells[6].as_ref().unwrap().text().unwrap()).unwrap();
-    assert_eq!(value["child"]["id"], "42");
-    assert!(
-        rows[0].cells[7]
-            .as_ref()
-            .unwrap()
-            .text()
-            .unwrap()
-            .contains("#schema=event:")
-    );
-    let native: Json =
-        serde_json::from_str(rows[0].cells[9].as_ref().unwrap().text().unwrap()).unwrap();
-    assert_eq!(native["unknown_fields"][0]["number"], 99);
-    assert_eq!(rows[1].cells[2], Some(Value::Bytes(vec![255])));
-    assert!(rows[1].cells[8].is_some());
+    let rows = collect_rows(&executor, &subject, start).await;
+    assert_decoded_rows(&rows, raw);
     close(&mut executor).await;
     std::fs::write(&schema, descriptor.encode_to_vec()).unwrap();
     let mut reopened = configure();

@@ -63,22 +63,7 @@ fn dump(args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-#[test]
-fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
-    let output = dump(&[]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(output.stdout, dump(&[]).stdout);
-    let explicit = Command::new(env!("CARGO_BIN_EXE_onetui"))
-        .args(["--config", "/nonexistent/onetui.toml", "schema"])
-        .output()
-        .unwrap();
-    assert!(explicit.status.success());
-    assert_eq!(output.stdout, explicit.stdout);
-    let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+fn assert_display_schema(schema: &serde_json::Value) {
     assert_eq!(schema["schema_format_version"], 1);
     assert_eq!(
         schema["configuration"]["ask_for_query_confirm"]["default"],
@@ -102,6 +87,9 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
             .unwrap()
             .contains("Record tables always use compact JSON")
     );
+}
+
+fn assert_shell_schema(schema: &serde_json::Value) {
     assert_eq!(
         schema["datasources"][0]["resources"][0]["id"],
         "postgres.resources"
@@ -156,6 +144,9 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
             .unwrap()
             .contains("Qdrant browsing is not implemented")
     );
+}
+
+fn assert_example_config_requires_env(output: &std::process::Output, schema: &serde_json::Value) {
     assert!(String::from_utf8_lossy(&output.stdout).contains("qdrant.points"));
     let example = schema["configuration"]["example_toml"].as_str().unwrap();
     let file = tempfile::NamedTempFile::new().unwrap();
@@ -173,6 +164,27 @@ fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("ONETUI_POSTGRES_URL is missing"));
+}
+
+#[test]
+fn catalog_is_offline_deterministic_and_reports_only_implemented_resources() {
+    let output = dump(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, dump(&[]).stdout);
+    let explicit = Command::new(env!("CARGO_BIN_EXE_onetui"))
+        .args(["--config", "/nonexistent/onetui.toml", "schema"])
+        .output()
+        .unwrap();
+    assert!(explicit.status.success());
+    assert_eq!(output.stdout, explicit.stdout);
+    let schema: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_display_schema(&schema);
+    assert_shell_schema(&schema);
+    assert_example_config_requires_env(&output, &schema);
 }
 
 #[test]
@@ -242,6 +254,70 @@ fn qdrant_catalog_filter() {
     assert_eq!(schema["datasources"][0]["query_max_bytes"], 16384);
 }
 
+fn assert_kafka_following_and_limits(kafka: &serde_json::Value) {
+    assert_eq!(kafka["following"]["poll_interval_ms"], 1000);
+    assert_eq!(kafka["following"]["buffer_rows"], 100);
+    assert_eq!(kafka["following"]["buffer_bytes"], 1_048_576);
+    assert_eq!(kafka["resources"].as_array().unwrap().len(), 13);
+    assert_eq!(
+        kafka["configuration"]["security_protocol"]["default"],
+        "SSL"
+    );
+    assert_eq!(kafka["limits"]["page_rows"], 100);
+    assert_eq!(
+        kafka["configuration"]["client_cert_file"]["required"],
+        "with client_key_file"
+    );
+    assert_eq!(
+        kafka["configuration"]["client_key_file"]["required"],
+        "with client_cert_file"
+    );
+    assert!(kafka["configuration"]["client_key_password_env"]["default"].is_null());
+    assert!(
+        kafka["configuration"]["sasl_mechanism"]["values"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("OAUTHBEARER"))
+    );
+}
+
+fn assert_kafka_auth_schema(kafka: &serde_json::Value) {
+    let oauth = &kafka["configuration"]["oauth"];
+    assert!(
+        kafka["configuration"]["sasl_mechanism"]["values"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("GSSAPI"))
+    );
+    assert_eq!(
+        kafka["configuration"]["kerberos_principal"]["required"],
+        "with GSSAPI; forbidden otherwise"
+    );
+    assert_eq!(
+        kafka["configuration"]["kerberos_service_name"]["default"],
+        "kafka"
+    );
+    assert_eq!(oauth["fields"]["client_secret_env"]["required"], true);
+    assert_eq!(oauth["fields"]["ca_file"]["default"], "platform trust");
+    assert_eq!(oauth["limits"]["response_bytes"], 65536);
+    assert_eq!(oauth["limits"]["request_timeout_ms"], 2000);
+    assert_eq!(kafka["limits"]["topic_partitions"], 32);
+    assert_eq!(kafka["limits"]["topic_cursor_bytes"], 4096);
+    let buf = &kafka["configuration"]["decoders"]["fields"]["buf"];
+    assert_eq!(buf["limits"]["response_bytes"], 262_144);
+    assert_eq!(
+        buf["fields"]["revision"]["type"],
+        "32 lowercase hex characters"
+    );
+    assert_eq!(buf["fields"]["token_env"]["default"], "anonymous");
+    assert!(
+        buf["fields"]["label"]["purpose"]
+            .as_str()
+            .unwrap()
+            .contains("GetCommits")
+    );
+}
+
 #[test]
 fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
     let output = dump(&["--datasource", "kafka"]);
@@ -291,65 +367,10 @@ fn kafka_catalog_filter_is_offline_and_advertises_partition_replay() {
             .iter()
             .any(|op| op == "follow_page")
     );
-    assert_eq!(kafka["following"]["poll_interval_ms"], 1000);
-    assert_eq!(kafka["following"]["buffer_rows"], 100);
-    assert_eq!(kafka["following"]["buffer_bytes"], 1_048_576);
-    assert_eq!(kafka["resources"].as_array().unwrap().len(), 13);
-    assert_eq!(
-        kafka["configuration"]["security_protocol"]["default"],
-        "SSL"
-    );
-    assert_eq!(kafka["limits"]["page_rows"], 100);
-    assert_eq!(
-        kafka["configuration"]["client_cert_file"]["required"],
-        "with client_key_file"
-    );
-    assert_eq!(
-        kafka["configuration"]["client_key_file"]["required"],
-        "with client_cert_file"
-    );
-    assert!(kafka["configuration"]["client_key_password_env"]["default"].is_null());
-    assert!(
-        kafka["configuration"]["sasl_mechanism"]["values"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("OAUTHBEARER"))
-    );
-    let oauth = &kafka["configuration"]["oauth"];
-    assert!(
-        kafka["configuration"]["sasl_mechanism"]["values"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("GSSAPI"))
-    );
-    assert_eq!(
-        kafka["configuration"]["kerberos_principal"]["required"],
-        "with GSSAPI; forbidden otherwise"
-    );
-    assert_eq!(
-        kafka["configuration"]["kerberos_service_name"]["default"],
-        "kafka"
-    );
-    assert_eq!(oauth["fields"]["client_secret_env"]["required"], true);
-    assert_eq!(oauth["fields"]["ca_file"]["default"], "platform trust");
-    assert_eq!(oauth["limits"]["response_bytes"], 65536);
-    assert_eq!(oauth["limits"]["request_timeout_ms"], 2000);
-    assert_eq!(kafka["limits"]["topic_partitions"], 32);
-    assert_eq!(kafka["limits"]["topic_cursor_bytes"], 4096);
-    let buf = &kafka["configuration"]["decoders"]["fields"]["buf"];
-    assert_eq!(buf["limits"]["response_bytes"], 262_144);
-    assert_eq!(
-        buf["fields"]["revision"]["type"],
-        "32 lowercase hex characters"
-    );
-    assert_eq!(buf["fields"]["token_env"]["default"], "anonymous");
-    assert!(
-        buf["fields"]["label"]["purpose"]
-            .as_str()
-            .unwrap()
-            .contains("GetCommits")
-    );
+    assert_kafka_following_and_limits(kafka);
+    assert_kafka_auth_schema(kafka);
 }
+
 #[test]
 fn dynamodb_catalog_exposes_native_read_configuration_without_credentials() {
     let output = dump(&["--datasource", "dynamodb"]);

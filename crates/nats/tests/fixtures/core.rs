@@ -23,6 +23,131 @@ pub fn subscriptions(subject: &str) -> usize {
         .count()
 }
 
+async fn reads_idle_and_unconfigured_subjects(executor: &NatsExecutor, subject: &str) {
+    let idle = read(executor, "nats.core_messages", &[subject], None, false)
+        .await
+        .unwrap();
+    assert!(idle.rows.is_empty() && idle.continuation.is_none());
+    assert_eq!(subscriptions(subject), 0);
+    assert!(
+        read(
+            executor,
+            "nats.core_messages",
+            &["unconfigured"],
+            None,
+            true
+        )
+        .await
+        .is_err()
+    );
+}
+
+async fn follows_published_messages(
+    executor: &NatsExecutor,
+    admin: &async_nats::Client,
+    subject: &str,
+) -> Option<String> {
+    let start = read(executor, "nats.core_messages", &[subject], None, true)
+        .await
+        .unwrap();
+    assert_eq!(subscriptions(subject), 1);
+    let mut headers = async_nats::HeaderMap::new();
+    headers.append("X-Demo", "one");
+    headers.append("X-Demo", "two");
+    admin
+        .publish_with_headers(subject.to_owned(), headers, vec![0, 255, 128, 27].into())
+        .await
+        .unwrap();
+    admin
+        .publish(subject.to_owned(), Vec::new().into())
+        .await
+        .unwrap();
+    admin.flush().await.unwrap();
+    let mut token = start.continuation.clone();
+    let mut rows = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while rows.len() < 2 {
+        assert!(tokio::time::Instant::now() < deadline);
+        let page = read(executor, "nats.core_messages", &[subject], token, true)
+            .await
+            .unwrap();
+        token = page.continuation;
+        rows.extend(page.rows);
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(rows[0].cells[2], Some(Value::Bytes(vec![0, 255, 128, 27])));
+    assert_eq!(rows[1].cells[2], Some(Value::Bytes(Vec::new())));
+    let headers: Json = serde_json::from_slice(rows[0].cells[3].as_ref().unwrap().bytes()).unwrap();
+    assert_eq!(headers[0]["values"], json!(["one", "two"]));
+    token
+}
+
+async fn stops_and_restarts(
+    executor: &NatsExecutor,
+    admin: &async_nats::Client,
+    subject: &str,
+    token: Option<String>,
+) -> Option<String> {
+    executor
+        .stop_follow(ShutdownContext::new(Duration::from_secs(2)))
+        .await
+        .unwrap();
+    assert_eq!(subscriptions(subject), 0);
+    assert!(
+        read(executor, "nats.core_messages", &[subject], token, true)
+            .await
+            .is_err()
+    );
+    admin
+        .publish(subject.to_owned(), "missed while stopped".into())
+        .await
+        .unwrap();
+    admin.flush().await.unwrap();
+    let start = read(executor, "nats.core_messages", &[subject], None, true)
+        .await
+        .unwrap();
+    let quiet = read(
+        executor,
+        "nats.core_messages",
+        &[subject],
+        start.continuation,
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(quiet.rows.is_empty());
+    quiet.continuation
+}
+
+async fn overflows_when_unread(
+    executor: &NatsExecutor,
+    admin: &async_nats::Client,
+    subject: &str,
+    token: Option<String>,
+) {
+    // A burst can still be in transit when a busy runner reads the next page.
+    let error = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut token = token;
+        loop {
+            for _ in 0..100 {
+                admin
+                    .publish(subject.to_owned(), "overflow".into())
+                    .await
+                    .unwrap();
+            }
+            admin.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            match read(executor, "nats.core_messages", &[subject], token, true).await {
+                Err(error) => break error,
+                Ok(page) => token = page.continuation,
+            }
+        }
+    })
+    .await
+    .expect("Core subscription did not overflow");
+    assert!(error.to_string().contains("overflow"), "{error:#}");
+}
+
 #[tokio::test]
 #[ignore = "disposable Core NATS subjects only; no JetStream consumer or application acknowledgements"]
 async fn core_subscriptions_bytes_limits_restart_and_unsubscribe() {
@@ -50,103 +175,10 @@ async fn core_subscriptions_bytes_limits_restart_and_unsubscribe() {
             .await
             .is_err()
     );
-    let idle = read(&executor, "nats.core_messages", &[&subject], None, false)
-        .await
-        .unwrap();
-    assert!(idle.rows.is_empty() && idle.continuation.is_none());
-    assert_eq!(subscriptions(&subject), 0);
-    assert!(
-        read(
-            &executor,
-            "nats.core_messages",
-            &["unconfigured"],
-            None,
-            true
-        )
-        .await
-        .is_err()
-    );
-    let start = read(&executor, "nats.core_messages", &[&subject], None, true)
-        .await
-        .unwrap();
-    assert_eq!(subscriptions(&subject), 1);
-    let mut headers = async_nats::HeaderMap::new();
-    headers.append("X-Demo", "one");
-    headers.append("X-Demo", "two");
-    admin
-        .publish_with_headers(subject.clone(), headers, vec![0, 255, 128, 27].into())
-        .await
-        .unwrap();
-    admin
-        .publish(subject.clone(), Vec::new().into())
-        .await
-        .unwrap();
-    admin.flush().await.unwrap();
-    let mut token = start.continuation.clone();
-    let mut rows = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-    while rows.len() < 2 {
-        assert!(tokio::time::Instant::now() < deadline);
-        let page = read(&executor, "nats.core_messages", &[&subject], token, true)
-            .await
-            .unwrap();
-        token = page.continuation;
-        rows.extend(page.rows);
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(rows[0].cells[2], Some(Value::Bytes(vec![0, 255, 128, 27])));
-    assert_eq!(rows[1].cells[2], Some(Value::Bytes(Vec::new())));
-    let headers: Json = serde_json::from_slice(rows[0].cells[3].as_ref().unwrap().bytes()).unwrap();
-    assert_eq!(headers[0]["values"], json!(["one", "two"]));
-    executor
-        .stop_follow(ShutdownContext::new(Duration::from_secs(2)))
-        .await
-        .unwrap();
-    assert_eq!(subscriptions(&subject), 0);
-    assert!(
-        read(&executor, "nats.core_messages", &[&subject], token, true)
-            .await
-            .is_err()
-    );
-    admin
-        .publish(subject.clone(), "missed while stopped".into())
-        .await
-        .unwrap();
-    admin.flush().await.unwrap();
-    let start = read(&executor, "nats.core_messages", &[&subject], None, true)
-        .await
-        .unwrap();
-    let quiet = read(
-        &executor,
-        "nats.core_messages",
-        &[&subject],
-        start.continuation,
-        true,
-    )
-    .await
-    .unwrap();
-    assert!(quiet.rows.is_empty());
-    // A burst can still be in transit when a busy runner reads the next page.
-    let error = tokio::time::timeout(Duration::from_secs(3), async {
-        let mut token = quiet.continuation;
-        loop {
-            for _ in 0..100 {
-                admin
-                    .publish(subject.clone(), "overflow".into())
-                    .await
-                    .unwrap();
-            }
-            admin.flush().await.unwrap();
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            match read(&executor, "nats.core_messages", &[&subject], token, true).await {
-                Err(error) => break error,
-                Ok(page) => token = page.continuation,
-            }
-        }
-    })
-    .await
-    .expect("Core subscription did not overflow");
-    assert!(error.to_string().contains("overflow"), "{error:#}");
+    reads_idle_and_unconfigured_subjects(&executor, &subject).await;
+    let token = follows_published_messages(&executor, &admin, &subject).await;
+    let token = stops_and_restarts(&executor, &admin, &subject, token).await;
+    overflows_when_unread(&executor, &admin, &subject, token).await;
     close(&mut executor).await;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while subscriptions(&subject) != 0 {

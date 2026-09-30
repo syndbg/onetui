@@ -110,6 +110,57 @@ impl Drop for Lease<'_> {
     }
 }
 
+struct ReadPlan {
+    query: Option<crate::query::Read>,
+    stream_read: bool,
+    follow: bool,
+}
+
+async fn dispatch(
+    client: &Client,
+    streams: &aws_sdk_dynamodbstreams::Client,
+    request: &PageRequest,
+    plan: ReadPlan,
+    position: Option<&serde_json::Value>,
+    progress: &mut Progress,
+) -> Result<(Page, Option<serde_json::Value>)> {
+    let name = request.resource.path.first().map_or("", String::as_str);
+    let result = if let Some(crate::query::Read::GetRecords {
+        shard_id,
+        sequence_number,
+        after,
+        limit,
+    }) = &plan.query
+    {
+        crate::streams::replay(
+            streams,
+            name,
+            shard_id,
+            sequence_number,
+            *after,
+            *limit,
+            position,
+        )
+        .await?
+    } else if plan.stream_read {
+        crate::streams::read(streams, &request.resource, position, plan.follow).await?
+    } else if let Some(query) = plan.query {
+        run_query(client, name, query, position, progress).await?
+    } else {
+        crate::browse::metadata(
+            request.resource.id,
+            crate::api::metadata(
+                client,
+                request.resource.id,
+                &request.resource.path,
+                position,
+            )
+            .await?,
+        )?
+    };
+    Ok(result)
+}
+
 #[derive(Default)]
 struct Progress {
     dispatched: bool,
@@ -234,6 +285,43 @@ impl DynamoDbExecutor {
         })
     }
 
+    fn check_stream_read(
+        &self,
+        request: &PageRequest,
+        query: Option<&crate::query::Read>,
+        stream_read: bool,
+    ) -> Result<()> {
+        ensure!(
+            !stream_read
+                || self.config.endpoint_url.is_none()
+                || self.config.streams_endpoint_url.is_some(),
+            "Custom DynamoDB endpoints require streams_endpoint_url for Streams reads"
+        );
+        if matches!(query, Some(crate::query::Read::GetRecords { .. })) {
+            ensure!(
+                request.resource.path[0].starts_with("arn:")
+                    && request.resource.path[0].contains(":table/")
+                    && request.resource.path[0].contains("/stream/"),
+                "GetRecords requires a selected stream ARN; open Streams first"
+            );
+        }
+        Ok(())
+    }
+
+    fn describe(&self, error: &anyhow::Error) -> anyhow::Error {
+        let outcome = error
+            .downcast_ref::<crate::partiql::Failure>()
+            .map(|failure| failure.0.outcome);
+        let error = onetui_core::diagnostic(
+            error,
+            &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        match outcome {
+            Some(outcome) => crate::partiql::Failure::error(outcome, error.to_string()),
+            None => error,
+        }
+    }
+
     async fn read(
         &self,
         request: PageRequest,
@@ -272,20 +360,7 @@ impl DynamoDbExecutor {
         );
         let stream_read = crate::streams::is_resource(request.resource.id)
             || matches!(query, Some(crate::query::Read::GetRecords { .. }));
-        ensure!(
-            !stream_read
-                || self.config.endpoint_url.is_none()
-                || self.config.streams_endpoint_url.is_some(),
-            "Custom DynamoDB endpoints require streams_endpoint_url for Streams reads"
-        );
-        if matches!(query, Some(crate::query::Read::GetRecords { .. })) {
-            ensure!(
-                request.resource.path[0].starts_with("arn:")
-                    && request.resource.path[0].contains(":table/")
-                    && request.resource.path[0].contains("/stream/"),
-                "GetRecords requires a selected stream ARN; open Streams first"
-            );
-        }
+        self.check_stream_read(&request, query.as_ref(), stream_read)?;
         let query_request = request.resource.id == "dynamodb.query";
         let mut lease = Lease {
             client: context.run(self.client.lock()).await?,
@@ -310,41 +385,20 @@ impl DynamoDbExecutor {
                 } else {
                     &session.streams
                 };
-                let name = request.resource.path.first().map_or("", String::as_str);
-                let (mut page, token) = if let Some(crate::query::Read::GetRecords {
-                    shard_id,
-                    sequence_number,
-                    after,
-                    limit,
-                }) = &query
-                {
-                    crate::streams::replay(
-                        streams,
-                        name,
-                        shard_id,
-                        sequence_number,
-                        *after,
-                        *limit,
-                        position.as_ref(),
-                    )
-                    .await?
-                } else if stream_read {
-                    crate::streams::read(streams, &request.resource, position.as_ref(), follow)
-                        .await?
-                } else if let Some(query) = query {
-                    run_query(client, name, query, position.as_ref(), &mut progress).await?
-                } else {
-                    crate::browse::metadata(
-                        request.resource.id,
-                        crate::api::metadata(
-                            client,
-                            request.resource.id,
-                            &request.resource.path,
-                            position.as_ref(),
-                        )
-                        .await?,
-                    )?
+                let plan = ReadPlan {
+                    query,
+                    stream_read,
+                    follow,
                 };
+                let (mut page, token) = dispatch(
+                    client,
+                    streams,
+                    &request,
+                    plan,
+                    position.as_ref(),
+                    &mut progress,
+                )
+                .await?;
                 let closed = stream_read && token.as_ref().is_some_and(crate::streams::closed);
                 crate::browse::continuation(
                     &mut page,
@@ -371,19 +425,7 @@ impl DynamoDbExecutor {
             lease.clean = true;
             self.status.send_replace(ConnectionStatus::Connected);
         }
-        result.map_err(|error| {
-            let outcome = error
-                .downcast_ref::<crate::partiql::Failure>()
-                .map(|failure| failure.0.outcome);
-            let error = onetui_core::diagnostic(
-                &error,
-                &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-            );
-            match outcome {
-                Some(outcome) => crate::partiql::Failure::error(outcome, error.to_string()),
-                None => error,
-            }
-        })
+        result.map_err(|error| self.describe(&error))
     }
 }
 

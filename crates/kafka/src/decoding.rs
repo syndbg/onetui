@@ -431,42 +431,8 @@ impl Bindings {
             page.columns.extend(columns);
             return Ok(());
         }
-        let mut available = available - reserved;
         page.columns.extend(columns);
-        for row in &mut page.rows {
-            for (index, entry, identity) in &mut selected {
-                remaining()?;
-                let mut schema_identity = identity.clone();
-                let (decoded, error, native, native_error) =
-                    row.cells[*index]
-                        .as_ref()
-                        .map_or((None, None, None, None), |value| {
-                            let result = if available == 0 {
-                                Err(anyhow::anyhow!(
-                                    "Decoded preview exceeds remaining page budget"
-                                ))
-                            } else {
-                                let (resolved, result) = entry.preview(value.bytes(), &remaining);
-                                schema_identity = resolved;
-                                result
-                            };
-                            let (json, native) = match result {
-                                Ok(preview) => (preview.json, preview.native),
-                                Err(error) => (Err(anyhow::anyhow!("{error:#}")), Err(error)),
-                            };
-                            let (decoded, error) = preview_cell(json, &mut available);
-                            let (native, native_error) = preview_cell(native, &mut available);
-                            (decoded, error, native, native_error)
-                        });
-                row.cells.extend([
-                    decoded,
-                    schema_identity.map(Value::Text),
-                    error,
-                    native,
-                    native_error,
-                ]);
-            }
-        }
+        fill_rows(page, &mut selected, available - reserved, &remaining)?;
         remaining()?;
         ensure!(
             page.bytes() <= PAGE_BYTES,
@@ -474,6 +440,49 @@ impl Bindings {
         );
         Ok(())
     }
+}
+
+fn fill_rows(
+    page: &mut Page,
+    selected: &mut [(usize, &mut Entry, Option<String>)],
+    mut available: usize,
+    remaining: &impl Fn() -> Result<()>,
+) -> Result<()> {
+    for row in &mut page.rows {
+        for (index, entry, identity) in &mut *selected {
+            remaining()?;
+            let mut schema_identity = identity.clone();
+            let (decoded, error, native, native_error) =
+                row.cells[*index]
+                    .as_ref()
+                    .map_or((None, None, None, None), |value| {
+                        let result = if available == 0 {
+                            Err(anyhow::anyhow!(
+                                "Decoded preview exceeds remaining page budget"
+                            ))
+                        } else {
+                            let (resolved, result) = entry.preview(value.bytes(), remaining);
+                            schema_identity = resolved;
+                            result
+                        };
+                        let (json, native) = match result {
+                            Ok(preview) => (preview.json, preview.native),
+                            Err(error) => (Err(anyhow::anyhow!("{error:#}")), Err(error)),
+                        };
+                        let (decoded, error) = preview_cell(json, &mut available);
+                        let (native, native_error) = preview_cell(native, &mut available);
+                        (decoded, error, native, native_error)
+                    });
+            row.cells.extend([
+                decoded,
+                schema_identity.map(Value::Text),
+                error,
+                native,
+                native_error,
+            ]);
+        }
+    }
+    Ok(())
 }
 
 fn preview_cell(result: Result<String>, available: &mut usize) -> (Option<Value>, Option<Value>) {

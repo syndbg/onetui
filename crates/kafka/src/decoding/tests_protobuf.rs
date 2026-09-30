@@ -14,10 +14,8 @@ fn protobuf_catalog_uses_exact_message_and_preserves_raw_value() {
     protobuf_binding(true);
 }
 
-fn protobuf_binding(catalog: bool) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("event.pb");
-    let schema = FileDescriptorSet {
+fn event_schema() -> Vec<u8> {
+    FileDescriptorSet {
         file: vec![
             FileDescriptorProto {
                 name: Some("event.proto".into()),
@@ -44,8 +42,10 @@ fn protobuf_binding(catalog: bool) {
             },
         ],
     }
-    .encode_to_vec();
-    std::fs::write(&path, &schema).unwrap();
+    .encode_to_vec()
+}
+
+fn event_binding(catalog: bool, path: &std::path::Path, dir: &std::path::Path) -> Binding {
     let mut binding = Binding {
         reader_schema_file: None,
         topic: "events".into(),
@@ -61,7 +61,7 @@ fn protobuf_binding(catalog: bool) {
     if catalog {
         binding.schema_file = None;
         binding.catalog = Some(crate::catalog::Config {
-            directory: dir.path().to_str().unwrap().into(),
+            directory: dir.to_str().unwrap().into(),
             schema: "event".into(),
             references: vec![],
         });
@@ -73,8 +73,11 @@ fn protobuf_binding(catalog: bool) {
     let mut wrong = binding.clone();
     wrong.message_name = Some("Event".into());
     assert!(Bindings::new(vec![wrong]).check(|| Ok(())).is_err());
-    let mut bindings = Bindings::new(vec![binding]);
-    let mut page = Page {
+    binding
+}
+
+fn raw_page() -> Page {
+    Page {
         columns: vec![
             Column {
                 name: "key".into(),
@@ -96,8 +99,20 @@ fn protobuf_binding(catalog: bool) {
             })
             .collect(),
         ..Page::default()
-    };
-    bindings.project("events", &mut page, || Ok(())).unwrap();
+    }
+}
+
+fn assert_binding_validation(binding: &Binding) {
+    validate(std::slice::from_ref(binding)).unwrap();
+    let mut invalid = binding.clone();
+    invalid.message_name = None;
+    assert!(validate(&[invalid]).is_err());
+    let mut wrong = binding.clone();
+    wrong.message_name = Some("Event".into());
+    assert!(Bindings::new(vec![wrong]).check(|| Ok(())).is_err());
+}
+
+fn assert_projection(page: &Page) {
     assert_eq!(page.columns[2].name, "key_decoded");
     assert_eq!(
         page.rows[0].cells[2],
@@ -117,24 +132,46 @@ fn protobuf_binding(catalog: bool) {
     for row in &page.rows {
         assert_eq!(row.cells[1], Some(Value::Bytes(b"untouched".to_vec())));
     }
+}
+
+fn assert_catalog_survives_import_removal(
+    page: &Page,
+    bindings: &mut Bindings,
+    schema: &[u8],
+    path: &std::path::Path,
+) {
+    assert!(
+        page.rows[0].cells[3]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("#schema=event:protobuf:sha256:")
+    );
+    let mut missing_import = FileDescriptorSet::decode(schema).unwrap();
+    missing_import.file.pop();
+    std::fs::write(path, missing_import.encode_to_vec()).unwrap();
+    bindings.check(|| Ok(())).unwrap();
+    let mut reopened = Bindings::new(vec![bindings.0[0].binding.clone()]);
+    assert!(reopened.check(|| Ok(())).is_err());
+    assert_eq!(
+        page.rows[0].cells[2],
+        Some(Value::Json(r#"{"id":"7"}"#.into()))
+    );
+}
+
+fn protobuf_binding(catalog: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("event.pb");
+    let schema = event_schema();
+    std::fs::write(&path, &schema).unwrap();
+    let binding = event_binding(catalog, &path, dir.path());
+    assert_binding_validation(&binding);
+    let mut bindings = Bindings::new(vec![binding]);
+    let mut page = raw_page();
+    bindings.project("events", &mut page, || Ok(())).unwrap();
+    assert_projection(&page);
     if catalog {
-        assert!(
-            page.rows[0].cells[3]
-                .as_ref()
-                .unwrap()
-                .text()
-                .unwrap()
-                .contains("#schema=event:protobuf:sha256:")
-        );
-        let mut missing_import = FileDescriptorSet::decode(schema.as_slice()).unwrap();
-        missing_import.file.pop();
-        std::fs::write(&path, missing_import.encode_to_vec()).unwrap();
-        bindings.check(|| Ok(())).unwrap();
-        let mut reopened = Bindings::new(vec![bindings.0[0].binding.clone()]);
-        assert!(reopened.check(|| Ok(())).is_err());
-        assert_eq!(
-            page.rows[0].cells[2],
-            Some(Value::Json(r#"{"id":"7"}"#.into()))
-        );
+        assert_catalog_survives_import_removal(&page, &mut bindings, &schema, &path);
     }
 }
