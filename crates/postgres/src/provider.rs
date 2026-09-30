@@ -177,6 +177,54 @@ impl PostgresExecutor {
         Ok(())
     }
 
+    fn query_outcome(
+        &self,
+        attempt: Result<Result<QueryExecution>>,
+        dispatched: bool,
+    ) -> Result<QueryExecution> {
+        match attempt {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) if dispatched => {
+                let rejected = error
+                    .downcast_ref::<tokio_postgres::Error>()
+                    .is_some_and(|error| error.as_db_error().is_some());
+                let outcome = if rejected {
+                    WriteOutcome::Rejected
+                } else {
+                    WriteOutcome::Unknown
+                };
+                let error = match error.downcast::<tokio_postgres::Error>() {
+                    Ok(error) => self.diagnostic(&crate::browse::pg_error(error)),
+                    Err(error) => self.diagnostic(&error),
+                };
+                Ok(QueryExecution::Write(WriteResult {
+                    outcome,
+                    summary: if rejected {
+                        format!("PostgreSQL rejected the statement: {error}")
+                    } else {
+                        format!(
+                            "Statement outcome unknown: {error}. Inspect the target before retrying"
+                        )
+                    },
+                }))
+            }
+            Err(error) if dispatched => Ok(QueryExecution::Write(WriteResult {
+                outcome: WriteOutcome::Unknown,
+                summary: format!(
+                    "Statement outcome unknown: {}. Inspect the target before retrying",
+                    self.diagnostic(&error)
+                ),
+            })),
+            Ok(Err(error)) | Err(error) => {
+                let error = match error.downcast::<tokio_postgres::Error>() {
+                    Ok(error) => crate::browse::pg_error(error),
+                    Err(error) => error,
+                };
+                Err(self.diagnostic(&error))
+            }
+        }
+    }
+
     fn diagnostic(&self, error: &anyhow::Error) -> anyhow::Error {
         let config = self.url.parse::<tokio_postgres::Config>().ok();
         let password = config
@@ -431,47 +479,7 @@ impl Executor for PostgresExecutor {
             .await;
         let reusable = matches!(&attempt, Ok(Ok(_)))
             || matches!(&attempt, Ok(Err(error)) if error.downcast_ref::<tokio_postgres::Error>().is_some_and(|error| error.as_db_error().is_some()));
-        let result = match attempt {
-            Ok(Ok(result)) => Ok(result),
-            Ok(Err(error)) if dispatched => {
-                let rejected = error
-                    .downcast_ref::<tokio_postgres::Error>()
-                    .is_some_and(|error| error.as_db_error().is_some());
-                let outcome = if rejected {
-                    WriteOutcome::Rejected
-                } else {
-                    WriteOutcome::Unknown
-                };
-                let error = match error.downcast::<tokio_postgres::Error>() {
-                    Ok(error) => self.diagnostic(&crate::browse::pg_error(error)),
-                    Err(error) => self.diagnostic(&error),
-                };
-                Ok(QueryExecution::Write(WriteResult {
-                    outcome,
-                    summary: if rejected {
-                        format!("PostgreSQL rejected the statement: {error}")
-                    } else {
-                        format!(
-                            "Statement outcome unknown: {error}. Inspect the target before retrying"
-                        )
-                    },
-                }))
-            }
-            Err(error) if dispatched => Ok(QueryExecution::Write(WriteResult {
-                outcome: WriteOutcome::Unknown,
-                summary: format!(
-                    "Statement outcome unknown: {}. Inspect the target before retrying",
-                    self.diagnostic(&error)
-                ),
-            })),
-            Ok(Err(error)) | Err(error) => {
-                let error = match error.downcast::<tokio_postgres::Error>() {
-                    Ok(error) => crate::browse::pg_error(error),
-                    Err(error) => error,
-                };
-                Err(self.diagnostic(&error))
-            }
-        };
+        let result = self.query_outcome(attempt, dispatched);
         let clean = if reusable {
             if let Some(session) = lease.session.as_ref() {
                 // One-shot queries must not leave transaction or session state for browsing.

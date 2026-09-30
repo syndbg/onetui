@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table, TableStat
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::App;
+use crate::worker::{Worker, WorkerEvent};
 #[cfg(test)]
 use onetui_core::Page;
 use onetui_core::catalog::Action;
@@ -84,6 +85,17 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Min(0),
     ])
     .areas(inner);
+    context_fields(frame, details, app, p);
+    if keys.width == 0 {
+        return;
+    }
+    if context_hints(frame, keys, app, p) {
+        return;
+    }
+    context_actions(frame, keys, app, p);
+}
+
+fn context_fields(frame: &mut Frame, details: Rect, app: &App, p: &Palette) {
     let alias = app.view.alias.as_deref().unwrap_or("choose connection");
     let kind = app
         .view
@@ -145,9 +157,10 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
         ),
         details,
     );
-    if keys.width == 0 {
-        return;
-    }
+}
+
+/// Mode-specific key hints. True when a mode owns the hint area.
+fn context_hints(frame: &mut Frame, keys: Rect, app: &App, p: &Palette) -> bool {
     if let Some(form) = &app.connection_form {
         let hints = if form.choosing {
             vec![
@@ -166,7 +179,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             ]
         };
         key_hints(frame, keys, p, &hints, &[]);
-        return;
+        return true;
     }
     if app.query_editor.is_some() {
         let hints = [
@@ -178,7 +191,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             ("", "16 KiB; draft kept in memory"),
         ];
         key_hints(frame, keys, p, &hints, &[]);
-        return;
+        return true;
     } else if app.history_menu.is_some() {
         key_hints(
             frame,
@@ -191,7 +204,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             ],
             &[],
         );
-        return;
+        return true;
     } else if app.display_menu.is_some() {
         key_hints(
             frame,
@@ -206,7 +219,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             ],
             &[],
         );
-        return;
+        return true;
     }
     if app.theme_menu.is_some() {
         key_hints(
@@ -222,7 +235,7 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             ],
             &[],
         );
-        return;
+        return true;
     }
     if app.command.is_some() || app.filter_input.is_some() {
         let hints: &[(&str, &str)] = if app.filter_input.is_some() {
@@ -242,8 +255,12 @@ fn context(frame: &mut Frame, area: Rect, app: &App) {
             ]
         };
         key_hints(frame, keys, p, hints, &[]);
-        return;
+        return true;
     }
+    false
+}
+
+fn context_actions(frame: &mut Frame, keys: Rect, app: &App, p: &Palette) {
     let actions: Vec<_> = app.context_actions().collect();
     let column_count = actions.len().div_ceil(6).max(1);
     let columns = Layout::horizontal(vec![Constraint::Fill(1); column_count]).split(keys);
@@ -324,6 +341,103 @@ fn terminal() -> Result<(TerminalGuard, DefaultTerminal)> {
     Ok((guard, terminal))
 }
 
+fn sync_worker<P: onetui_core::provider::Provider>(
+    app: &mut App,
+    worker: &mut Option<Worker>,
+    catalog: &[P],
+    deadline: Duration,
+) -> Result<()>
+where
+    P::Executor: 'static,
+{
+    if let Some(active) = worker {
+        if !app.following {
+            active.pause_follow();
+        }
+        if app.view.alias.as_deref() != Some(active.alias.as_str()) || app.session != active.session
+        {
+            active.stop();
+        } else if active
+            .request
+            .as_ref()
+            .is_some_and(|request| request.id != app.generation)
+        {
+            active.cancel();
+        }
+    }
+    if worker.is_none() && app.request.is_some() {
+        let alias = app.request.as_ref().expect("pending request").alias.clone();
+        match app
+            .config
+            .configure(&alias, catalog, &|name| std::env::var(name).ok())
+        {
+            Ok(executor) => *worker = Some(Worker::new(alias, app.session, executor)),
+            Err(error) => {
+                let request = app.request.take().expect("pending request");
+                app.complete(&request, Err(error));
+            }
+        }
+    }
+    if let Some(active) = worker
+        && !active.closing
+        && active.request.is_none()
+        && let Some(request) = app.request.take()
+    {
+        active.submit(request, deadline)?;
+    }
+    Ok(())
+}
+
+fn handle_worker_event(
+    app: &mut App,
+    worker: &mut Option<Worker>,
+    event: WorkerEvent,
+) -> Result<()> {
+    match event {
+        WorkerEvent::Execution(result) => {
+            let request = worker
+                .as_mut()
+                .expect("active worker")
+                .request
+                .take()
+                .expect("completed request");
+            if worker.as_ref().is_some_and(|w| w.session == app.session) {
+                app.complete_execution(&request, result);
+            }
+        }
+        WorkerEvent::Status(status) => {
+            if let Some(worker) = &worker {
+                app.update_connection_status(worker.session, &worker.alias, status);
+            }
+        }
+        WorkerEvent::Finished(result) => {
+            let finished = worker.take().expect("finished worker");
+            result?;
+            ensure!(finished.closing, "browsing worker stopped unexpectedly");
+        }
+    }
+    Ok(())
+}
+
+async fn stop_worker(worker: &mut Option<Worker>) -> Result<()> {
+    if let Some(active) = worker {
+        active.stop();
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut active.task).await {
+            result
+                .map_err(|_| anyhow!("browsing worker failed; terminal restored"))
+                .and_then(|r| r)
+        } else {
+            active.task.abort();
+            let _ = (&mut active.task).await;
+            Err(anyhow!(
+                "browsing worker shutdown timed out; connections discarded"
+            ))
+        }
+    } else {
+        Ok(())
+    }
+}
+
 /// # Errors
 ///
 /// Returns an error when the terminal cannot be initialised or drawn.
@@ -339,7 +453,6 @@ pub async fn run<P: onetui_core::provider::Provider>(
 where
     P::Executor: 'static,
 {
-    use crate::worker::{Worker, WorkerEvent};
     app.providers = catalog
         .iter()
         .map(onetui_core::provider::Provider::descriptor)
@@ -350,32 +463,7 @@ where
     let outcome = async {
         while !app.quit {
             app.save_connection(catalog);
-            if let Some(active) = &mut worker {
-                if !app.following {
-                    active.pause_follow();
-                }
-                if app.view.alias.as_deref() != Some(active.alias.as_str()) || app.session != active.session {
-                    active.stop();
-                } else if active.request.as_ref().is_some_and(|request| request.id != app.generation) {
-                    active.cancel();
-                }
-            }
-            if worker.is_none() && app.request.is_some() {
-                let alias = app.request.as_ref().expect("pending request").alias.clone();
-                match app.config.configure(&alias, catalog, &|name| std::env::var(name).ok()) {
-                    Ok(executor) => worker = Some(Worker::new(alias, app.session, executor)),
-                    Err(error) => {
-                        let request = app.request.take().expect("pending request");
-                        app.complete(&request, Err(error));
-                    }
-                }
-            }
-            if let Some(active) = &mut worker
-                && !active.closing && active.request.is_none()
-                && let Some(request) = app.request.take()
-            {
-                active.submit(request, deadline)?;
-            }
+            sync_worker(&mut app, &mut worker, catalog, deadline)?;
             terminal.draw(|frame| {
                 app.viewport = frame.area();
                 draw(frame, &app);
@@ -395,45 +483,13 @@ where
                     app.act(Action::Cancel);
                 },
                 event = async { worker.as_mut().expect("guarded worker").event().await }, if worker.is_some() => {
-                    match event {
-                        WorkerEvent::Execution(result) => {
-                            let request = worker.as_mut().expect("active worker").request.take().expect("completed request");
-                            if worker.as_ref().is_some_and(|w| w.session == app.session) {
-                                app.complete_execution(&request, result);
-                            }
-                        }
-                        WorkerEvent::Status(status) => {
-                            if let Some(worker) = &worker {
-                                app.update_connection_status(worker.session, &worker.alias, status);
-                            }
-                        }
-                        WorkerEvent::Finished(result) => {
-                            let finished = worker.take().expect("finished worker");
-                            result?;
-                            ensure!(finished.closing, "browsing worker stopped unexpectedly");
-                        }
-                    }
+                    handle_worker_event(&mut app, &mut worker, event)?;
                 },
             }
         }
         Ok(())
     }.await;
-    let cleanup = if let Some(active) = &mut worker {
-        active.stop();
-        if let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut active.task).await {
-            result
-                .map_err(|_| anyhow!("browsing worker failed; terminal restored"))
-                .and_then(|r| r)
-        } else {
-            active.task.abort();
-            let _ = (&mut active.task).await;
-            Err(anyhow!(
-                "browsing worker shutdown timed out; connections discarded"
-            ))
-        }
-    } else {
-        Ok(())
-    };
+    let cleanup = stop_worker(&mut worker).await;
     match (outcome, cleanup) {
         (Err(primary), Err(cleanup)) => Err(anyhow!("{primary}; cleanup: {cleanup}")),
         (Err(error), _) | (_, Err(error)) => Err(error),
@@ -494,28 +550,38 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect::<Vec<_>>();
     if inner.width < 60 {
-        let lines = entries
-            .iter()
-            .flat_map(|(key, command, description)| {
-                [
-                    Line::from(vec![
-                        Span::styled(key, Style::new().fg(color(p.key_hint)).bold()),
-                        Span::styled(
-                            format!("  :{command}"),
-                            Style::new().fg(color(p.identifier)),
-                        ),
-                    ]),
-                    Line::raw(*description),
-                    Line::default(),
-                ]
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(
-            wrapping(Paragraph::new(lines), app).scroll((app.detail_scroll, app.horizontal_scroll)),
-            inner,
-        );
+        help_narrow(frame, inner, app, p, &entries);
         return;
     }
+    help_table(frame, inner, app, p, entries);
+}
+
+type HelpEntry = (String, String, &'static str);
+
+fn help_narrow(frame: &mut Frame, inner: Rect, app: &App, p: &Palette, entries: &[HelpEntry]) {
+    let lines = entries
+        .iter()
+        .flat_map(|(key, command, description)| {
+            [
+                Line::from(vec![
+                    Span::styled(key, Style::new().fg(color(p.key_hint)).bold()),
+                    Span::styled(
+                        format!("  :{command}"),
+                        Style::new().fg(color(p.identifier)),
+                    ),
+                ]),
+                Line::raw(*description),
+                Line::default(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        wrapping(Paragraph::new(lines), app).scroll((app.detail_scroll, app.horizontal_scroll)),
+        inner,
+    );
+}
+
+fn help_table(frame: &mut Frame, inner: Rect, app: &App, p: &Palette, entries: Vec<HelpEntry>) {
     let key_width = cells(
         entries
             .iter()
@@ -987,7 +1053,18 @@ fn connection_form(frame: &mut Frame, area: Rect, app: &App) {
         fields,
         &mut TableState::default().with_selected(Some(form.field)),
     );
-    let hint = if form.field == 0 {
+    let hint = field_hint(form);
+    frame.render_widget(
+        wrapping(
+            Paragraph::new(hint).style(Style::new().fg(color(p.muted))),
+            app,
+        ),
+        help,
+    );
+}
+
+fn field_hint(form: &crate::connection::Form) -> String {
+    if form.field == 0 {
         "Alias: ASCII letters, digits, underscores or hyphens. Optional fields may stay blank."
             .into()
     } else {
@@ -1014,14 +1091,7 @@ fn connection_form(frame: &mut Frame, area: Rect, app: &App) {
         format!(
             "{input}. {purpose}{values}{default}{required}\nNested settings (OAuth, decoders): edit TOML; see onetui schema."
         )
-    };
-    frame.render_widget(
-        wrapping(
-            Paragraph::new(hint).style(Style::new().fg(color(p.muted))),
-            app,
-        ),
-        help,
-    );
+    }
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -1038,185 +1108,224 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     let [query, body] = query_panels(body, app);
     if query.height > 0 {
-        let language = app.query_descriptor().map_or("Query", |d| d.language);
-        let hint = if app.loading {
-            "Loading | Esc cancel"
-        } else if app.query_editor.is_some() {
-            "Enter/F5 run | Esc rows"
-        } else {
-            "executed | e edit"
-        };
-        let title = if app.query_descriptor().is_some_and(|d| d.is_statement) {
-            language.to_owned()
-        } else {
-            format!("{language} query")
-        };
-        let block = panel(p, format!(" {title} | {hint} "));
-        let inner = if query.height > 2 {
-            block.inner(query)
-        } else {
-            query
-        };
-        if query.height > 2 {
-            frame.render_widget(block, query);
-        }
-        if let Some(editor) = &app.query_editor {
-            if editor.text.is_empty() {
-                if let Some(descriptor) = app.query_descriptor() {
-                    let watermark = descriptor.watermark(
-                        &app.view.resource,
-                        app.view
-                            .selected_index()
-                            .and_then(|index| app.view.page.rows.get(index)),
-                    );
-                    let lines = watermark
-                        .lines()
-                        .map(|line| Line::raw(display(line)))
-                        .collect::<Vec<_>>();
-                    frame.render_widget(
-                        wrapping(Paragraph::new(lines), app).style(Style::new().fg(color(p.muted))),
-                        inner,
-                    );
-                }
-            } else {
-                let kinds = syntax_kinds(app, &editor.text);
-                let (lines, row, column) = editor.lines(
-                    inner.width as usize,
-                    app.config.display.word_wrap,
-                    |offset| {
-                        kinds
-                            .get(offset)
-                            .map_or_else(Style::default, |&kind| syntax_style(p, kind))
-                    },
-                );
-                let top = row.saturating_sub(inner.height.saturating_sub(1) as usize);
-                let left = if app.config.display.word_wrap {
-                    0
-                } else {
-                    column.saturating_sub(inner.width.saturating_sub(1) as usize)
-                };
-                frame.render_widget(
-                    Paragraph::new(lines).scroll((cells(top), cells(left))),
-                    inner,
-                );
-            }
-        } else if let Some(text) = &app.view.query {
-            let kinds = syntax_kinds(app, text);
-            frame.render_widget(
-                wrapping(Paragraph::new(painted(text, &kinds, p)), app),
-                inner,
-            );
-        }
+        query_panel(frame, query, app, p);
     }
     if app.connection_form.is_some() {
         connection_form(frame, body, app);
     } else if app.history_menu.is_some() {
-        let entries = app
-            .history_entries()
-            .map(|query| Row::new([display(query.trim().lines().next().unwrap_or(""))]));
-        let table = Table::new(entries, [Constraint::Fill(1)])
-            .block(panel(p, " Query history | newest first "))
-            .row_highlight_style(
-                Style::new()
-                    .fg(color(p.selection_fg))
-                    .bg(color(p.selection_bg))
-                    .bold(),
-            )
-            .highlight_symbol("> ");
-        frame.render_stateful_widget(
-            table,
-            body,
-            &mut TableState::default().with_selected(app.history_menu),
-        );
+        history_menu(frame, body, app, p);
     } else if app.view.alias.is_none()
         && app.view.page.rows.is_empty()
         && !app.help
         && app.theme_menu.is_none()
         && app.display_menu.is_none()
     {
-        let path = app.config.path().map_or_else(
-            || "not configured".into(),
-            |path| display(&path.display().to_string()),
-        );
-        let text = format!(
-            "No connections yet. Press a to add one.\n\nConfig: {path}\nNothing is created until you save."
-        );
-        frame.render_widget(
-            wrapping(Paragraph::new(text), app).block(panel(p, " Connections ")),
-            body,
-        );
+        connection_hint(frame, body, app, p);
     } else if app.display_menu.is_some() && !app.help {
-        let options = app.config.display;
-        let mut entries: Vec<_> = onetui_core::value::FORMATS
-            .iter()
-            .enumerate()
-            .map(|(i, f)| {
-                let reason = app.display_reasons[i];
-                Row::new([
-                    format!(
-                        "{}{}",
-                        f.name,
-                        if app.detail && f.id == app.detail_format {
-                            " *"
-                        } else {
-                            ""
-                        }
-                    ),
-                    reason.to_owned(),
-                ])
-            })
-            .collect();
-        for (name, value) in [
-            ("pretty-print", options.pretty_print),
-            ("highlight", options.highlight),
-            ("word-wrap", options.word_wrap),
-        ] {
-            entries.push(Row::new([
-                name.to_owned(),
-                if value { "on" } else { "off" }.to_owned(),
-            ]));
-        }
-        entries.push(Row::new([
-            "unicode".to_owned(),
-            format!("{:?}", options.unicode).to_lowercase(),
-        ]));
-        let table = Table::new(entries, [Constraint::Length(16), Constraint::Min(1)])
-            .block(panel(p, " Display | * effective format "))
-            .row_highlight_style(
-                Style::new()
-                    .fg(color(p.selection_fg))
-                    .bg(color(p.selection_bg))
-                    .bold(),
-            )
-            .highlight_symbol("> ");
-        frame.render_stateful_widget(
-            table,
-            body,
-            &mut TableState::default().with_selected(app.display_menu),
-        );
+        display_menu(frame, body, app, p);
     } else if app.theme_menu.is_some() {
-        let rows = onetui_theme::Theme::ALL.iter().map(|theme| {
-            let name = serde_json::to_value(theme).unwrap();
-            Row::new([name.as_str().unwrap().to_owned()])
-        });
-        let table = Table::new(rows, [Constraint::Fill(1)])
-            .block(panel(p, " Themes | preview "))
-            .row_highlight_style(
-                Style::new()
-                    .fg(color(p.selection_fg))
-                    .bg(color(p.selection_bg))
-                    .bold(),
-            )
-            .highlight_symbol("> ");
-        let mut state = TableState::default().with_selected(Some(app.theme_index()));
-        frame.render_stateful_widget(table, body, &mut state);
+        theme_menu(frame, body, app, p);
     } else if app.help {
         help(frame, body, app);
     } else if app.detail {
+        detail(frame, body, app, p);
+    } else if app.row_detail {
+        row_detail(frame, body, app, p);
+    } else {
+        records(frame, body, app, p);
+    }
+    status_bar(frame, area, status, app, p);
+    popups(frame, area, app, p);
+}
+
+fn query_panel(frame: &mut Frame, query: Rect, app: &App, p: &Palette) {
+    let language = app.query_descriptor().map_or("Query", |d| d.language);
+    let hint = if app.loading {
+        "Loading | Esc cancel"
+    } else if app.query_editor.is_some() {
+        "Enter/F5 run | Esc rows"
+    } else {
+        "executed | e edit"
+    };
+    let title = if app.query_descriptor().is_some_and(|d| d.is_statement) {
+        language.to_owned()
+    } else {
+        format!("{language} query")
+    };
+    let block = panel(p, format!(" {title} | {hint} "));
+    let inner = if query.height > 2 {
+        block.inner(query)
+    } else {
+        query
+    };
+    if query.height > 2 {
+        frame.render_widget(block, query);
+    }
+    if let Some(editor) = &app.query_editor {
+        if editor.text.is_empty() {
+            if let Some(descriptor) = app.query_descriptor() {
+                let watermark = descriptor.watermark(
+                    &app.view.resource,
+                    app.view
+                        .selected_index()
+                        .and_then(|index| app.view.page.rows.get(index)),
+                );
+                let lines = watermark
+                    .lines()
+                    .map(|line| Line::raw(display(line)))
+                    .collect::<Vec<_>>();
+                frame.render_widget(
+                    wrapping(Paragraph::new(lines), app).style(Style::new().fg(color(p.muted))),
+                    inner,
+                );
+            }
+        } else {
+            let kinds = syntax_kinds(app, &editor.text);
+            let (lines, row, column) = editor.lines(
+                inner.width as usize,
+                app.config.display.word_wrap,
+                |offset| {
+                    kinds
+                        .get(offset)
+                        .map_or_else(Style::default, |&kind| syntax_style(p, kind))
+                },
+            );
+            let top = row.saturating_sub(inner.height.saturating_sub(1) as usize);
+            let left = if app.config.display.word_wrap {
+                0
+            } else {
+                column.saturating_sub(inner.width.saturating_sub(1) as usize)
+            };
+            frame.render_widget(
+                Paragraph::new(lines).scroll((cells(top), cells(left))),
+                inner,
+            );
+        }
+    } else if let Some(text) = &app.view.query {
+        let kinds = syntax_kinds(app, text);
         frame.render_widget(
-            wrapping(Paragraph::new(detail_spans(app)), app)
-                .scroll((app.detail_scroll, if app.config.display.word_wrap { 0 } else { app.horizontal_scroll }))
-                .block(panel(
+            wrapping(Paragraph::new(painted(text, &kinds, p)), app),
+            inner,
+        );
+    }
+}
+
+fn history_menu(frame: &mut Frame, body: Rect, app: &App, p: &Palette) {
+    let entries = app
+        .history_entries()
+        .map(|query| Row::new([display(query.trim().lines().next().unwrap_or(""))]));
+    let table = Table::new(entries, [Constraint::Fill(1)])
+        .block(panel(p, " Query history | newest first "))
+        .row_highlight_style(
+            Style::new()
+                .fg(color(p.selection_fg))
+                .bg(color(p.selection_bg))
+                .bold(),
+        )
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(
+        table,
+        body,
+        &mut TableState::default().with_selected(app.history_menu),
+    );
+}
+
+fn connection_hint(frame: &mut Frame, body: Rect, app: &App, p: &Palette) {
+    let path = app.config.path().map_or_else(
+        || "not configured".into(),
+        |path| display(&path.display().to_string()),
+    );
+    let text = format!(
+        "No connections yet. Press a to add one.\n\nConfig: {path}\nNothing is created until you save."
+    );
+    frame.render_widget(
+        wrapping(Paragraph::new(text), app).block(panel(p, " Connections ")),
+        body,
+    );
+}
+
+fn display_menu(frame: &mut Frame, body: Rect, app: &App, p: &Palette) {
+    let options = app.config.display;
+    let mut entries: Vec<_> = onetui_core::value::FORMATS
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let reason = app.display_reasons[i];
+            Row::new([
+                format!(
+                    "{}{}",
+                    f.name,
+                    if app.detail && f.id == app.detail_format {
+                        " *"
+                    } else {
+                        ""
+                    }
+                ),
+                reason.to_owned(),
+            ])
+        })
+        .collect();
+    for (name, value) in [
+        ("pretty-print", options.pretty_print),
+        ("highlight", options.highlight),
+        ("word-wrap", options.word_wrap),
+    ] {
+        entries.push(Row::new([
+            name.to_owned(),
+            if value { "on" } else { "off" }.to_owned(),
+        ]));
+    }
+    entries.push(Row::new([
+        "unicode".to_owned(),
+        format!("{:?}", options.unicode).to_lowercase(),
+    ]));
+    let table = Table::new(entries, [Constraint::Length(16), Constraint::Min(1)])
+        .block(panel(p, " Display | * effective format "))
+        .row_highlight_style(
+            Style::new()
+                .fg(color(p.selection_fg))
+                .bg(color(p.selection_bg))
+                .bold(),
+        )
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(
+        table,
+        body,
+        &mut TableState::default().with_selected(app.display_menu),
+    );
+}
+
+fn theme_menu(frame: &mut Frame, body: Rect, app: &App, p: &Palette) {
+    let rows = onetui_theme::Theme::ALL.iter().map(|theme| {
+        let name = serde_json::to_value(theme).unwrap();
+        Row::new([name.as_str().unwrap().to_owned()])
+    });
+    let table = Table::new(rows, [Constraint::Fill(1)])
+        .block(panel(p, " Themes | preview "))
+        .row_highlight_style(
+            Style::new()
+                .fg(color(p.selection_fg))
+                .bg(color(p.selection_bg))
+                .bold(),
+        )
+        .highlight_symbol("> ");
+    let mut state = TableState::default().with_selected(Some(app.theme_index()));
+    frame.render_stateful_widget(table, body, &mut state);
+}
+
+fn detail(frame: &mut Frame, body: Rect, app: &App, p: &Palette) {
+    frame.render_widget(
+        wrapping(Paragraph::new(detail_spans(app)), app)
+            .scroll((
+                app.detail_scroll,
+                if app.config.display.word_wrap {
+                    0
+                } else {
+                    app.horizontal_scroll
+                },
+            ))
+            .block(
+                panel(
                     p,
                     format!(
                         "Field {}/{} | chunk {}/{} | h/l fields, j/k scroll, n/p chunks, Esc back",
@@ -1225,190 +1334,198 @@ pub fn draw(frame: &mut Frame, app: &App) {
                         app.detail_chunk + 1,
                         app.detail_chunks
                     ),
-                ).title_bottom(app.detail_notice)),
-            body,
-        );
-    } else if app.row_detail {
-        let index = app.view.selected_index().expect("selected row");
-        let available = body.width.saturating_sub(6);
-        let metadata_width = available / 4;
-        let value_width = available - metadata_width * 2;
-        let width = usize::from(value_width).max(1);
-        let rows = (0..app.column_count()).map(|column| {
-            let preview = if column == app.view.column
-                && let Some(prepared) = &app.row_value
-            {
-                let bytes = app.view.page.rows[index].cells[column]
-                    .as_ref()
-                    .map_or(&[][..], onetui_core::Value::bytes);
-                let height = usize::from(body.height.saturating_sub(3)).max(1);
-                let (_, lines) = crate::row_value::viewport(
-                    prepared,
-                    bytes,
-                    width,
-                    app.config.display.word_wrap,
-                    0,
-                    0,
-                );
-                let scroll = app.row_scroll.min(lines.saturating_sub(height));
-                let (text, _) = crate::row_value::viewport(
-                    prepared,
-                    bytes,
-                    width,
-                    app.config.display.word_wrap,
-                    scroll,
-                    height,
-                );
-                horizontal(&text, app)
-            } else {
-                wrap_preview(&app.view.previews[index][column], width, app)
-            };
-            let height = cells(if column == app.view.column {
-                preview.split('\n').count().max(1)
-            } else {
-                preview.split('\n').count().clamp(1, 3)
-            });
-            Row::new([
-                Cell::from(app.column_name(column).to_owned())
-                    .style(Style::new().fg(color(p.identifier))),
-                Cell::from(
-                    app.view
-                        .page
-                        .columns
-                        .get(column)
-                        .map_or("metadata", |c| c.datatype.as_str()),
-                ),
-                Cell::from(preview),
-            ])
-            .height(height)
-        });
-        frame.render_stateful_widget(
-            Table::new(
-                rows,
-                [
-                    Constraint::Length(metadata_width),
-                    Constraint::Length(metadata_width),
-                    Constraint::Length(value_width),
-                ],
-            )
-            .header(
-                Row::new(["FIELD", "TYPE", "VALUE"])
-                    .style(Style::new().fg(color(p.table_heading)).bold()),
-            )
-            .block(panel(
-                p,
-                format!(
-                    " Row data | {} fields | PgUp/PgDn value | Enter full value, Esc back ",
-                    app.column_count()
-                ),
-            ))
-            .row_highlight_style(
-                Style::new()
-                    .fg(color(p.selection_fg))
-                    .bg(color(p.selection_bg))
-                    .bold(),
-            )
-            .highlight_symbol("> "),
-            body,
-            &mut TableState::default().with_selected(Some(app.view.column)),
-        );
-    } else {
-        let descriptor = app.descriptor();
-        let start = app.view.column / 4 * 4;
-        let end = (start + 4).min(app.column_count());
-        let widths = table_widths(app, body);
-        let rows = app.view.visible.iter().map(|&index| {
-            let row = &app.view.projections[index];
-            let mut height = 1;
-            let cells: Vec<_> = row
-                .iter()
-                .enumerate()
-                .skip(start)
-                .take(end - start)
-                .map(|(column, cell)| {
-                    let preview = wrap_preview(
-                        &app.view.previews[index][column],
-                        widths[column - start].max(1) as usize,
-                        app,
-                    );
-                    height = height.max(cells(preview.lines().count().min(3)));
-                    Cell::from(preview).style(Style::new().fg(if !app.config.display.highlight {
-                        color(p.text)
-                    } else if cell.is_none() {
-                        color(p.muted)
-                    } else if column == 0 {
-                        color(p.identifier)
-                    } else {
-                        color(p.text)
-                    }))
-                })
-                .collect();
-            Row::new(cells)
-                .height(height)
-                .style(Style::new().bg(if index % 2 == 0 {
-                    color(p.background)
-                } else {
-                    color(p.surface)
-                }))
-        });
-        let table = Table::new(rows, widths.iter().copied().map(Constraint::Length))
-            .header(
-                Row::new((start..end).map(|i| {
-                    format!(
-                        "{}{}{}",
-                        if i == app.view.column { "> " } else { "" },
-                        app.column_name(i),
-                        match app.view.sort {
-                            Some((column, false)) if column == i => " ↑",
-                            Some((column, true)) if column == i => " ↓",
-                            _ => "",
-                        }
-                    )
-                }))
-                .style(
-                    Style::new()
-                        .fg(color(p.table_heading))
-                        .add_modifier(Modifier::BOLD),
-                ),
-            )
-            .row_highlight_style(
-                Style::new()
-                    .fg(color(p.selection_fg))
-                    .bg(color(p.selection_bg))
-                    .bold(),
-            )
-            .highlight_symbol("> ")
-            .block(panel(
-                p,
-                format!(
-                    " {} [{} shown / {} loaded]{}{}{} ",
-                    descriptor.id,
-                    app.view.visible.len(),
-                    app.view.page.rows.len(),
-                    if app.view.previews_limited {
-                        " | preview limit; Enter for detail"
-                    } else {
-                        ""
-                    },
-                    if app.view.filter.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" | filter: {:?}", display(&app.view.filter))
-                    },
-                    if app.query_editor.is_some() {
-                        " | retained data"
-                    } else {
-                        ""
-                    }
-                ),
-            ));
-        let mut state = TableState::default().with_selected(if app.view.visible.is_empty() {
-            None
+                )
+                .title_bottom(app.detail_notice),
+            ),
+        body,
+    );
+}
+
+fn row_detail(frame: &mut Frame, body: Rect, app: &App, p: &Palette) {
+    let index = app.view.selected_index().expect("selected row");
+    let available = body.width.saturating_sub(6);
+    let metadata_width = available / 4;
+    let value_width = available - metadata_width * 2;
+    let width = usize::from(value_width).max(1);
+    let rows = (0..app.column_count()).map(|column| {
+        let preview = if column == app.view.column
+            && let Some(prepared) = &app.row_value
+        {
+            let bytes = app.view.page.rows[index].cells[column]
+                .as_ref()
+                .map_or(&[][..], onetui_core::Value::bytes);
+            let height = usize::from(body.height.saturating_sub(3)).max(1);
+            let (_, lines) = crate::row_value::viewport(
+                prepared,
+                bytes,
+                width,
+                app.config.display.word_wrap,
+                0,
+                0,
+            );
+            let scroll = app.row_scroll.min(lines.saturating_sub(height));
+            let (text, _) = crate::row_value::viewport(
+                prepared,
+                bytes,
+                width,
+                app.config.display.word_wrap,
+                scroll,
+                height,
+            );
+            horizontal(&text, app)
         } else {
-            Some(app.view.selected)
+            wrap_preview(&app.view.previews[index][column], width, app)
+        };
+        let height = cells(if column == app.view.column {
+            preview.split('\n').count().max(1)
+        } else {
+            preview.split('\n').count().clamp(1, 3)
         });
-        frame.render_stateful_widget(table, body, &mut state);
-    }
+        Row::new([
+            Cell::from(app.column_name(column).to_owned())
+                .style(Style::new().fg(color(p.identifier))),
+            Cell::from(
+                app.view
+                    .page
+                    .columns
+                    .get(column)
+                    .map_or("metadata", |c| c.datatype.as_str()),
+            ),
+            Cell::from(preview),
+        ])
+        .height(height)
+    });
+    frame.render_stateful_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Length(metadata_width),
+                Constraint::Length(metadata_width),
+                Constraint::Length(value_width),
+            ],
+        )
+        .header(
+            Row::new(["FIELD", "TYPE", "VALUE"])
+                .style(Style::new().fg(color(p.table_heading)).bold()),
+        )
+        .block(panel(
+            p,
+            format!(
+                " Row data | {} fields | PgUp/PgDn value | Enter full value, Esc back ",
+                app.column_count()
+            ),
+        ))
+        .row_highlight_style(
+            Style::new()
+                .fg(color(p.selection_fg))
+                .bg(color(p.selection_bg))
+                .bold(),
+        )
+        .highlight_symbol("> "),
+        body,
+        &mut TableState::default().with_selected(Some(app.view.column)),
+    );
+}
+
+fn records(frame: &mut Frame, body: Rect, app: &App, p: &Palette) {
+    let descriptor = app.descriptor();
+    let start = app.view.column / 4 * 4;
+    let end = (start + 4).min(app.column_count());
+    let widths = table_widths(app, body);
+    let rows = app.view.visible.iter().map(|&index| {
+        let row = &app.view.projections[index];
+        let mut height = 1;
+        let cells: Vec<_> = row
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(end - start)
+            .map(|(column, cell)| {
+                let preview = wrap_preview(
+                    &app.view.previews[index][column],
+                    widths[column - start].max(1) as usize,
+                    app,
+                );
+                height = height.max(cells(preview.lines().count().min(3)));
+                Cell::from(preview).style(Style::new().fg(if !app.config.display.highlight {
+                    color(p.text)
+                } else if cell.is_none() {
+                    color(p.muted)
+                } else if column == 0 {
+                    color(p.identifier)
+                } else {
+                    color(p.text)
+                }))
+            })
+            .collect();
+        Row::new(cells)
+            .height(height)
+            .style(Style::new().bg(if index % 2 == 0 {
+                color(p.background)
+            } else {
+                color(p.surface)
+            }))
+    });
+    let table = Table::new(rows, widths.iter().copied().map(Constraint::Length))
+        .header(
+            Row::new((start..end).map(|i| {
+                format!(
+                    "{}{}{}",
+                    if i == app.view.column { "> " } else { "" },
+                    app.column_name(i),
+                    match app.view.sort {
+                        Some((column, false)) if column == i => " ↑",
+                        Some((column, true)) if column == i => " ↓",
+                        _ => "",
+                    }
+                )
+            }))
+            .style(
+                Style::new()
+                    .fg(color(p.table_heading))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .row_highlight_style(
+            Style::new()
+                .fg(color(p.selection_fg))
+                .bg(color(p.selection_bg))
+                .bold(),
+        )
+        .highlight_symbol("> ")
+        .block(panel(
+            p,
+            format!(
+                " {} [{} shown / {} loaded]{}{}{} ",
+                descriptor.id,
+                app.view.visible.len(),
+                app.view.page.rows.len(),
+                if app.view.previews_limited {
+                    " | preview limit; Enter for detail"
+                } else {
+                    ""
+                },
+                if app.view.filter.is_empty() {
+                    String::new()
+                } else {
+                    format!(" | filter: {:?}", display(&app.view.filter))
+                },
+                if app.query_editor.is_some() {
+                    " | retained data"
+                } else {
+                    ""
+                }
+            ),
+        ));
+    let mut state = TableState::default().with_selected(if app.view.visible.is_empty() {
+        None
+    } else {
+        Some(app.view.selected)
+    });
+    frame.render_stateful_widget(table, body, &mut state);
+}
+
+fn status_bar(frame: &mut Frame, area: Rect, status: Rect, app: &App, p: &Palette) {
     let state = if app.connection_form.is_some() {
         "Adding connection"
     } else if app.view.alias.is_none() && app.view.page.rows.is_empty() {
@@ -1488,6 +1605,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .style(Style::new().fg(color(p.muted))),
         status,
     );
+}
+
+fn popups(frame: &mut Frame, area: Rect, app: &App, p: &Palette) {
     if let Some(confirm) = &app.confirm_query {
         // A statement language confirms the submitted text; a row query confirms which
         // resource it runs against.

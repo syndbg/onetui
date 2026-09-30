@@ -47,57 +47,8 @@ impl Config {
             ),
             "Kafka security_protocol must be SSL, SASL_SSL or PLAINTEXT"
         );
-        for server in &config.bootstrap_servers {
-            ensure!(
-                server.len() <= 255,
-                "Kafka bootstrap address exceeds 255 bytes"
-            );
-            let url = url::Url::parse(&format!("kafka://{server}"))
-                .map_err(|_| anyhow!("Invalid Kafka bootstrap host:port"))?;
-            ensure!(
-                !server.contains(['/', '?', '#', '@', ',', '\\'])
-                    && !server.chars().any(char::is_whitespace)
-                    && url.host().is_some()
-                    && url.port().is_some_and(|port| port != 0)
-                    && url.username().is_empty()
-                    && url.password().is_none(),
-                "Kafka bootstrap addresses must be host:port without credentials or URL components"
-            );
-            if config.security_protocol == "PLAINTEXT" {
-                let local = match url.host() {
-                    Some(url::Host::Domain(host)) => {
-                        host.eq_ignore_ascii_case("localhost")
-                            || host
-                                .parse::<std::net::IpAddr>()
-                                .is_ok_and(|ip| ip.is_loopback())
-                    }
-                    Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-                    Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-                    None => false,
-                };
-                ensure!(
-                    local,
-                    "Plaintext Kafka bootstrap hosts must be loopback; use TLS remotely"
-                );
-            }
-        }
-        for (name, path) in [
-            ("ca_file", &config.ca_file),
-            ("client_cert_file", &config.client_cert_file),
-            ("client_key_file", &config.client_key_file),
-        ] {
-            let Some(path) = path else { continue };
-            ensure!(
-                path.len() <= 4096
-                    && !path.chars().any(char::is_control)
-                    && Path::new(path).is_absolute(),
-                "Kafka {name} must be an absolute path without controls (max 4096 bytes)"
-            );
-            ensure!(
-                config.security_protocol != "PLAINTEXT",
-                "Kafka {name} requires TLS"
-            );
-        }
+        config.validate_bootstrap()?;
+        config.validate_tls_files()?;
         ensure!(
             config.client_cert_file.is_some() == config.client_key_file.is_some(),
             "Kafka client_cert_file and client_key_file must be configured together"
@@ -124,39 +75,107 @@ impl Config {
                     .is_none_or(|value| !value.is_empty()),
             "Kafka username and password cannot be empty"
         );
-        if config.security_protocol == "SASL_SSL" {
+        config.validate_sasl()?;
+        ensure!(
+            config.sasl_mechanism.as_deref() == Some("GSSAPI")
+                || (config.kerberos_principal.is_none() && config.kerberos_service_name.is_none()),
+            "Kafka Kerberos settings require SASL_SSL and GSSAPI"
+        );
+        crate::decoding::validate(&config.decoders)?;
+        Ok(config)
+    }
+
+    fn validate_bootstrap(&self) -> Result<()> {
+        for server in &self.bootstrap_servers {
+            ensure!(
+                server.len() <= 255,
+                "Kafka bootstrap address exceeds 255 bytes"
+            );
+            let url = url::Url::parse(&format!("kafka://{server}"))
+                .map_err(|_| anyhow!("Invalid Kafka bootstrap host:port"))?;
+            ensure!(
+                !server.contains(['/', '?', '#', '@', ',', '\\'])
+                    && !server.chars().any(char::is_whitespace)
+                    && url.host().is_some()
+                    && url.port().is_some_and(|port| port != 0)
+                    && url.username().is_empty()
+                    && url.password().is_none(),
+                "Kafka bootstrap addresses must be host:port without credentials or URL components"
+            );
+            if self.security_protocol == "PLAINTEXT" {
+                let local = match url.host() {
+                    Some(url::Host::Domain(host)) => {
+                        host.eq_ignore_ascii_case("localhost")
+                            || host
+                                .parse::<std::net::IpAddr>()
+                                .is_ok_and(|ip| ip.is_loopback())
+                    }
+                    Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                    Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                    None => false,
+                };
+                ensure!(
+                    local,
+                    "Plaintext Kafka bootstrap hosts must be loopback; use TLS remotely"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_tls_files(&self) -> Result<()> {
+        for (name, path) in [
+            ("ca_file", &self.ca_file),
+            ("client_cert_file", &self.client_cert_file),
+            ("client_key_file", &self.client_key_file),
+        ] {
+            let Some(path) = path else { continue };
+            ensure!(
+                path.len() <= 4096
+                    && !path.chars().any(char::is_control)
+                    && Path::new(path).is_absolute(),
+                "Kafka {name} must be an absolute path without controls (max 4096 bytes)"
+            );
+            ensure!(
+                self.security_protocol != "PLAINTEXT",
+                "Kafka {name} requires TLS"
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_sasl(&self) -> Result<()> {
+        if self.security_protocol == "SASL_SSL" {
             ensure!(
                 matches!(
-                    config.sasl_mechanism.as_deref(),
+                    self.sasl_mechanism.as_deref(),
                     Some("PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512" | "OAUTHBEARER" | "GSSAPI")
                 ),
                 "Kafka SASL_SSL requires PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, OAUTHBEARER or GSSAPI"
             );
-            if config.sasl_mechanism.as_deref() == Some("OAUTHBEARER") {
+            if self.sasl_mechanism.as_deref() == Some("OAUTHBEARER") {
                 ensure!(
-                    config.username.is_none()
-                        && config.password.is_none()
-                        && config.username_env.is_none()
-                        && config.password_env.is_none(),
+                    self.username.is_none()
+                        && self.password.is_none()
+                        && self.username_env.is_none()
+                        && self.password_env.is_none(),
                     "Kafka OAUTHBEARER uses oauth credentials, not username/password"
                 );
-                config
-                    .oauth
+                self.oauth
                     .as_ref()
                     .ok_or_else(|| anyhow!("Kafka OAUTHBEARER requires oauth settings"))?
                     .validate()?;
-            } else if config.sasl_mechanism.as_deref() == Some("GSSAPI") {
+            } else if self.sasl_mechanism.as_deref() == Some("GSSAPI") {
                 ensure!(
-                    config.oauth.is_none()
-                        && config.username.is_none()
-                        && config.password.is_none()
-                        && config.username_env.is_none()
-                        && config.password_env.is_none(),
+                    self.oauth.is_none()
+                        && self.username.is_none()
+                        && self.password.is_none()
+                        && self.username_env.is_none()
+                        && self.password_env.is_none(),
                     "Kafka GSSAPI uses an existing Kerberos ticket cache, not password or oauth settings"
                 );
                 ensure!(
-                    config
-                        .kerberos_principal
+                    self.kerberos_principal
                         .as_deref()
                         .is_some_and(|principal| !principal.is_empty()
                             && principal.len() <= 1024
@@ -165,7 +184,7 @@ impl Config {
                                 .any(|c| c.is_control() || c.is_whitespace())),
                     "Kafka GSSAPI requires kerberos_principal without whitespace or controls (max 1024 bytes)"
                 );
-                if let Some(service) = &config.kerberos_service_name {
+                if let Some(service) = &self.kerberos_service_name {
                     ensure!(
                         (1..=255).contains(&service.len())
                             && service
@@ -175,36 +194,30 @@ impl Config {
                     );
                 }
             } else {
-                ensure!(config.oauth.is_none(), "Kafka oauth requires OAUTHBEARER");
+                ensure!(self.oauth.is_none(), "Kafka oauth requires OAUTHBEARER");
                 ensure!(
-                    (config.username.is_some()
-                        || config.username_env.as_deref().is_some_and(safe_name))
-                        && (config.password.is_some()
-                            || config.password_env.as_deref().is_some_and(safe_name)),
+                    (self.username.is_some()
+                        || self.username_env.as_deref().is_some_and(safe_name))
+                        && (self.password.is_some()
+                            || self.password_env.as_deref().is_some_and(safe_name)),
                     "Kafka SASL_SSL requires username and password values or valid _env references"
                 );
             }
         } else {
             ensure!(
-                config.sasl_mechanism.is_none()
-                    && config.username.is_none()
-                    && config.password.is_none()
-                    && config.username_env.is_none()
-                    && config.password_env.is_none(),
+                self.sasl_mechanism.is_none()
+                    && self.username.is_none()
+                    && self.password.is_none()
+                    && self.username_env.is_none()
+                    && self.password_env.is_none(),
                 "Kafka SASL settings require SASL_SSL"
             );
             ensure!(
-                config.oauth.is_none(),
+                self.oauth.is_none(),
                 "Kafka oauth requires SASL_SSL and OAUTHBEARER"
             );
         }
-        ensure!(
-            config.sasl_mechanism.as_deref() == Some("GSSAPI")
-                || (config.kerberos_principal.is_none() && config.kerberos_service_name.is_none()),
-            "Kafka Kerberos settings require SASL_SSL and GSSAPI"
-        );
-        crate::decoding::validate(&config.decoders)?;
-        Ok(config)
+        Ok(())
     }
 
     pub fn native(

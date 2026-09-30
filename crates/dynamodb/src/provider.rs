@@ -110,6 +110,102 @@ impl Drop for Lease<'_> {
     }
 }
 
+#[derive(Default)]
+struct Progress {
+    dispatched: bool,
+    native_completed: bool,
+}
+
+async fn run_query(
+    client: &Client,
+    name: &str,
+    query: crate::query::Read,
+    position: Option<&serde_json::Value>,
+    progress: &mut Progress,
+) -> Result<(Page, Option<serde_json::Value>)> {
+    let partiql_request = matches!(
+        query,
+        crate::query::Read::ExecuteStatement { .. }
+            | crate::query::Read::BatchExecuteStatement { .. }
+            | crate::query::Read::ExecuteTransaction { .. }
+    );
+    let batch = matches!(query, crate::query::Read::BatchGetItem { .. });
+    let partiql_transaction = matches!(query, crate::query::Read::ExecuteTransaction { .. });
+    let transaction = matches!(
+        query,
+        crate::query::Read::TransactGetItems { .. } | crate::query::Read::ExecuteTransaction { .. }
+    );
+    let statement_batch = matches!(query, crate::query::Read::BatchExecuteStatement { .. });
+    let statement_limit = match &query {
+        crate::query::Read::ExecuteStatement { limit, .. } => usize::try_from(*limit).ok(),
+        _ => None,
+    };
+    let vector_limit = match &query {
+        crate::query::Read::SearchVectors { top_k, .. } => usize::try_from(*top_k).ok(),
+        _ => None,
+    };
+    progress.dispatched = true;
+    let body = crate::api::query(client, name, query, position).await?;
+    if partiql_request {
+        progress.native_completed = true;
+    }
+    let result = if let Some(limit) = statement_limit {
+        crate::partiql::page(body, limit)?
+    } else if statement_batch {
+        let (mut page, _) = crate::browse::metadata("dynamodb.query", body)?;
+        page.notice = "Native PartiQL batch response; inspect each Responses entry for item or error; not atomic, no automatic retries".into();
+        (page, None)
+    } else if let Some(limit) = vector_limit {
+        if let Some(results) = body.get("SearchResults") {
+            ensure!(
+                results
+                    .as_array()
+                    .is_some_and(|results| results.len() <= limit),
+                "DynamoDB SearchResults must be an array within top_k"
+            );
+        }
+        let (mut page, _) = crate::browse::metadata("dynamodb.query", body)?;
+        page.notice = "Native vector response; SearchResults retain service ranking, scores, typed items and capacity; no continuation".into();
+        (page, None)
+    } else if batch || transaction {
+        let (mut page, token) = crate::browse::multi_items(body, name, batch)?;
+        if partiql_transaction {
+            page.notice = "Native transaction response; atomic operation; Responses retain request order and missing-item positions".into();
+        }
+        (page, token)
+    } else {
+        crate::browse::items(&body)?
+    };
+    Ok(result)
+}
+
+fn classify(
+    attempt: Result<Result<Page>>,
+    progress: &Progress,
+    partiql_request: bool,
+) -> Result<Page> {
+    match attempt {
+        Ok(Err(error)) | Err(error) if progress.native_completed => {
+            Err(crate::partiql::Failure::error(
+                WriteOutcome::Unknown,
+                format!(
+                    "DynamoDB request completed, but its response could not be displayed: {error}. Inspect the target before retrying"
+                ),
+            ))
+        }
+        Err(error) if partiql_request && progress.dispatched => {
+            Err(crate::partiql::Failure::error(
+                WriteOutcome::Unknown,
+                format!(
+                    "DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"
+                ),
+            ))
+        }
+        Ok(result) => result,
+        Err(error) => Err(error),
+    }
+}
+
 impl DynamoDbExecutor {
     async fn client(&self) -> Result<Session> {
         let shared = self.config.load(self.credentials.clone()).await?;
@@ -196,8 +292,7 @@ impl DynamoDbExecutor {
             status: &self.status,
             clean: false,
         };
-        let mut native_completed = false;
-        let mut dispatched = false;
+        let mut progress = Progress::default();
         let attempt = context
             .run(Box::pin(async {
                 if lease.client.is_none() {
@@ -215,11 +310,7 @@ impl DynamoDbExecutor {
                 } else {
                     &session.streams
                 };
-                let name = request
-                    .resource
-                    .path
-                    .first()
-                    .map_or("", String::as_str);
+                let name = request.resource.path.first().map_or("", String::as_str);
                 let (mut page, token) = if let Some(crate::query::Read::GetRecords {
                     shard_id,
                     sequence_number,
@@ -238,58 +329,20 @@ impl DynamoDbExecutor {
                     )
                     .await?
                 } else if stream_read {
-                    crate::streams::read(
-                        streams,
-                        &request.resource,
-                        position.as_ref(),
-                        follow,
-                    )
-                    .await?
+                    crate::streams::read(streams, &request.resource, position.as_ref(), follow)
+                        .await?
                 } else if let Some(query) = query {
-                    let batch = matches!(query, crate::query::Read::BatchGetItem { .. });
-                    let partiql_transaction = matches!(query, crate::query::Read::ExecuteTransaction { .. });
-                    let transaction = matches!(query, crate::query::Read::TransactGetItems { .. } | crate::query::Read::ExecuteTransaction { .. });
-                    let statement_batch = matches!(query, crate::query::Read::BatchExecuteStatement { .. });
-                    let statement_limit = match &query {
-                        crate::query::Read::ExecuteStatement { limit, .. } => usize::try_from(*limit).ok(),
-                        _ => None,
-                    };
-                    let vector_limit = match &query {
-                        crate::query::Read::SearchVectors { top_k, .. } => usize::try_from(*top_k).ok(),
-                        _ => None,
-                    };
-                    dispatched = true;
-                    let body = crate::api::query(client, name, query, position.as_ref()).await?;
-                    if partiql_request {
-                        native_completed = true;
-                    }
-                    if let Some(limit) = statement_limit {
-                        crate::partiql::page(body, limit)?
-                    } else if statement_batch {
-                        let (mut page, _) = crate::browse::metadata("dynamodb.query", body)?;
-                        page.notice = "Native PartiQL batch response; inspect each Responses entry for item or error; not atomic, no automatic retries".into();
-                        (page, None)
-                    } else if let Some(limit) = vector_limit {
-                        if let Some(results) = body.get("SearchResults") {
-                            ensure!(results.as_array().is_some_and(|results| results.len() <= limit), "DynamoDB SearchResults must be an array within top_k");
-                        }
-                        let (mut page, _) = crate::browse::metadata("dynamodb.query", body)?;
-                        page.notice = "Native vector response; SearchResults retain service ranking, scores, typed items and capacity; no continuation".into();
-                        (page, None)
-                    } else if batch || transaction {
-                        let (mut page, token) = crate::browse::multi_items(body, name, batch)?;
-                        if partiql_transaction {
-                            page.notice = "Native transaction response; atomic operation; Responses retain request order and missing-item positions".into();
-                        }
-                        (page, token)
-                    } else {
-                        crate::browse::items(&body)?
-                    }
+                    run_query(client, name, query, position.as_ref(), &mut progress).await?
                 } else {
                     crate::browse::metadata(
                         request.resource.id,
-                        crate::api::metadata(client, request.resource.id, &request.resource.path, position.as_ref())
-                            .await?,
+                        crate::api::metadata(
+                            client,
+                            request.resource.id,
+                            &request.resource.path,
+                            position.as_ref(),
+                        )
+                        .await?,
                     )?
                 };
                 let closed = stream_read && token.as_ref().is_some_and(crate::streams::closed);
@@ -313,22 +366,7 @@ impl DynamoDbExecutor {
             }))
             .await;
         let completed = attempt.is_ok();
-        let result = match attempt {
-            Ok(Err(error)) | Err(error) if native_completed => Err(crate::partiql::Failure::error(
-                WriteOutcome::Unknown,
-                format!(
-                    "DynamoDB request completed, but its response could not be displayed: {error}. Inspect the target before retrying"
-                ),
-            )),
-            Err(error) if partiql_request && dispatched => Err(crate::partiql::Failure::error(
-                WriteOutcome::Unknown,
-                format!(
-                    "DynamoDB statement outcome unknown: {error}. Inspect the target before retrying"
-                ),
-            )),
-            Ok(result) => result,
-            Err(error) => Err(error),
-        };
+        let result = classify(attempt, &progress, partiql_request);
         if result.is_ok() || (query_request && completed && lease.client.is_some()) {
             lease.clean = true;
             self.status.send_replace(ConnectionStatus::Connected);

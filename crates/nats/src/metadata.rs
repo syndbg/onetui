@@ -91,6 +91,166 @@ pub async fn message_scope(api: &Api<'_>, resource: &Resource) -> Result<Message
     }
 }
 
+async fn consumers(api: &Api<'_>, resource: &Resource, cursor: &mut Cursor) -> Result<Page> {
+    let stream = &resource.path[0];
+    let info = api
+        .call(
+            &format!("CONSUMER.LIST.{stream}"),
+            json!({"offset": cursor.next}),
+        )
+        .await?;
+    let consumers = info["consumers"].as_array().map_or(&[][..], Vec::as_slice);
+    let mut page = Page {
+        columns: columns(&[
+            ("name", "text"),
+            ("pending", "integer"),
+            ("ack_pending", "integer"),
+            ("redelivered", "integer"),
+            ("delivered", "json"),
+            ("ack_floor", "json"),
+        ]),
+        ..Page::default()
+    };
+    for consumer in consumers.iter().take(PAGE_ROWS) {
+        let name = string(consumer, "name")?;
+        let target = Resource::new("nats.consumer_info", vec![stream.clone(), name.into()]);
+        crate::browse::validate(
+            &onetui_core::provider::PageRequest {
+                resource: target.clone(),
+                continuation: None,
+            },
+            false,
+        )?;
+        page.rows.push(Row {
+            cells: vec![
+                Some(name.into()),
+                Some(number(consumer, "num_pending")?.to_string().into()),
+                Some(number(consumer, "num_ack_pending")?.to_string().into()),
+                Some(number(consumer, "num_redelivered")?.to_string().into()),
+                Some(Value::Json(consumer["delivered"].to_string())),
+                Some(Value::Json(consumer["ack_floor"].to_string())),
+            ],
+            target: Some(target),
+        });
+    }
+    cursor.next = cursor
+        .next
+        .checked_add(page.rows.len() as u64)
+        .ok_or_else(|| anyhow!("NATS list offset overflow"))?;
+    page.next = cursor.next < number(&info, "total")?;
+    ensure!(
+        !page.next || !page.rows.is_empty(),
+        "NATS consumer listing made no progress"
+    );
+    Ok(page)
+}
+
+async fn bucket_keys(
+    api: &Api<'_>,
+    resource: &Resource,
+    cursor: &mut Cursor,
+    continued: bool,
+) -> Result<Page> {
+    let bucket = &resource.path[0];
+    let kv = resource.id == "nats.kv_keys";
+    let stream = format!("{}_{bucket}", if kv { "KV" } else { "OBJ" });
+    let prefix = if kv {
+        format!("$KV.{bucket}.")
+    } else {
+        format!("$O.{bucket}.M.")
+    };
+    let info = api
+        .call(
+            &format!("STREAM.INFO.{stream}"),
+            json!({"offset": cursor.next, "subjects_filter": format!("{prefix}>")}),
+        )
+        .await?;
+    let created = string(&info, "created")?;
+    ensure!(
+        !continued || cursor.created == created,
+        "NATS bucket was replaced; refresh"
+    );
+    cursor.created = created.into();
+    let subjects = info["state"]["subjects"].as_object();
+    let total = info["total"]
+        .as_u64()
+        .unwrap_or_else(|| subjects.map_or(0, |s| s.len() as u64));
+    let mut page = Page {
+        columns: columns(&[
+            (if kv { "key" } else { "name" }, "text"),
+            ("revisions", "integer"),
+        ]),
+        ..Page::default()
+    };
+    if let Some(subjects) = subjects {
+        for (subject, count) in subjects.iter().take(PAGE_ROWS) {
+            let encoded = subject
+                .strip_prefix(&prefix)
+                .ok_or_else(|| anyhow!("NATS returned an unexpected bucket subject"))?;
+            let name = if kv {
+                encoded.into()
+            } else {
+                String::from_utf8(base64::engine::general_purpose::URL_SAFE.decode(encoded)?)?
+            };
+            let target = Resource::new(
+                if kv { "nats.kv_history" } else { "nats.object" },
+                vec![bucket.clone(), name],
+            );
+            crate::browse::validate(
+                &onetui_core::provider::PageRequest {
+                    resource: target.clone(),
+                    continuation: None,
+                },
+                false,
+            )?;
+            page.rows.push(Row {
+                cells: vec![
+                    Some(target.path[1].clone().into()),
+                    Some(
+                        count
+                            .as_u64()
+                            .ok_or_else(|| anyhow!("NATS subject count is invalid"))?
+                            .to_string()
+                            .into(),
+                    ),
+                ],
+                target: Some(target),
+            });
+        }
+    }
+    cursor.next = cursor
+        .next
+        .checked_add(page.rows.len() as u64)
+        .ok_or_else(|| anyhow!("NATS list offset overflow"))?;
+    page.next = cursor.next < total;
+    ensure!(
+        !page.next || !page.rows.is_empty(),
+        "NATS bucket listing made no progress"
+    );
+    Ok(page)
+}
+
+async fn kv_value(api: &Api<'_>, resource: &Resource) -> Result<Page> {
+    let message = api
+        .message(
+            &format!("KV_{}", resource.path[0]),
+            json!({"last_by_subj": format!("$KV.{}.{}", resource.path[0], resource.path[1])}),
+        )
+        .await?
+        .ok_or_else(|| anyhow!("NATS key is no longer retained"))?;
+    Ok(Page {
+        columns: columns(&[
+            ("sequence", "integer"),
+            ("subject", "text"),
+            ("time", "RFC3339"),
+            ("data", "bytes"),
+            ("headers", "bytes (KV-Operation / deletion markers)"),
+        ]),
+        rows: vec![message_row(&message)?],
+        ..Page::default()
+    })
+}
+
 pub async fn page(
     api: &Api<'_>,
     resource: &Resource,
@@ -116,59 +276,7 @@ pub async fn page(
         ensure!(!continued, "NATS detail has one page");
     }
     let mut page = match resource.id {
-        "nats.consumers" => {
-            let stream = &resource.path[0];
-            let info = api
-                .call(
-                    &format!("CONSUMER.LIST.{stream}"),
-                    json!({"offset": cursor.next}),
-                )
-                .await?;
-            let consumers = info["consumers"].as_array().map_or(&[][..], Vec::as_slice);
-            let mut page = Page {
-                columns: columns(&[
-                    ("name", "text"),
-                    ("pending", "integer"),
-                    ("ack_pending", "integer"),
-                    ("redelivered", "integer"),
-                    ("delivered", "json"),
-                    ("ack_floor", "json"),
-                ]),
-                ..Page::default()
-            };
-            for consumer in consumers.iter().take(PAGE_ROWS) {
-                let name = string(consumer, "name")?;
-                let target = Resource::new("nats.consumer_info", vec![stream.clone(), name.into()]);
-                crate::browse::validate(
-                    &onetui_core::provider::PageRequest {
-                        resource: target.clone(),
-                        continuation: None,
-                    },
-                    false,
-                )?;
-                page.rows.push(Row {
-                    cells: vec![
-                        Some(name.into()),
-                        Some(number(consumer, "num_pending")?.to_string().into()),
-                        Some(number(consumer, "num_ack_pending")?.to_string().into()),
-                        Some(number(consumer, "num_redelivered")?.to_string().into()),
-                        Some(Value::Json(consumer["delivered"].to_string())),
-                        Some(Value::Json(consumer["ack_floor"].to_string())),
-                    ],
-                    target: Some(target),
-                });
-            }
-            cursor.next = cursor
-                .next
-                .checked_add(page.rows.len() as u64)
-                .ok_or_else(|| anyhow!("NATS list offset overflow"))?;
-            page.next = cursor.next < number(&info, "total")?;
-            ensure!(
-                !page.next || !page.rows.is_empty(),
-                "NATS consumer listing made no progress"
-            );
-            page
-        }
+        "nats.consumers" => consumers(api, resource, cursor).await?,
         "nats.consumer_info" => json_page(
             &api.call(
                 &format!("CONSUMER.INFO.{}.{}", resource.path[0], resource.path[1]),
@@ -176,102 +284,8 @@ pub async fn page(
             )
             .await?,
         ),
-        "nats.kv_keys" | "nats.objects" => {
-            let bucket = &resource.path[0];
-            let kv = resource.id == "nats.kv_keys";
-            let stream = format!("{}_{bucket}", if kv { "KV" } else { "OBJ" });
-            let prefix = if kv {
-                format!("$KV.{bucket}.")
-            } else {
-                format!("$O.{bucket}.M.")
-            };
-            let info = api
-                .call(
-                    &format!("STREAM.INFO.{stream}"),
-                    json!({"offset": cursor.next, "subjects_filter": format!("{prefix}>")}),
-                )
-                .await?;
-            let created = string(&info, "created")?;
-            ensure!(
-                !continued || cursor.created == created,
-                "NATS bucket was replaced; refresh"
-            );
-            cursor.created = created.into();
-            let subjects = info["state"]["subjects"].as_object();
-            let total = info["total"]
-                .as_u64()
-                .unwrap_or_else(|| subjects.map_or(0, |s| s.len() as u64));
-            let mut page = Page {
-                columns: columns(&[
-                    (if kv { "key" } else { "name" }, "text"),
-                    ("revisions", "integer"),
-                ]),
-                ..Page::default()
-            };
-            if let Some(subjects) = subjects {
-                for (subject, count) in subjects.iter().take(PAGE_ROWS) {
-                    let encoded = subject
-                        .strip_prefix(&prefix)
-                        .ok_or_else(|| anyhow!("NATS returned an unexpected bucket subject"))?;
-                    let name = if kv {
-                        encoded.into()
-                    } else {
-                        String::from_utf8(
-                            base64::engine::general_purpose::URL_SAFE.decode(encoded)?,
-                        )?
-                    };
-                    let target = Resource::new(
-                        if kv { "nats.kv_history" } else { "nats.object" },
-                        vec![bucket.clone(), name],
-                    );
-                    crate::browse::validate(
-                        &onetui_core::provider::PageRequest {
-                            resource: target.clone(),
-                            continuation: None,
-                        },
-                        false,
-                    )?;
-                    page.rows.push(Row {
-                        cells: vec![
-                            Some(target.path[1].clone().into()),
-                            Some(
-                                count
-                                    .as_u64()
-                                    .ok_or_else(|| anyhow!("NATS subject count is invalid"))?
-                                    .to_string()
-                                    .into(),
-                            ),
-                        ],
-                        target: Some(target),
-                    });
-                }
-            }
-            cursor.next = cursor
-                .next
-                .checked_add(page.rows.len() as u64)
-                .ok_or_else(|| anyhow!("NATS list offset overflow"))?;
-            page.next = cursor.next < total;
-            ensure!(
-                !page.next || !page.rows.is_empty(),
-                "NATS bucket listing made no progress"
-            );
-            page
-        }
-        "nats.kv_value" => {
-            let message = api.message(&format!("KV_{}", resource.path[0]), json!({"last_by_subj": format!("$KV.{}.{}", resource.path[0], resource.path[1])})).await?
-                .ok_or_else(|| anyhow!("NATS key is no longer retained"))?;
-            Page {
-                columns: columns(&[
-                    ("sequence", "integer"),
-                    ("subject", "text"),
-                    ("time", "RFC3339"),
-                    ("data", "bytes"),
-                    ("headers", "bytes (KV-Operation / deletion markers)"),
-                ]),
-                rows: vec![message_row(&message)?],
-                ..Page::default()
-            }
-        }
+        "nats.kv_keys" | "nats.objects" => bucket_keys(api, resource, cursor, continued).await?,
+        "nats.kv_value" => kv_value(api, resource).await?,
         "nats.object" => Page {
             columns: columns(&[("view", "text")]),
             rows: [
