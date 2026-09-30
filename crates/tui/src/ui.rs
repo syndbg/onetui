@@ -3428,6 +3428,8 @@ mod tests {
             .stdout(Stdio::from(slave.try_clone().unwrap()))
             .stderr(Stdio::from(slave.try_clone().unwrap()));
         // Crossterm opens /dev/tty: the child must own the PTY, never the developer's terminal.
+        // TIOCSCTTY is u32 on macOS and u64 on Linux, so `.into()` is useless on Linux only.
+        #[allow(clippy::useless_conversion)]
         unsafe {
             command.pre_exec(|| {
                 if nix::libc::setsid() == -1
