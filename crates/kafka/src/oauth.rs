@@ -125,7 +125,9 @@ impl Session {
         self.expires_at.is_some_and(|expires| {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_or(true, |now| now.as_millis() >= expires as u128)
+                .map_or(true, |now| {
+                    u128::try_from(expires).is_ok_and(|expires| now.as_millis() >= expires)
+                })
         })
     }
 
@@ -258,7 +260,7 @@ impl Session {
         })
     }
 
-    pub fn diagnostic(&self, error: anyhow::Error) -> anyhow::Error {
+    pub fn diagnostic(&self, error: &anyhow::Error) -> anyhow::Error {
         let mut secrets = self
             .secrets
             .iter()
@@ -271,7 +273,7 @@ impl Session {
         // Replace complete tokens before any shorter credential that overlaps them.
         secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
         onetui_core::diagnostic(
-            &error,
+            error,
             &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
         )
     }
@@ -386,7 +388,7 @@ mod tests {
                 .token(Instant::now() + Duration::from_secs(2))
                 .unwrap();
             assert_eq!(token.principal_name, "fixture-reader");
-            assert!(token.lifetime_ms < (expiry * 1000) as i64);
+            assert!(token.lifetime_ms < i64::try_from(expiry * 1000).unwrap());
             assert!(!current.expired());
         }
         current.expires_at = Some(1);
@@ -418,7 +420,7 @@ mod tests {
             .token(Instant::now() + Duration::from_secs(2))
             .err()
             .unwrap();
-        let error = current.diagnostic(error).to_string();
+        let error = current.diagnostic(&error).to_string();
         assert!(error.contains("401") && error.contains("invalid_client"));
         assert!(!error.contains("secret&value") && !error.contains('\u{1b}'));
         let jwt = token(u64::MAX);
@@ -429,12 +431,12 @@ mod tests {
             .token(Instant::now() + Duration::from_secs(2))
             .err()
             .unwrap();
-        let error = current.diagnostic(error).to_string();
+        let error = current.diagnostic(&error).to_string();
         assert!(error.contains("invalid_grant") && !error.contains(&jwt));
         for secret in current.secrets.clone() {
             assert!(
                 !current
-                    .diagnostic(anyhow!("echo: {secret}"))
+                    .diagnostic(&anyhow!("echo: {secret}"))
                     .to_string()
                     .contains(&secret)
             );
@@ -445,7 +447,7 @@ mod tests {
         let echoed = json!({"error_description":"quote\"secret"}).to_string();
         assert!(
             !current
-                .diagnostic(anyhow!(echoed))
+                .diagnostic(&anyhow!(echoed))
                 .to_string()
                 .contains("secret")
         );

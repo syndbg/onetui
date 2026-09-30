@@ -19,11 +19,11 @@ fn writer_schema_preserves_union_bytes_logical_types_and_provenance() {
     ]}"#;
     let decoder = Decoder::new(schema).unwrap();
     let raw = [14, 4, 255, 0, 2, 4, b'H', b'i', 2, 2, 123];
-    let decoded = decoder.decode(&raw).unwrap();
-    assert_eq!(decoded.raw(), raw);
-    assert_eq!(decoded.schema_id(), decoder.schema_id());
-    assert!(decoded.schema_id().starts_with("avro:sha256:"));
-    let Value::Record(fields) = decoded.value() else {
+    let outcome = decoder.decode(&raw).unwrap();
+    assert_eq!(outcome.raw(), raw);
+    assert_eq!(outcome.schema_id(), decoder.schema_id());
+    assert!(outcome.schema_id().starts_with("avro:sha256:"));
+    let Value::Record(fields) = outcome.value() else {
         panic!("wrong type")
     };
     assert_eq!(fields[0].1, Value::Long(7));
@@ -34,10 +34,10 @@ fn writer_schema_preserves_union_bytes_logical_types_and_provenance() {
     );
     assert_eq!(fields[3].1, Value::Date(1));
     assert!(matches!(fields[4].1, Value::Decimal(_)));
-    let json: serde_json::Value = serde_json::from_str(&decoded.json().unwrap()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&outcome.json().unwrap()).unwrap();
     assert_eq!(json["data"], serde_json::json!([255, 0]));
     assert_eq!(json["note"], "Hi");
-    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    let native: serde_json::Value = serde_json::from_str(&outcome.native().unwrap()).unwrap();
     assert_eq!(native["type"], "record");
     assert_eq!(native["fields"][1][1]["type"], "bytes");
     assert_eq!(native["fields"][1][1]["value"], serde_json::json!([255, 0]));
@@ -97,7 +97,7 @@ fn nested_collection_bombs_and_zero_width_values_fail_before_native_decode() {
         Decoder::new(r#"{"type":"array","items":{"type":"array","items":"null"}}"#).unwrap();
     let mut raw = long(2);
     for _ in 0..2 {
-        raw.extend(long((MAX_NODES / 2) as i64));
+        raw.extend(long(i64::try_from(MAX_NODES / 2).unwrap()));
         raw.push(0);
     }
     raw.push(0);
@@ -152,12 +152,12 @@ fn unsupported_decimal_and_json_failure_keep_raw_access() {
     );
     let double = Decoder::new("\"double\"").unwrap();
     let raw = f64::NAN.to_le_bytes();
-    let decoded = double.decode(&raw).unwrap();
-    assert!(decoded.json().is_err());
-    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    let outcome = double.decode(&raw).unwrap();
+    assert!(outcome.json().is_err());
+    let native: serde_json::Value = serde_json::from_str(&outcome.native().unwrap()).unwrap();
     assert_eq!(native, serde_json::json!({"type":"double","value":"NaN"}));
-    assert_eq!(decoded.raw(), raw);
-    assert!(matches!(decoded.value(), Value::Double(v) if v.is_nan()));
+    assert_eq!(outcome.raw(), raw);
+    assert!(matches!(outcome.value(), Value::Double(v) if v.is_nan()));
 }
 
 #[test]
@@ -179,9 +179,9 @@ fn long_boundaries_truncation_and_overflow() {
         8192,
     ] {
         let raw = long(n);
-        let decoded = decoder.decode(&raw).unwrap();
-        assert_eq!(decoded.value(), &Value::Long(n));
-        assert_eq!(decoded.raw(), raw);
+        let outcome = decoder.decode(&raw).unwrap();
+        assert_eq!(outcome.value(), &Value::Long(n));
+        assert_eq!(outcome.raw(), raw);
         for end in 0..raw.len() {
             assert!(decoder.decode(&raw[..end]).is_err());
         }

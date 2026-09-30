@@ -261,7 +261,8 @@ impl NatsExecutor {
             let api = crate::browse::Api { client, prefix: &prefix };
             let mut errors = self.errors.subscribe();
             let attempt = context.run(async {
-                if let Some(error) = errors.borrow().clone() { return Err(anyhow!(error)); }
+                let failed = errors.borrow().clone();
+                if let Some(error) = failed { return Err(anyhow!(error)); }
                 tokio::select! {
                     biased;
                     _ = errors.changed() => Err(anyhow!(errors.borrow().clone().unwrap_or_else(|| "NATS connection failed".into()))),
@@ -309,7 +310,7 @@ impl NatsExecutor {
             }
             result
         }.await;
-        result.map_err(|error| self.diagnostic(error))
+        result.map_err(|error| self.diagnostic(&error))
     }
 
     async fn publish(
@@ -362,7 +363,7 @@ impl NatsExecutor {
                 summary: format!("Published to {} at sequence {}", ack.stream, ack.sequence),
             })),
             (None, Ok(Err(error)) | Err(error)) => {
-                publish_failure(self.diagnostic(error), dispatched)
+                publish_failure(self.diagnostic(&error), dispatched)
             }
             (None, Ok(Ok(()))) => unreachable!("successful publish has an acknowledgment"),
         };
@@ -378,9 +379,9 @@ impl NatsExecutor {
         result
     }
 
-    fn diagnostic(&self, error: anyhow::Error) -> anyhow::Error {
+    fn diagnostic(&self, error: &anyhow::Error) -> anyhow::Error {
         onetui_core::diagnostic(
-            &error,
+            error,
             &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
         )
     }
@@ -419,7 +420,7 @@ impl Executor for NatsExecutor {
             self.generation.fetch_add(1, Ordering::Relaxed);
             self.status.send_replace(ConnectionStatus::Disconnected);
         }
-        result.map_err(|error| self.diagnostic(error))
+        result.map_err(|error| self.diagnostic(&error))
     }
     fn status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status.subscribe()
@@ -508,7 +509,7 @@ impl Executor for NatsExecutor {
             Ok(())
         };
         self.status.send_replace(ConnectionStatus::Closed);
-        result.map_err(|error| self.diagnostic(error))
+        result.map_err(|error| self.diagnostic(&error))
     }
 }
 

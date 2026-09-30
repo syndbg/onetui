@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 use base64::Engine;
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, Page, Resource, Row, Value};
 use serde_json::{Value as Json, json};
 
 use crate::browse::{Api, Cursor, columns, message_row, number, string};
@@ -136,7 +136,7 @@ pub async fn page(
                 ]),
                 ..Page::default()
             };
-            for consumer in consumers.iter().take(PAGE_SIZE as usize) {
+            for consumer in consumers.iter().take(PAGE_ROWS) {
                 let name = string(consumer, "name")?;
                 let target = Resource::new("nats.consumer_info", vec![stream.clone(), name.into()]);
                 crate::browse::validate(
@@ -209,7 +209,7 @@ pub async fn page(
                 ..Page::default()
             };
             if let Some(subjects) = subjects {
-                for (subject, count) in subjects.iter().take(PAGE_SIZE as usize) {
+                for (subject, count) in subjects.iter().take(PAGE_ROWS) {
                     let encoded = subject
                         .strip_prefix(&prefix)
                         .ok_or_else(|| anyhow!("NATS returned an unexpected bucket subject"))?;

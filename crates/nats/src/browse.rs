@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow, ensure};
 use base64::Engine;
 use onetui_core::catalog::{Action, ActionSource, ResourceAction, ResourceDescriptor};
 use onetui_core::provider::PageRequest;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{Column, PAGE_BYTES, PAGE_ROWS, PAGE_SIZE, Page, Resource, Row, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 use std::fmt::Write as _;
@@ -467,7 +467,7 @@ pub async fn page(
             ("consumers", "integer"),
         ]);
         // The server chooses its own list batch size; retain only our page and advance by that count.
-        let consumed = streams.len().min(PAGE_SIZE as usize);
+        let consumed = streams.len().min(PAGE_ROWS);
         for stream in streams.iter().take(consumed) {
             let name = string(&stream["config"], "name")?;
             let (name, target) = match resource.id {

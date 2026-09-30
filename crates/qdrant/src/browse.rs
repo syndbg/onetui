@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, bail, ensure};
 use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::provider::PageRequest;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row};
+use onetui_core::{Column, PAGE_BYTES, PAGE_ROWS, Page, Resource, Row};
 use qdrant_client::qdrant::{
     CollectionInfo, PointId, RetrievedPoint, VectorOutput, point_id::PointIdOptions,
     vector_output::Vector, vectors_output::VectorsOptions,
@@ -219,7 +219,7 @@ pub fn page(resource: &Resource, rows: Vec<Row>, notice: &str) -> Page {
 
 pub fn bounded(page: Page) -> Result<Page> {
     ensure!(
-        page.rows.len() <= PAGE_SIZE as usize,
+        page.rows.len() <= PAGE_ROWS,
         "Qdrant page exceeds the 100-row limit; current page retained"
     );
     ensure!(
@@ -304,12 +304,12 @@ pub fn collections(
 ) -> Result<Page> {
     // Qdrant List has no server-side pagination; the decode cap bounds each re-read.
     names.sort();
-    let end = offset.saturating_add(PAGE_SIZE as usize);
+    let end = offset.saturating_add(PAGE_ROWS);
     let next = end < names.len();
     let rows = names
         .into_iter()
         .skip(offset)
-        .take(PAGE_SIZE as usize)
+        .take(PAGE_ROWS)
         .map(|name| {
             row(
                 [name.clone()],
@@ -336,7 +336,7 @@ pub fn points(
     executor: u64,
 ) -> Result<Page> {
     ensure!(
-        records.len() <= PAGE_SIZE as usize,
+        records.len() <= PAGE_ROWS,
         "Qdrant returned more than 100 points"
     );
     let mut rows = Vec::with_capacity(records.len());
@@ -437,7 +437,7 @@ pub fn detail(resource: &Resource, mut records: Vec<RetrievedPoint>) -> Result<P
         };
         named.sort_by(|a, b| a.0.cmp(&b.0));
         ensure!(
-            named.len() <= PAGE_SIZE as usize,
+            named.len() <= PAGE_ROWS,
             "Qdrant point has more than 100 vectors; detail rejected"
         );
         named

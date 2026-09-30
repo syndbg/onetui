@@ -461,10 +461,16 @@ fn command_bar(frame: &mut Frame, area: Rect, app: &App) {
     };
     let line = Line::raw(value);
     // Leave a cell for a wide glyph clipped at the left edge; keep the edited tail visible.
-    let scroll = line
-        .width()
-        .saturating_sub(usize::from(inner.width.saturating_sub(1))) as u16;
+    let scroll = cells(
+        line.width()
+            .saturating_sub(usize::from(inner.width.saturating_sub(1))),
+    );
     frame.render_widget(Paragraph::new(line).style(style).scroll((0, scroll)), inner);
+}
+
+/// Terminal coordinates are `u16`, so a count past that saturates instead of wrapping.
+fn cells(count: usize) -> u16 {
+    u16::try_from(count).unwrap_or(u16::MAX)
 }
 
 fn help(frame: &mut Frame, area: Rect, app: &App) {
@@ -510,18 +516,22 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
-    let key_width = entries
-        .iter()
-        .map(|(key, _, _)| key.len())
-        .max()
-        .unwrap_or(3)
-        .max(3) as u16;
-    let command_width = entries
-        .iter()
-        .map(|(_, command, _)| command.len())
-        .max()
-        .unwrap_or(7)
-        .max(7) as u16;
+    let key_width = cells(
+        entries
+            .iter()
+            .map(|(key, _, _)| key.len())
+            .max()
+            .unwrap_or(3)
+            .max(3),
+    );
+    let command_width = cells(
+        entries
+            .iter()
+            .map(|(_, command, _)| command.len())
+            .max()
+            .unwrap_or(7)
+            .max(7),
+    );
     let description_width = usize::from(inner.width.saturating_sub(key_width + command_width + 4));
     let rows = entries
         .into_iter()
@@ -547,7 +557,7 @@ fn help(frame: &mut Frame, area: Rect, app: &App) {
                 Cell::from(command).style(Style::new().fg(color(p.identifier))),
                 Cell::from(horizontal(&lines.join("\n"), app)),
             ])
-            .height(lines.len() as u16)
+            .height(cells(lines.len()))
             .style(Style::new().bg(color(if index % 2 == 0 {
                 p.background
             } else {
@@ -786,23 +796,25 @@ fn table_widths(app: &App, body: Rect) -> Vec<u16> {
     let count = end - start;
     let available = body
         .width
-        .saturating_sub(4 + count.saturating_sub(1) as u16);
+        .saturating_sub(4 + cells(count.saturating_sub(1)));
     if count == 1 {
         return vec![available];
     }
     // Measure the loaded page, not the selected row or filtered subset.
     let needs: Vec<_> = (start..end)
         .map(|column| {
-            app.view
-                .previews
-                .iter()
-                .flat_map(|row| row[column].lines())
-                .map(UnicodeWidthStr::width)
-                .max()
-                .unwrap_or(0)
-                // Keep selection and sort markers from moving columns.
-                .max(app.column_name(column).width() + 4)
-                .min(usize::from(available)) as u16
+            cells(
+                app.view
+                    .previews
+                    .iter()
+                    .flat_map(|row| row[column].lines())
+                    .map(UnicodeWidthStr::width)
+                    .max()
+                    .unwrap_or(0)
+                    // Keep selection and sort markers from moving columns.
+                    .max(app.column_name(column).width() + 4)
+                    .min(usize::from(available)),
+            )
         })
         .collect();
     let mut order: Vec<_> = (0..count).collect();
@@ -810,7 +822,7 @@ fn table_widths(app: &App, body: Rect) -> Vec<u16> {
     let mut widths = vec![0; count];
     let mut remaining = available;
     for (rank, column) in order.into_iter().enumerate() {
-        let share = remaining / (count - rank) as u16;
+        let share = remaining / cells(count - rank);
         widths[column] = needs[column].min(share);
         remaining -= widths[column];
     }
@@ -938,15 +950,15 @@ fn connection_form(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(if inner.height >= 6 { 4 } else { 0 }),
     ])
     .areas(inner);
-    let label_width = form
-        .provider()
-        .connection_fields
-        .iter()
-        .map(|f| f.name.len())
-        .max()
-        .unwrap_or(5)
-        .max(5) as u16
-        + 3;
+    let label_width = cells(
+        form.provider()
+            .connection_fields
+            .iter()
+            .map(|f| f.name.len())
+            .max()
+            .unwrap_or(5)
+            .max(5),
+    ) + 3;
     let label_width = label_width.min(fields.width / 2);
     let rows = form.inputs.iter().enumerate().map(|(i, input)| {
         let name = if i == 0 {
@@ -1084,7 +1096,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     column.saturating_sub(inner.width.saturating_sub(1) as usize)
                 };
                 frame.render_widget(
-                    Paragraph::new(lines).scroll((top as u16, left as u16)),
+                    Paragraph::new(lines).scroll((cells(top), cells(left))),
                     inner,
                 );
             }
@@ -1251,11 +1263,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
             } else {
                 wrap_preview(&app.view.previews[index][column], width, app)
             };
-            let height = if column == app.view.column {
+            let height = cells(if column == app.view.column {
                 preview.split('\n').count().max(1)
             } else {
                 preview.split('\n').count().clamp(1, 3)
-            } as u16;
+            });
             Row::new([
                 Cell::from(app.column_name(column).to_owned())
                     .style(Style::new().fg(color(p.identifier))),
@@ -1319,7 +1331,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                         widths[column - start].max(1) as usize,
                         app,
                     );
-                    height = height.max(preview.lines().count().min(3) as u16);
+                    height = height.max(cells(preview.lines().count().min(3)));
                     Cell::from(preview).style(Style::new().fg(if !app.config.display.highlight {
                         color(p.text)
                     } else if cell.is_none() {
@@ -1430,7 +1442,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let [status, version] = Layout::horizontal([
         Constraint::Min(1),
         Constraint::Length(if area.width >= 40 {
-            version_text.len() as u16 + 1
+            cells(version_text.len()) + 1
         } else {
             0
         }),
@@ -2228,7 +2240,7 @@ mod tests {
             (0..24)
                 .flat_map(|y| (0..80).map(move |x| (x, y)))
                 .find(|&(x, y)| {
-                    (0..text.len() as u16)
+                    (0..cells(text.len()))
                         .all(|i| buffer[(x + i, y)].symbol() == &text[(i as usize)..=(i as usize)])
                 })
                 .map_or_else(
@@ -2464,7 +2476,7 @@ mod tests {
                     let line = (0..180)
                         .map(|x| buffer[(x, y)].symbol())
                         .collect::<String>();
-                    line.find(key).map(|x| (y, x as u16))
+                    line.find(key).map(|x| (y, cells(x)))
                 })
                 .unwrap();
             key_columns.push(x);

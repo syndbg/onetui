@@ -177,13 +177,13 @@ impl PostgresExecutor {
         Ok(())
     }
 
-    fn diagnostic(&self, error: anyhow::Error) -> anyhow::Error {
+    fn diagnostic(&self, error: &anyhow::Error) -> anyhow::Error {
         let config = self.url.parse::<tokio_postgres::Config>().ok();
         let password = config
             .as_ref()
             .and_then(|config| config.get_password())
             .map(String::from_utf8_lossy);
-        onetui_core::diagnostic(&error, &[&self.url, password.as_deref().unwrap_or("")])
+        onetui_core::diagnostic(error, &[&self.url, password.as_deref().unwrap_or("")])
     }
 
     async fn read(
@@ -266,7 +266,7 @@ impl PostgresExecutor {
             .await;
             self.status.send_replace(ConnectionStatus::Disconnected);
         }
-        result.map_err(|error| self.diagnostic(error))
+        result.map_err(|error| self.diagnostic(&error))
     }
 }
 
@@ -443,8 +443,8 @@ impl Executor for PostgresExecutor {
                     WriteOutcome::Unknown
                 };
                 let error = match error.downcast::<tokio_postgres::Error>() {
-                    Ok(error) => self.diagnostic(crate::browse::pg_error(error)),
-                    Err(error) => self.diagnostic(error),
+                    Ok(error) => self.diagnostic(&crate::browse::pg_error(error)),
+                    Err(error) => self.diagnostic(&error),
                 };
                 Ok(QueryExecution::Write(WriteResult {
                     outcome,
@@ -461,7 +461,7 @@ impl Executor for PostgresExecutor {
                 outcome: WriteOutcome::Unknown,
                 summary: format!(
                     "Statement outcome unknown: {}. Inspect the target before retrying",
-                    self.diagnostic(error)
+                    self.diagnostic(&error)
                 ),
             })),
             Ok(Err(error)) | Err(error) => {
@@ -469,7 +469,7 @@ impl Executor for PostgresExecutor {
                     Ok(error) => crate::browse::pg_error(error),
                     Err(error) => error,
                 };
-                Err(self.diagnostic(error))
+                Err(self.diagnostic(&error))
             }
         };
         let clean = if reusable {

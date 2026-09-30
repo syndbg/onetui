@@ -103,7 +103,7 @@ fn item(i: usize, wide: bool) -> HashMap<String, A> {
         ("fraction".into(), A::N("-0.00000000000000000012345".into())),
         (
             "binary".into(),
-            A::B(vec![0, 255, 128, (i % 256) as u8].into()),
+            A::B(vec![0, 255, 128, u8::try_from(i % 256).unwrap()].into()),
         ),
         (
             "string_set".into(),

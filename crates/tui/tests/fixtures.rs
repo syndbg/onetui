@@ -137,7 +137,10 @@ async fn keyboard_bookmarks_return_through_evicted_active_customer_pages() {
             complete(&mut app, &executor).await;
         }
         assert!(app.error.is_none(), "{:?}", app.error);
-        assert_eq!(app.view.offset, index as i64 * onetui_core::PAGE_SIZE);
+        assert_eq!(
+            app.view.offset,
+            i64::try_from(index).unwrap() * onetui_core::PAGE_SIZE
+        );
         assert_eq!(
             app.view
                 .page

@@ -224,10 +224,10 @@ fn integer(bytes: &[u8]) -> String {
         let mut remainder = 0u16;
         for byte in &mut magnitude {
             let current = remainder << 8 | u16::from(*byte);
-            *byte = (current / 10) as u8;
+            *byte = u8::try_from(current / 10).unwrap_or(u8::MAX);
             remainder = current % 10;
         }
-        digits.push(b'0' + remainder as u8);
+        digits.push(b'0' + u8::try_from(remainder).unwrap_or(0));
     }
     if digits.is_empty() {
         return "0".into();
@@ -254,7 +254,7 @@ fn decimal_text(digits: &[u8], scale: i32) -> String {
         let zeros = scale.unsigned_abs() as usize;
         return format!("{sign}{magnitude}{}", "0".repeat(zeros));
     }
-    let scale = scale as usize;
+    let scale = scale.unsigned_abs() as usize;
     if scale >= magnitude.len() {
         let padding = "0".repeat(scale - magnitude.len());
         format!("{sign}0.{padding}{magnitude}")

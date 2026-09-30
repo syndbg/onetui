@@ -100,7 +100,7 @@ pub fn raw(n: u32) -> Vec<u8> {
         active: n.is_multiple_of(2),
         score: f64::from(n) / 10.0,
         tags: vec!["demo".into(), "protobuf".into()],
-        attachment: vec![0, 0xff, (n % 256) as u8],
+        attachment: vec![0, 0xff, u8::try_from(n % 256).unwrap()],
         note: (n % 2 == 1).then(|| "Added in writer version 2\nSafe terminal text".into()),
     }
     .encode_to_vec()

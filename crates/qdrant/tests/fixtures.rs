@@ -392,17 +392,17 @@ async fn production_browser_pages_metadata_payload_and_removed_points() {
         );
         assert!(first.rows.iter().all(|r| r.cells.len() == 2));
         let token = first.continuation.clone();
-        let last = fetch(&executor, points.clone(), token.clone()).await?;
-        assert_eq!(last.rows.len(), 7);
+        let tail_page = fetch(&executor, points.clone(), token.clone()).await?;
+        assert_eq!(tail_page.rows.len(), 7);
         assert_eq!(
-            last.rows[0].cells[0]
+            tail_page.rows[0].cells[0]
                 .as_ref()
                 .and_then(onetui_core::Value::text),
             Some("101")
         );
-        assert!(!last.next);
-        assert!(last.continuation.is_none());
-        let uuid_row = last
+        assert!(!tail_page.next);
+        assert!(tail_page.continuation.is_none());
+        let uuid_row = tail_page
             .rows
             .iter()
             .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some(uuid))

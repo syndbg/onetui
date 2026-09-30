@@ -2,7 +2,8 @@
 use crate::Palette;
 
 const fn rgb(hex: u32) -> [u8; 3] {
-    [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
+    let [_, red, green, blue] = hex.to_be_bytes();
+    [red, green, blue]
 }
 
 pub const CATPPUCCIN: Palette = Palette {

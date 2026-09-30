@@ -329,7 +329,7 @@ async fn records(
         .transpose()?
         .map_or(&[][..], Vec::as_slice);
     ensure!(
-        values.len() <= limit as usize,
+        usize::try_from(limit).is_ok_and(|limit| values.len() <= limit),
         "DynamoDB Streams response exceeds requested record limit"
     );
     let mut page = Page {

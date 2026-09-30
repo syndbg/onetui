@@ -14,18 +14,18 @@ fn explicit_reader_defaults_promotions_and_writer_inspection() {
     let identity = reader.schema_id().to_owned();
     let decoder = Decoder::new(WRITER).unwrap().with_reader(reader);
     assert_eq!(decoder.reader_schema_id(), Some(identity.as_str()));
-    let decoded = decoder.decode(&[14]).unwrap();
-    assert_eq!(decoded.reader_schema_id(), Some(identity.as_str()));
-    assert_eq!(decoded.raw(), [14]);
-    let json: serde_json::Value = serde_json::from_str(&decoded.json().unwrap()).unwrap();
+    let outcome = decoder.decode(&[14]).unwrap();
+    assert_eq!(outcome.reader_schema_id(), Some(identity.as_str()));
+    assert_eq!(outcome.raw(), [14]);
+    let json: serde_json::Value = serde_json::from_str(&outcome.json().unwrap()).unwrap();
     assert_eq!(json, serde_json::json!({"id":7,"email":null}));
-    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    let native: serde_json::Value = serde_json::from_str(&outcome.native().unwrap()).unwrap();
     assert_eq!(native["writer"]["fields"][0][1]["type"], "int");
     assert_eq!(native["reader"]["fields"][1][1]["type"], "long");
     assert!(native["reader_error"].is_null());
     let plain = Decoder::new(WRITER).unwrap().decode(&[14]).unwrap();
     assert_eq!(plain.json().unwrap(), r#"{"id":7}"#);
-    assert_eq!(plain.value(), decoded.value());
+    assert_eq!(plain.value(), outcome.value());
 }
 
 #[test]
@@ -34,16 +34,16 @@ fn incompatible_reader_keeps_native_writer_and_raw_bytes() {
         r#"{"type":"record","name":"Event","fields":[{"name":"missing","type":"string"}]}"#,
     )
     .unwrap();
-    let decoded = Decoder::new(WRITER)
+    let outcome = Decoder::new(WRITER)
         .unwrap()
         .with_reader(reader)
         .decode(&[14])
         .unwrap();
-    assert!(decoded.json().is_err());
-    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    assert!(outcome.json().is_err());
+    let native: serde_json::Value = serde_json::from_str(&outcome.native().unwrap()).unwrap();
     assert_eq!(native["writer"]["fields"][0][1]["value"], 7);
     assert!(native["reader_error"].is_string());
-    assert_eq!(decoded.raw(), [14]);
+    assert_eq!(outcome.raw(), [14]);
     assert!(ReaderSchema::new(&" ".repeat(MAX_SCHEMA_BYTES + 1)).is_err());
     assert!(ReaderSchema::new("\"Unresolved\"").is_err());
 }
@@ -54,15 +54,15 @@ fn large_reader_errors_do_not_hide_small_writer_values() {
         {"name":"x".repeat(8192),"type":"string"}
     ]})
     .to_string();
-    let decoded = Decoder::new("\"int\"")
+    let outcome = Decoder::new("\"int\"")
         .unwrap()
         .with_reader(ReaderSchema::new(&schema).unwrap())
         .decode(&[14])
         .unwrap();
-    let native: serde_json::Value = serde_json::from_str(&decoded.native().unwrap()).unwrap();
+    let native: serde_json::Value = serde_json::from_str(&outcome.native().unwrap()).unwrap();
     assert_eq!(native["writer"]["value"], 7);
     assert!(native["reader_error"].as_str().unwrap().len() <= onetui_avro::MAX_ERROR_BYTES);
-    assert!(decoded.native().unwrap().len() < 1024);
+    assert!(outcome.native().unwrap().len() < 1024);
 }
 
 #[test]
@@ -76,9 +76,9 @@ fn default_expansion_and_recursive_defaults_are_bounded_before_resolution() {
         .unwrap()
         .with_reader(ReaderSchema::new(&reader).unwrap());
     // 100 empty records, then end of array.
-    let decoded = decoder.decode(&[200, 1, 0]).unwrap();
-    assert!(decoded.json().unwrap_err().to_string().contains("256 KiB"));
-    assert_eq!(decoded.raw(), [200, 1, 0]);
+    let outcome = decoder.decode(&[200, 1, 0]).unwrap();
+    assert!(outcome.json().unwrap_err().to_string().contains("256 KiB"));
+    assert_eq!(outcome.raw(), [200, 1, 0]);
 
     let reader =
         r#"{"type":"record","name":"R","fields":[{"name":"next","type":"R","default":{}}]}"#;

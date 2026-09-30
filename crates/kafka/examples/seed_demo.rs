@@ -29,7 +29,9 @@ async fn main() -> Result<()> {
     ] {
         if let Some(topic) = existing.topics().iter().find(|topic| topic.name() == name) {
             ensure!(
-                topic.error().is_none() && topic.partitions().len() == partitions as usize,
+                topic.error().is_none()
+                    && usize::try_from(partitions)
+                        .is_ok_and(|expected| topic.partitions().len() == expected),
                 "Existing {name} has unexpected metadata; inspect before resetting fixtures"
             );
             let mut offsets = 0;
@@ -64,8 +66,8 @@ async fn main() -> Result<()> {
             let key = n.to_be_bytes();
             let payload = match name {
                 "demo_binary" => Some(
-                    (0..256)
-                        .map(|byte| (byte as u8).wrapping_add(n as u8))
+                    (0..=u8::MAX)
+                        .map(|byte| byte.wrapping_add(n.to_le_bytes()[0]))
                         .collect(),
                 ),
                 "demo_tombstones" if n % 3 == 0 => None,
@@ -91,7 +93,7 @@ async fn main() -> Result<()> {
                     value: None,
                 });
             let mut record = FutureRecord::to(name)
-                .partition((n % partitions as u32) as i32)
+                .partition(i32::try_from(n % u32::try_from(partitions).unwrap()).unwrap())
                 .key(&key[..])
                 .timestamp(1_750_000_000_000 + i64::from(n))
                 .headers(headers);

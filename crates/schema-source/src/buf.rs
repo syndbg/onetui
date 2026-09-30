@@ -109,11 +109,10 @@ impl Config {
     }
 
     #[must_use]
-    pub fn diagnostic(&self, error: anyhow::Error) -> String {
-        match &self.remote {
-            Some(remote) => remote.diagnostic(error),
-            None => format!("{error:#}"),
-        }
+    pub fn diagnostic(&self, error: &anyhow::Error) -> String {
+        self.remote
+            .as_ref()
+            .map_or_else(|| format!("{error:#}"), |remote| remote.diagnostic(error))
     }
 
     /// # Errors
@@ -172,7 +171,7 @@ impl Config {
                 remaining,
             )
         })();
-        result.map_err(|error| anyhow::anyhow!("{}", remote.diagnostic(error)))
+        result.map_err(|error| anyhow::anyhow!("{}", remote.diagnostic(&error)))
     }
 }
 

@@ -3,7 +3,7 @@ use onetui_core::provider::{
     CheckResult, ConnectionStatus, Executor, PageRequest, Provider, ProviderDescriptor,
     QueryDescriptor, QueryExecution, QueryRequest, RequestContext, ShutdownContext, WriteResult,
 };
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, Page};
 use rdkafka::client::ClientContext;
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext};
@@ -177,7 +177,7 @@ impl ClientContext for NativeContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         session
             .token(deadline)
-            .map_err(|error| session.diagnostic(error).to_string().into())
+            .map_err(|error| session.diagnostic(&error).to_string().into())
     }
     // Native logs bypass the terminal renderer and can include authentication data.
     fn log(&self, _: RDKafkaLogLevel, _: &str, _: &str) {}
@@ -188,7 +188,7 @@ impl ClientContext for NativeContext {
             error = session
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .diagnostic(error);
+                .diagnostic(&error);
         }
         let mut text = error.to_string();
         if text.len() > NATIVE_ERROR_BYTES {
@@ -274,7 +274,7 @@ impl KafkaExecutor {
             std::thread::Builder::new()
                 .name("onetui-kafka".into())
                 .spawn(move || {
-                    let _permit = permit;
+                    let held = permit;
                     let mut client = None;
                     let mut producer: Option<BaseProducer<NativeContext>> = None;
                     let mut decoders = crate::decoding::Bindings::new(bindings);
@@ -381,7 +381,7 @@ impl KafkaExecutor {
                                 Some(session) => session
                                     .lock()
                                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .diagnostic(error),
+                                    .diagnostic(&error),
                                 None => error,
                             }
                         });
@@ -406,7 +406,7 @@ impl KafkaExecutor {
                     }
                     drop(decoders);
                     // A completed shutdown must make its owner slot immediately reusable.
-                    drop(_permit);
+                    drop(held);
                     status.send_replace(ConnectionStatus::Closed);
                     let _ = done.send(());
                 })?;
@@ -778,7 +778,7 @@ fn run(
         job,
         &request.resource,
         start..end,
-        PAGE_SIZE as usize,
+        PAGE_ROWS,
         following,
         raw_limit,
     )?;

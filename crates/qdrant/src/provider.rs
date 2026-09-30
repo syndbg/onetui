@@ -421,7 +421,7 @@ impl Executor for QdrantExecutor {
                     let mut client =
                         PointsClient::new(channel).max_decoding_message_size(PAGE_BYTES);
                     let mut scroll = ScrollPointsBuilder::new(&resource.path[0])
-                        .limit(PAGE_SIZE as u32)
+                        .limit(u32::try_from(PAGE_SIZE)?)
                         .with_payload(false)
                         .with_vectors(false);
                     if let Some(crate::browse::Offset::Point(id)) = offset {

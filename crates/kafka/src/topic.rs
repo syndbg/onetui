@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::provider::PageRequest;
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, Page};
 use serde::{Deserialize, Serialize};
 
 pub const PARTITIONS: usize = 32;
@@ -132,7 +132,7 @@ pub fn page(
     page.continuation = Some(token(&upper, following)?);
     let count = cursor.partitions.len();
     let active = cursor.partitions.iter().filter(|p| p.next < p.end).count();
-    let quota = (PAGE_SIZE as usize).div_ceil(active.max(1));
+    let quota = PAGE_ROWS.div_ceil(active.max(1));
     let start = cursor.turn;
     'partitions: for step in 0..count {
         let index = (start + step) % count;
@@ -140,7 +140,7 @@ pub fn page(
         if p.next == p.end {
             continue;
         }
-        let limit = quota.min(PAGE_SIZE as usize - page.rows.len());
+        let limit = quota.min(PAGE_ROWS - page.rows.len());
         let (batch, next) = read(p.id, p.next..p.end, limit)?;
         ensure!(
             batch.rows.len() <= limit && next >= p.next && next <= p.end,
@@ -177,7 +177,7 @@ pub fn page(
         }
         p.next = next;
         cursor.turn = (index + 1) % count;
-        if page.rows.len() == PAGE_SIZE as usize {
+        if page.rows.len() == PAGE_ROWS {
             break;
         }
     }
@@ -188,7 +188,7 @@ pub fn page(
         None
     };
     ensure!(
-        page.rows.len() <= PAGE_SIZE as usize && page.bytes() <= PAGE_BYTES,
+        page.rows.len() <= PAGE_ROWS && page.bytes() <= PAGE_BYTES,
         "Kafka topic page exceeds 100 rows or 1 MiB"
     );
     Ok(page)
@@ -206,20 +206,22 @@ mod tests {
         }
     }
 
-    fn records(_: i32, window: Range<i64>, limit: usize) -> Result<(Page, i64)> {
-        let end = (window.start + limit as i64).min(window.end);
-        Ok((
-            Page {
-                rows: (window.start..end)
-                    .map(|n| Row {
-                        cells: vec![Some(n.to_string().into())],
-                        target: None,
-                    })
-                    .collect(),
-                ..Page::default()
-            },
-            end,
-        ))
+    fn records() -> impl Fn(i32, Range<i64>, usize) -> Result<(Page, i64)> {
+        |_, window, limit| {
+            let end = (window.start + i64::try_from(limit).unwrap_or(i64::MAX)).min(window.end);
+            Ok((
+                Page {
+                    rows: (window.start..end)
+                        .map(|n| Row {
+                            cells: vec![Some(n.to_string().into())],
+                            target: None,
+                        })
+                        .collect(),
+                    ..Page::default()
+                },
+                end,
+            ))
+        }
     }
 
     #[test]
@@ -231,7 +233,7 @@ mod tests {
             false,
             PAGE_BYTES,
             windows.clone(),
-            records,
+            records(),
         )
         .unwrap();
         assert_eq!(first.rows.len(), 100);
@@ -242,7 +244,7 @@ mod tests {
             false,
             PAGE_BYTES,
             windows.clone(),
-            records,
+            records(),
         )
         .unwrap();
         assert_eq!(second.rows[0].cells[0], Some("25".into()));
@@ -252,7 +254,7 @@ mod tests {
             false,
             PAGE_BYTES,
             windows.clone(),
-            records,
+            records(),
         )
         .unwrap();
         assert_eq!(
@@ -268,7 +270,7 @@ mod tests {
                 false,
                 PAGE_BYTES,
                 windows.clone(),
-                records,
+                records(),
             )
             .unwrap();
             all.extend(next.rows);
@@ -288,7 +290,7 @@ mod tests {
         let request = request(second.continuation);
         assert!(validate(&request, 8, false).is_err());
         assert!(validate(&request, 7, true).is_err());
-        assert!(page(&request, 7, false, PAGE_BYTES, vec![(0, 0, 10)], records).is_err());
+        assert!(page(&request, 7, false, PAGE_BYTES, vec![(0, 0, 10)], records()).is_err());
         assert!(
             page(
                 &request,
@@ -296,7 +298,7 @@ mod tests {
                 false,
                 PAGE_BYTES,
                 (0..33).map(|id| (id, 0, 10)).collect(),
-                records
+                records()
             )
             .is_err()
         );
@@ -320,7 +322,7 @@ mod tests {
             true,
             PAGE_BYTES,
             vec![(0, 0, 8), (1, 0, 9)],
-            records,
+            records(),
         )
         .unwrap();
         assert_eq!(live.rows.len(), 5);
@@ -331,7 +333,7 @@ mod tests {
                 true,
                 PAGE_BYTES,
                 vec![(0, 6, 8), (1, 0, 9)],
-                records
+                records()
             )
             .is_err()
         );
@@ -342,7 +344,7 @@ mod tests {
                 true,
                 PAGE_BYTES,
                 vec![(0, 0, 4), (1, 0, 9)],
-                records
+                records()
             )
             .is_err()
         );
@@ -382,7 +384,7 @@ mod tests {
         .unwrap();
         assert_eq!(second.rows[0].cells[0], Some("1".into()));
         assert!(!second.next);
-        let empty = page(&request(None), 7, true, PAGE_BYTES, vec![], records).unwrap();
+        let empty = page(&request(None), 7, true, PAGE_BYTES, vec![], records()).unwrap();
         assert!(empty.rows.is_empty() && empty.continuation.is_some());
     }
 }

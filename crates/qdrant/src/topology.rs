@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, bail, ensure};
 use onetui_core::catalog::ResourceDescriptor;
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, Page, Resource, Row, Value};
 use serde_json::{Value as Json, json};
 
 pub const ROOT: ResourceDescriptor = ResourceDescriptor {
@@ -189,7 +189,7 @@ pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> 
                     &raft["term"],
                     &raft["commit"],
                     &raft["pending_operations"],
-                    &value,
+                    value,
                 ])]
             } else if status == "disabled" {
                 Vec::new()
@@ -205,7 +205,7 @@ pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> 
                 peers
                     .into_iter()
                     .skip(offset)
-                    .take(PAGE_SIZE as usize + 1)
+                    .take(PAGE_ROWS + 1)
                     .map(|(id, info)| {
                         row(&[
                             &json!(id),
@@ -225,7 +225,7 @@ pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> 
             );
             let mut shards = Vec::new();
             for (key, location) in [("local_shards", "local"), ("remote_shards", "remote")] {
-                for shard in array(&value, key)? {
+                for shard in array(value, key)? {
                     let peer = if location == "local" {
                         &value["peer_id"]
                     } else {
@@ -244,7 +244,7 @@ pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> 
             shards
                 .into_iter()
                 .skip(offset)
-                .take(PAGE_SIZE as usize + 1)
+                .take(PAGE_ROWS + 1)
                 .map(|(s, p, location)| {
                     row(&[
                         &s["shard_id"],
@@ -259,13 +259,13 @@ pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> 
                 .collect()
         }
         "qdrant.transfers" => {
-            let mut transfers = array(&value, "shard_transfers")?.iter().collect::<Vec<_>>();
+            let mut transfers = array(value, "shard_transfers")?.iter().collect::<Vec<_>>();
             transfers
                 .sort_by_key(|s| (s["shard_id"].as_u64(), s["from"].as_u64(), s["to"].as_u64()));
             transfers
                 .into_iter()
                 .skip(offset)
-                .take(PAGE_SIZE as usize + 1)
+                .take(PAGE_ROWS + 1)
                 .map(|s| {
                     row(&[
                         &s["shard_id"],
@@ -280,14 +280,14 @@ pub fn page(resource: &Resource, value: &Json, offset: usize, executor: u64) -> 
                 })
                 .collect()
         }
-        "qdrant.collection_cluster" => vec![row(&[&value])],
+        "qdrant.collection_cluster" => vec![row(&[value])],
         _ => bail!("Unsupported Qdrant topology resource"),
     };
-    let end = offset.saturating_add(PAGE_SIZE as usize);
-    let next = rows.len() > PAGE_SIZE as usize;
+    let end = offset.saturating_add(PAGE_ROWS);
+    let next = rows.len() > PAGE_ROWS;
     let mut page = crate::browse::page(
         resource,
-        rows.into_iter().take(PAGE_SIZE as usize).collect(),
+        rows.into_iter().take(PAGE_ROWS).collect(),
         &notice,
     );
     page.next = next;

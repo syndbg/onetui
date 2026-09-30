@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, ensure};
 use futures_util::StreamExt;
 use onetui_core::catalog::ResourceDescriptor;
-use onetui_core::{PAGE_BYTES, PAGE_SIZE, Page, Row, Value};
+use onetui_core::{PAGE_BYTES, PAGE_ROWS, Page, Row, Value};
 use serde_json::Value as Json;
 
 pub const SUBJECT: &str = "$SYS.REQ.SERVER.PING.STATSZ";
@@ -70,7 +70,7 @@ impl Observation {
             },
         );
         ensure!(
-            self.rows.len() <= PAGE_SIZE as usize,
+            self.rows.len() <= PAGE_ROWS,
             "NATS discovery exceeds 100 observed servers"
         );
         Ok(())

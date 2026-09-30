@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 use futures_util::{FutureExt, StreamExt};
 use onetui_core::provider::PageRequest;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Row, Value};
+use onetui_core::{Column, PAGE_BYTES, PAGE_ROWS, Page, Row, Value};
 
 pub fn validate_subject(subject: &str) -> Result<()> {
     ensure!(
@@ -84,7 +84,7 @@ impl Subscription {
         client.flush().await?;
         let mut page = empty();
         if request.continuation.is_some() {
-            while page.rows.len() < PAGE_SIZE as usize {
+            while page.rows.len() < PAGE_ROWS {
                 let message = match self.pending.take() {
                     Some(message) => message,
                     None => match self.subscriber.next().now_or_never() {

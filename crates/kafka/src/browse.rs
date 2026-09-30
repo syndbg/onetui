@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::catalog::ResourceDescriptor;
 use onetui_core::provider::PageRequest;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{Column, PAGE_BYTES, PAGE_ROWS, Page, Resource, Row, Value};
 use rdkafka::Message;
 use rdkafka::message::Headers;
 use rdkafka::metadata::Metadata;
@@ -235,7 +235,10 @@ pub fn resources(resource: &Resource, offset: i64, identity: u64) -> Result<Page
             ("kafka.groups", "Consumer group state, members and offsets"),
         ],
     };
-    ensure!(offset <= rows.len() as i64, "Invalid Kafka resource offset");
+    ensure!(
+        i64::try_from(rows.len()).is_ok_and(|len| offset <= len),
+        "Invalid Kafka resource offset"
+    );
     for &(id, description) in rows.iter().skip(usize::try_from(offset)?) {
         page.rows.push(Row {
             cells: vec![Some(id.into()), Some(description.into())],
@@ -302,7 +305,7 @@ pub fn finish(
         }
     }
     ensure!(
-        page.rows.len() <= PAGE_SIZE as usize && page.bytes() <= PAGE_BYTES,
+        page.rows.len() <= PAGE_ROWS && page.bytes() <= PAGE_BYTES,
         "Kafka page exceeds 100 items or 1 MiB; current page and bookmark retained"
     );
     Ok(page)
@@ -324,7 +327,7 @@ pub fn metadata(
         let mut brokers: Vec<_> = metadata.brokers().iter().collect();
         brokers.sort_by_key(|broker| broker.id());
         total = brokers.len();
-        for broker in brokers.into_iter().skip(offset).take(PAGE_SIZE as usize) {
+        for broker in brokers.into_iter().skip(offset).take(PAGE_ROWS) {
             page.rows.push(Row {
                 cells: vec![
                     Some(broker.id().to_string().into()),
@@ -341,7 +344,7 @@ pub fn metadata(
         let mut topics: Vec<_> = metadata.topics().iter().collect();
         topics.sort_by_key(|t| t.name());
         total = topics.len();
-        for topic in topics.into_iter().skip(offset).take(PAGE_SIZE as usize) {
+        for topic in topics.into_iter().skip(offset).take(PAGE_ROWS) {
             ensure!(
                 topic.error().is_none(),
                 "Kafka topic metadata: {:?}",
@@ -373,7 +376,7 @@ pub fn metadata(
         let mut partitions: Vec<_> = topic.partitions().iter().collect();
         partitions.sort_by_key(|p| p.id());
         total = partitions.len();
-        for partition in partitions.into_iter().skip(offset).take(PAGE_SIZE as usize) {
+        for partition in partitions.into_iter().skip(offset).take(PAGE_ROWS) {
             ensure!(
                 partition.error().is_none(),
                 "Kafka partition metadata: {:?}",
@@ -405,7 +408,7 @@ pub fn metadata(
         page,
         resource,
         identity,
-        (next < total).then_some((next as i64, None)),
+        (next < total).then_some((i64::try_from(next).unwrap_or(i64::MAX), None)),
         false,
     )
 }

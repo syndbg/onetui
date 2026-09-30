@@ -160,7 +160,8 @@ impl Config {
 
 #[derive(Deserialize)]
 struct Schema {
-    schema: String,
+    #[serde(rename = "schema")]
+    source: String,
     #[serde(rename = "schemaType")]
     kind: Option<String>,
     #[serde(default)]
@@ -309,9 +310,9 @@ impl Config {
         Ok(bytes)
     }
 
-    pub fn diagnostic(&self, error: anyhow::Error) -> String {
+    pub fn diagnostic(&self, error: &anyhow::Error) -> String {
         onetui_core::diagnostic(
-            &error,
+            error,
             &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
         )
         .to_string()
@@ -367,7 +368,7 @@ impl Registry {
             .collect::<Vec<_>>();
         let mut names = HashMap::new();
         let mut references = Vec::new();
-        let mut bytes = root.schema.len();
+        let mut bytes = root.source.len();
         while let Some((reference, depth)) = pending.pop() {
             ensure!(depth <= 8, "Registry reference depth exceeds 8");
             ensure!(
@@ -396,7 +397,7 @@ impl Registry {
                 deadline,
                 remaining,
             )?;
-            bytes += schema.schema.len();
+            bytes += schema.source.len();
             ensure!(
                 bytes <= RESPONSE_BYTES,
                 "Registry schema bundle exceeds 256 KiB"
@@ -406,13 +407,13 @@ impl Registry {
                 "Registry reference queue exceeds 32"
             );
             pending.extend(schema.references.into_iter().map(|r| (r, depth + 1)));
-            references.push((reference.name, schema.schema));
+            references.push((reference.name, schema.source));
         }
         remaining()?;
         let decoder = match self.format {
             Format::Avro => {
                 let mut decoder = onetui_avro::Decoder::with_references(
-                    &root.schema,
+                    &root.source,
                     &references
                         .iter()
                         .map(|(_, s)| s.as_str())
@@ -424,7 +425,7 @@ impl Registry {
                 Compiled::Avro(decoder)
             }
             Format::Protobuf => Compiled::Protobuf(onetui_protobuf::SourceSchema::compile(
-                &root.schema,
+                &root.source,
                 &references
                     .iter()
                     .map(|(name, s)| (name.as_str(), s.as_str()))

@@ -300,9 +300,11 @@ impl Entry {
                 };
                 Ok(Loaded { decoder, identity })
             })()
-            .map_err(|error: anyhow::Error| match &self.binding.buf {
-                Some(buf) => buf.diagnostic(error),
-                None => format!("{error:#}"),
+            .map_err(|error: anyhow::Error| {
+                self.binding
+                    .buf
+                    .as_ref()
+                    .map_or_else(|| format!("{error:#}"), |buf| buf.diagnostic(&error))
             })
         })
     }

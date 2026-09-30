@@ -139,7 +139,9 @@ async fn object_metadata_lazy_chunks_empty_deleted_and_replaced_versions() {
     let name = bucket.clone();
     let tested = tokio::spawn(async move {
         let object = "София / 東京.bin";
-        let bytes = (0..1_200_000).map(|i| (i % 256) as u8).collect::<Vec<_>>();
+        let bytes = (0..1_200_000)
+            .map(|i| u8::try_from(i % 256).unwrap())
+            .collect::<Vec<_>>();
         objects.put(object, &mut bytes.as_slice()).await.unwrap();
         objects.put("empty", &mut [].as_slice()).await.unwrap();
         let mut executor = executor();

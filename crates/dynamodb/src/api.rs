@@ -185,7 +185,7 @@ pub async fn query(
                 .into_iter()
                 .map(|s| {
                     Ok(aws_sdk_dynamodb::types::BatchStatementRequest::builder()
-                        .statement(s.statement)
+                        .statement(s.text)
                         .set_parameters(crate::partiql::parameters(s.parameters.as_deref())?)
                         .set_consistent_read(s.consistent_read)
                         .build()?)
@@ -205,7 +205,7 @@ pub async fn query(
                 .into_iter()
                 .map(|s| {
                     Ok(aws_sdk_dynamodb::types::ParameterizedStatement::builder()
-                        .statement(s.statement)
+                        .statement(s.text)
                         .set_parameters(crate::partiql::parameters(s.parameters.as_deref())?)
                         .build()?)
                 })

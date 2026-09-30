@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 use onetui_core::catalog::ResourceDescriptor;
-use onetui_core::{Column, PAGE_BYTES, PAGE_SIZE, Page, Resource, Row, Value};
+use onetui_core::{Column, PAGE_BYTES, PAGE_ROWS, PAGE_SIZE, Page, Resource, Row, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
@@ -277,16 +277,16 @@ pub fn page(resource: &Resource, value: Json, number: u32, owner: u64) -> Result
         (vec![value], false)
     } else if let Some(values) = value.as_array() {
         let offset = (number as usize - 1)
-            .checked_mul(PAGE_SIZE as usize)
+            .checked_mul(PAGE_ROWS)
             .ok_or_else(|| anyhow!("RabbitMQ page offset overflow"))?;
         (
             values
                 .iter()
                 .skip(offset)
-                .take(PAGE_SIZE as usize)
+                .take(PAGE_ROWS)
                 .cloned()
                 .collect(),
-            values.len().saturating_sub(offset) > PAGE_SIZE as usize,
+            values.len().saturating_sub(offset) > PAGE_ROWS,
         )
     } else {
         let values = value["items"]
@@ -296,7 +296,7 @@ pub fn page(resource: &Resource, value: Json, number: u32, owner: u64) -> Result
             .as_u64()
             .ok_or_else(|| anyhow!("RabbitMQ list has no page_count"))?;
         ensure!(
-            value["page"].as_u64() == Some(u64::from(number)) && values.len() <= PAGE_SIZE as usize,
+            value["page"].as_u64() == Some(u64::from(number)) && values.len() <= PAGE_ROWS,
             "Invalid RabbitMQ page envelope"
         );
         ensure!(
