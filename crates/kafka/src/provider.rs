@@ -1275,12 +1275,10 @@ mod tests {
         drop(observer);
     }
 
-    async fn survive_broker_outage(
+    async fn cancel_checks_while_broker_is_down(
         mut executor: KafkaExecutor,
-        cluster: &MockCluster<'_, rdkafka::producer::DefaultProducerContext>,
         options: &toml::Table,
-    ) {
-        cluster.broker_down(1).unwrap();
+    ) -> KafkaExecutor {
         for _ in 0..5 {
             let started = Instant::now();
             let (cancel, context) = RequestContext::new(Duration::from_secs(5));
@@ -1303,7 +1301,10 @@ mod tests {
             assert_eq!(NATIVE_OWNER.available_permits(), 1);
             executor = KafkaProvider.configure(options, &|_| None).unwrap();
         }
-        cluster.broker_up(1).unwrap();
+        executor
+    }
+
+    async fn recover_and_close(mut executor: KafkaExecutor) {
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
         executor.check(context).await.unwrap();
         executor
@@ -1352,6 +1353,9 @@ mod tests {
         replay_offsets(&executor, &resource).await;
         produce_and_read_back(&executor, &written).await;
         follow_appended_records(&executor, &producer, &resource).await;
-        survive_broker_outage(executor, &cluster, &options).await;
+        cluster.broker_down(1).unwrap();
+        let executor = cancel_checks_while_broker_is_down(executor, &options).await;
+        cluster.broker_up(1).unwrap();
+        recover_and_close(executor).await;
     }
 }

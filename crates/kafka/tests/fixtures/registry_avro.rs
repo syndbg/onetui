@@ -5,6 +5,171 @@ use rdkafka::{
     producer::{FutureProducer, FutureRecord},
 };
 
+async fn seed_registry_records(producer: &FutureProducer, topic: &str) {
+    for n in 0..125 {
+        let raw = match n {
+            1 => vec![0, 0, 0, 0, 2, 2, b'a'],
+            2 => vec![0, 0, 0, 0, 4, 14],
+            3 => vec![0, 0],
+            _ => vec![0, 0, 0, 0, 1, 14],
+        };
+        producer
+            .send(
+                FutureRecord::to(topic)
+                    .partition(0)
+                    .key("plain")
+                    .payload(&raw),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+    }
+}
+
+async fn check_registry_browsing(executor: &KafkaExecutor, resource: &Resource) {
+    let first = fetch(executor, resource.clone(), None).await;
+    assert_eq!(first.rows.len(), 100);
+    assert_eq!(
+        first.rows[0].cells[3],
+        Some(Value::Bytes(vec![0, 0, 0, 0, 1, 14]))
+    );
+    assert_eq!(first.rows[0].cells[5], Some(Value::Json("7".into())));
+    assert_eq!(first.rows[1].cells[5], Some(Value::Json("\"a\"".into())));
+    let native: serde_json::Value =
+        serde_json::from_slice(first.rows[1].cells[8].as_ref().unwrap().bytes()).unwrap();
+    assert_eq!(native["writer"]["type"], "string");
+    assert_eq!(native["reader"]["branch"], 1);
+    assert!(
+        first.rows[1].cells[6]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("#id=2&reader=")
+    );
+    assert!(
+        first.rows[2].cells[7]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("40403")
+    );
+    assert!(first.rows[3].cells[7].is_some());
+    let second = fetch(executor, resource.clone(), first.continuation.clone()).await;
+    assert_eq!(second.rows.len(), 25);
+    assert_eq!(
+        fetch(executor, resource.clone(), first.continuation)
+            .await
+            .rows[0]
+            .cells,
+        second.rows[0].cells
+    );
+}
+
+async fn check_following_and_replay(
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    registry: &server::Server,
+    start: Page,
+) -> Option<String> {
+    let live = follow(executor, resource.clone(), start.continuation).await;
+    assert_eq!(live.rows.len(), 100);
+    assert!(live.rows[2].cells[7].is_some());
+    let tail = follow(executor, resource.clone(), live.continuation).await;
+    assert_eq!(tail.rows.len(), 25);
+    let quiet = follow(executor, resource.clone(), tail.continuation.clone()).await;
+    assert!(quiet.rows.is_empty());
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let replay = executor
+        .query_page(
+            QueryRequest {
+                page: PageRequest {
+                    resource: Resource::new("kafka.query", resource.path.clone()),
+                    continuation: None,
+                },
+                text: format!(
+                    "CONSUME {}/{} offsets 1..5",
+                    resource.path[0], resource.path[1]
+                ),
+            },
+            context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.rows.len(), 4);
+    assert_eq!(registry.requests.lock().unwrap().len(), 4); // types + three distinct IDs
+    tail.continuation
+}
+
+async fn check_cancellation(
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    producer: &FutureProducer,
+    topic: &str,
+    continuation: Option<String>,
+) {
+    producer
+        .send(
+            FutureRecord::to(topic)
+                .partition(0)
+                .key("plain")
+                .payload(&[0u8, 0, 0, 0, 6, 14][..]),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let started = std::time::Instant::now();
+    let (result, ()) = tokio::join!(
+        executor.follow_page(
+            PageRequest {
+                resource: resource.clone(),
+                continuation
+            },
+            context
+        ),
+        async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = cancel.send(());
+        }
+    );
+    assert!(result.is_err());
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+async fn exercise_registry(
+    topic: String,
+    options: toml::Table,
+    native: ClientConfig,
+    registry: server::Server,
+) {
+    let mut executor = KafkaProvider
+        .configure(&options, &|name| {
+            assert_eq!(name, "FIXTURE_REGISTRY_TOKEN");
+            Some("fixture-token".into())
+        })
+        .unwrap();
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor.check(context).await.unwrap();
+    let resource = Resource::new("kafka.records", vec![topic.clone(), "0".into()]);
+    let start = follow(&executor, resource.clone(), None).await;
+    assert!(start.rows.is_empty());
+    let producer: FutureProducer = native.create().unwrap();
+    seed_registry_records(&producer, &topic).await;
+    check_registry_browsing(&executor, &resource).await;
+    let continuation = check_following_and_replay(&executor, &resource, &registry, start).await;
+    check_cancellation(&executor, &resource, &producer, &topic, continuation).await;
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(3)))
+        .await
+        .unwrap();
+    assert_eq!(
+        *executor.status().borrow(),
+        onetui_core::provider::ConnectionStatus::Closed
+    );
+}
+
 #[tokio::test]
 #[ignore = "creates one topic on disposable Kafka and a local registry protocol fixture"]
 async fn avro_registry_browsing_following_replay_and_cancellation() {
@@ -57,139 +222,7 @@ async fn avro_registry_browsing_following_replay_and_cancellation() {
         result.unwrap();
     }
     let task_topic = topic.clone();
-    let tested = tokio::spawn(async move {
-        let topic = task_topic;
-        let mut executor = KafkaProvider
-            .configure(&options, &|name| {
-                assert_eq!(name, "FIXTURE_REGISTRY_TOKEN");
-                Some("fixture-token".into())
-            })
-            .unwrap();
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        executor.check(context).await.unwrap();
-        let resource = Resource::new("kafka.records", vec![topic.clone(), "0".into()]);
-        let start = follow(&executor, resource.clone(), None).await;
-        assert!(start.rows.is_empty());
-        let producer: FutureProducer = native.create().unwrap();
-        for n in 0..125 {
-            let raw = match n {
-                1 => vec![0, 0, 0, 0, 2, 2, b'a'],
-                2 => vec![0, 0, 0, 0, 4, 14],
-                3 => vec![0, 0],
-                _ => vec![0, 0, 0, 0, 1, 14],
-            };
-            producer
-                .send(
-                    FutureRecord::to(&topic)
-                        .partition(0)
-                        .key("plain")
-                        .payload(&raw),
-                    Duration::from_secs(5),
-                )
-                .await
-                .unwrap();
-        }
-        let first = fetch(&executor, resource.clone(), None).await;
-        assert_eq!(first.rows.len(), 100);
-        assert_eq!(
-            first.rows[0].cells[3],
-            Some(Value::Bytes(vec![0, 0, 0, 0, 1, 14]))
-        );
-        assert_eq!(first.rows[0].cells[5], Some(Value::Json("7".into())));
-        assert_eq!(first.rows[1].cells[5], Some(Value::Json("\"a\"".into())));
-        let native: serde_json::Value =
-            serde_json::from_slice(first.rows[1].cells[8].as_ref().unwrap().bytes()).unwrap();
-        assert_eq!(native["writer"]["type"], "string");
-        assert_eq!(native["reader"]["branch"], 1);
-        assert!(
-            first.rows[1].cells[6]
-                .as_ref()
-                .unwrap()
-                .text()
-                .unwrap()
-                .contains("#id=2&reader=")
-        );
-        assert!(
-            first.rows[2].cells[7]
-                .as_ref()
-                .unwrap()
-                .text()
-                .unwrap()
-                .contains("40403")
-        );
-        assert!(first.rows[3].cells[7].is_some());
-        let second = fetch(&executor, resource.clone(), first.continuation.clone()).await;
-        assert_eq!(second.rows.len(), 25);
-        assert_eq!(
-            fetch(&executor, resource.clone(), first.continuation)
-                .await
-                .rows[0]
-                .cells,
-            second.rows[0].cells
-        );
-        let live = follow(&executor, resource.clone(), start.continuation).await;
-        assert_eq!(live.rows.len(), 100);
-        assert!(live.rows[2].cells[7].is_some());
-        let tail = follow(&executor, resource.clone(), live.continuation).await;
-        assert_eq!(tail.rows.len(), 25);
-        let quiet = follow(&executor, resource.clone(), tail.continuation.clone()).await;
-        assert!(quiet.rows.is_empty());
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let replay = executor
-            .query_page(
-                QueryRequest {
-                    page: PageRequest {
-                        resource: Resource::new("kafka.query", resource.path.clone()),
-                        continuation: None,
-                    },
-                    text: format!(
-                        "CONSUME {}/{} offsets 1..5",
-                        resource.path[0], resource.path[1]
-                    ),
-                },
-                context,
-            )
-            .await
-            .unwrap();
-        assert_eq!(replay.rows.len(), 4);
-        assert_eq!(registry.requests.lock().unwrap().len(), 4); // types + three distinct IDs
-        producer
-            .send(
-                FutureRecord::to(&topic)
-                    .partition(0)
-                    .key("plain")
-                    .payload(&[0u8, 0, 0, 0, 6, 14][..]),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        let (cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let started = std::time::Instant::now();
-        let (result, ()) = tokio::join!(
-            executor.follow_page(
-                PageRequest {
-                    resource,
-                    continuation: tail.continuation
-                },
-                context
-            ),
-            async {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let _ = cancel.send(());
-            }
-        );
-        assert!(result.is_err());
-        assert!(started.elapsed() < Duration::from_millis(500));
-        executor
-            .shutdown(ShutdownContext::new(Duration::from_secs(3)))
-            .await
-            .unwrap();
-        assert_eq!(
-            *executor.status().borrow(),
-            onetui_core::provider::ConnectionStatus::Closed
-        );
-    })
-    .await;
+    let tested = tokio::spawn(exercise_registry(task_topic, options, native, registry)).await;
     for result in admin
         .delete_topics(&[&topic], &admin_options)
         .await

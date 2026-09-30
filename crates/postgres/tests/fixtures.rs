@@ -741,11 +741,8 @@ async fn row_values_types_nulls_identifiers_and_fallback_selection() {
     assert!(row_page(&reader, "missing'; --", None).await.is_err());
 }
 
-#[tokio::test]
-#[ignore = "requires the disposable PostgreSQL fixture"]
-async fn production_keysets_preserve_bigints_all_composite_components_and_raw_text() {
-    let reader = provider();
-    let mut offset_page = row_page(&reader, "browse_offset", None).await.unwrap();
+async fn check_offset_paging(reader: &onetui_postgres::PostgresExecutor) {
+    let mut offset_page = row_page(reader, "browse_offset", None).await.unwrap();
     assert!(offset_page.notice.starts_with("OFFSET"));
     let mut offsets_seen = std::collections::BTreeSet::new();
     loop {
@@ -754,13 +751,16 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
             break;
         }
         assert_eq!(offset_page.rows.len(), 100);
-        offset_page = row_page(&reader, "browse_offset", offset_page.continuation)
+        offset_page = row_page(reader, "browse_offset", offset_page.continuation)
             .await
             .unwrap();
     }
     assert_eq!(offset_page.rows.len(), 5);
     assert_eq!(offsets_seen.len(), 205);
-    let mut page = row_page(&reader, "browse_composite", None).await.unwrap();
+}
+
+async fn check_composite_keyset(reader: &onetui_postgres::PostgresExecutor) {
+    let mut page = row_page(reader, "browse_composite", None).await.unwrap();
     assert!(page.notice.starts_with("Keyset"));
     let mut expected = Vec::new();
     for tenant in ["a'; --\nСофия", "b"] {
@@ -779,11 +779,19 @@ async fn production_keysets_preserve_bigints_all_composite_components_and_raw_te
         if !page.next {
             break;
         }
-        page = row_page(&reader, "browse_composite", page.continuation)
+        page = row_page(reader, "browse_composite", page.continuation)
             .await
             .unwrap();
     }
     assert_eq!(seen, expected);
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL fixture"]
+async fn production_keysets_preserve_bigints_all_composite_components_and_raw_text() {
+    let reader = provider();
+    check_offset_paging(&reader).await;
+    check_composite_keyset(&reader).await;
     let first = row_page(&reader, "browse_bigint", None).await.unwrap();
     assert_eq!(
         first.rows[0].cells[0]
@@ -1035,12 +1043,18 @@ async fn wait_for_backend(observer: &Client, pid: i32, expected: &str) {
     }).await.unwrap_or_else(|_| panic!("backend {pid} never reached {expected}"));
 }
 
-#[tokio::test]
-#[ignore = "requires the disposable PostgreSQL TLS fixture"]
-async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicitly() {
+struct TlsFixture {
+    executor: onetui_postgres::PostgresExecutor,
+    status: tokio::sync::watch::Receiver<onetui_core::provider::ConnectionStatus>,
+    observer: FixturePg,
+    resource: onetui_core::Resource,
+    first: onetui_core::Page,
+}
+
+async fn open_tls_fixture() -> TlsFixture {
     use onetui_core::Resource;
     use onetui_core::provider::{
-        ConnectionStatus, Executor, PageRequest, Provider, RequestContext, ShutdownContext,
+        ConnectionStatus, Executor, PageRequest, Provider, RequestContext,
     };
     let ca = fixture_ca("postgres", "/var/lib/postgresql/data/onetui-ca.crt");
     let options =
@@ -1048,10 +1062,10 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
     let dsn = PG
         .replace("127.0.0.1", "localhost")
         .replace("sslmode=disable", "sslmode=require");
-    let mut executor = onetui_postgres::PostgresProvider
+    let executor = onetui_postgres::PostgresProvider
         .configure(&options, &|_| Some(dsn.clone()))
         .unwrap();
-    let mut status = executor.status();
+    let status = executor.status();
     assert_eq!(*status.borrow(), ConnectionStatus::Configured);
     let observer = FixturePg::plain(PG_ADMIN).await;
     let resource = Resource::new(
@@ -1070,17 +1084,29 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
         .await
         .unwrap();
     assert_eq!(first.rows.len(), 100);
-    let pid = executor_pid(&executor).await;
+    TlsFixture {
+        executor,
+        status,
+        observer,
+        resource,
+        first,
+    }
+}
+
+async fn check_idle_reuse(f: &TlsFixture) -> i32 {
+    use onetui_core::provider::{Executor, PageRequest, RequestContext};
+    let pid = executor_pid(&f.executor).await;
     assert!(
-        observer
+        f.observer
             .client
             .query_one("SELECT ssl FROM pg_stat_ssl WHERE pid=$1", &[&pid])
             .await
             .unwrap()
             .get::<_, bool>(0)
     );
-    wait_for_backend(&observer.client, pid, "idle").await;
-    let last_query: String = observer
+    wait_for_backend(&f.observer.client, pid, "idle").await;
+    let last_query: String = f
+        .observer
         .client
         .query_one(
             "SELECT query_start::text FROM pg_stat_activity WHERE pid=$1",
@@ -1091,7 +1117,7 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
         .get(0);
     tokio::time::sleep(Duration::from_millis(250)).await;
     assert_eq!(
-        observer
+        f.observer
             .client
             .query_one(
                 "SELECT query_start::text FROM pg_stat_activity WHERE pid=$1",
@@ -1104,11 +1130,12 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
         "idle browsing issued a background query"
     );
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-    let second = executor
+    let second = f
+        .executor
         .fetch_page(
             PageRequest {
-                resource: resource.clone(),
-                continuation: first.continuation.clone(),
+                resource: f.resource.clone(),
+                continuation: f.first.continuation.clone(),
             },
             context,
         )
@@ -1120,12 +1147,17 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
             .and_then(onetui_core::Value::text),
         Some("101")
     );
-    assert_eq!(executor_pid(&executor).await, pid);
-    wait_for_backend(&observer.client, pid, "idle").await;
+    assert_eq!(executor_pid(&f.executor).await, pid);
+    wait_for_backend(&f.observer.client, pid, "idle").await;
+    pid
+}
 
+async fn check_cancel_and_reconnect(f: &mut TlsFixture, pid: i32) -> i32 {
+    use onetui_core::Resource;
+    use onetui_core::provider::{ConnectionStatus, Executor, PageRequest, RequestContext};
     let (cancel, context) = RequestContext::new(Duration::from_secs(60));
     let (result, ()) = tokio::join!(
-        executor.fetch_page(
+        f.executor.fetch_page(
             PageRequest {
                 resource: Resource::new(
                     "postgres.rows",
@@ -1136,57 +1168,72 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
             context
         ),
         async {
-            wait_for_backend(&observer.client, pid, "sleep").await;
+            wait_for_backend(&f.observer.client, pid, "sleep").await;
             cancel.send(()).unwrap();
         }
     );
     assert!(result.unwrap_err().to_string().contains("cancelled"));
-    wait_for_backend(&observer.client, pid, "gone").await;
-    assert_eq!(*status.borrow_and_update(), ConnectionStatus::Disconnected);
+    wait_for_backend(&f.observer.client, pid, "gone").await;
+    assert_eq!(
+        *f.status.borrow_and_update(),
+        ConnectionStatus::Disconnected
+    );
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-    executor
+    f.executor
         .fetch_page(
             PageRequest {
-                resource: resource.clone(),
-                continuation: first.continuation.clone(),
+                resource: f.resource.clone(),
+                continuation: f.first.continuation.clone(),
             },
             context,
         )
         .await
         .unwrap();
-    let replacement = executor_pid(&executor).await;
+    let replacement = executor_pid(&f.executor).await;
     assert_ne!(pid, replacement);
-    wait_for_backend(&observer.client, replacement, "idle").await;
+    wait_for_backend(&f.observer.client, replacement, "idle").await;
+    replacement
+}
 
-    observer
+async fn check_terminated_backend(f: &mut TlsFixture, replacement: i32) -> i32 {
+    use onetui_core::provider::{ConnectionStatus, Executor, PageRequest, RequestContext};
+    f.observer
         .client
         .query_one("SELECT pg_terminate_backend($1)", &[&replacement])
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(3), async {
-        while *status.borrow_and_update() != ConnectionStatus::Disconnected {
-            status.changed().await.unwrap();
+        while *f.status.borrow_and_update() != ConnectionStatus::Disconnected {
+            f.status.changed().await.unwrap();
         }
     })
     .await
     .unwrap();
-    assert_eq!(first.rows.len(), 100);
+    assert_eq!(f.first.rows.len(), 100);
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-    executor
+    f.executor
         .fetch_page(
             PageRequest {
-                resource,
+                resource: f.resource.clone(),
                 continuation: None,
             },
             context,
         )
         .await
         .unwrap();
-    let final_pid = executor_pid(&executor).await;
+    let final_pid = executor_pid(&f.executor).await;
     assert_ne!(replacement, final_pid);
+    final_pid
+}
+
+async fn check_timeout_and_shutdown(f: &mut TlsFixture, final_pid: i32) {
+    use onetui_core::Resource;
+    use onetui_core::provider::{
+        ConnectionStatus, Executor, PageRequest, RequestContext, ShutdownContext,
+    };
     let (_cancel, context) = RequestContext::new(Duration::from_secs(1));
     let (result, ()) = tokio::join!(
-        executor.fetch_page(
+        f.executor.fetch_page(
             PageRequest {
                 resource: Resource::new(
                     "postgres.rows",
@@ -1196,23 +1243,33 @@ async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicit
             },
             context,
         ),
-        wait_for_backend(&observer.client, final_pid, "sleep")
+        wait_for_backend(&f.observer.client, final_pid, "sleep")
     );
     assert!(result.is_err());
-    wait_for_backend(&observer.client, final_pid, "gone").await;
-    assert_eq!(*status.borrow(), ConnectionStatus::Disconnected);
+    wait_for_backend(&f.observer.client, final_pid, "gone").await;
+    assert_eq!(*f.status.borrow(), ConnectionStatus::Disconnected);
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-    executor.check(context).await.unwrap();
-    let check_pid = executor_pid(&executor).await;
+    f.executor.check(context).await.unwrap();
+    let check_pid = executor_pid(&f.executor).await;
     assert_ne!(final_pid, check_pid);
-    executor
+    f.executor
         .shutdown(ShutdownContext::new(Duration::from_secs(1)))
         .await
         .unwrap();
-    assert_eq!(*status.borrow(), ConnectionStatus::Closed);
-    wait_for_backend(&observer.client, check_pid, "gone").await;
+    assert_eq!(*f.status.borrow(), ConnectionStatus::Closed);
+    wait_for_backend(&f.observer.client, check_pid, "gone").await;
     let (_cancel, context) = RequestContext::new(Duration::from_secs(1));
-    assert!(executor.check(context).await.is_err());
+    assert!(f.executor.check(context).await.is_err());
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable PostgreSQL TLS fixture"]
+async fn provider_reuses_idle_tls_session_retires_cancel_and_reconnects_explicitly() {
+    let mut f = open_tls_fixture().await;
+    let pid = check_idle_reuse(&f).await;
+    let replacement = check_cancel_and_reconnect(&mut f, pid).await;
+    let final_pid = check_terminated_backend(&mut f, replacement).await;
+    check_timeout_and_shutdown(&mut f, final_pid).await;
 }
 
 #[tokio::test]

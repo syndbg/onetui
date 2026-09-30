@@ -15,21 +15,10 @@ use std::time::Duration;
 
 const QDRANT: &str = "http://127.0.0.1:16334";
 
-#[tokio::test]
-#[ignore = "requires the disposable two-node Qdrant fixture"]
-async fn topology_reports_native_peers_local_remote_shards_and_tls_rejection() {
-    let mut executor = onetui_qdrant::QdrantProvider
-        .configure(
-            &toml::from_str(&format!(
-                "url='{QDRANT}'\nrest_url='http://127.0.0.1:16333'\napi_key_env='KEY'"
-            ))
-            .unwrap(),
-            &|_| Some("fixture-reader-only".into()),
-        )
-        .unwrap();
+async fn wait_for_two_peers(executor: &onetui_qdrant::QdrantExecutor) {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            let peers = fetch(&executor, Resource::new("qdrant.peers", vec![]), None)
+            let peers = fetch(executor, Resource::new("qdrant.peers", vec![]), None)
                 .await
                 .unwrap();
             if peers.rows.len() == 2 {
@@ -40,78 +29,62 @@ async fn topology_reports_native_peers_local_remote_shards_and_tls_rejection() {
     })
     .await
     .unwrap();
-    let cluster = fetch(&executor, Resource::new("qdrant.cluster", vec![]), None)
+    let cluster = fetch(executor, Resource::new("qdrant.cluster", vec![]), None)
         .await
         .unwrap();
     assert_eq!(
         cluster.rows[0].cells[0].as_ref().unwrap().text(),
         Some("enabled")
     );
-    let client = Qdrant::from_url(QDRANT)
-        .api_key("fixture-admin-only")
-        .skip_compatibility_check()
-        .build()
-        .unwrap();
-    let name = format!("topology_fixture_{}", std::process::id());
-    client
-        .create_collection(
-            CreateCollectionBuilder::new(&name)
-                .vectors_config(VectorParamsBuilder::new(2, Distance::Cosine))
-                .shard_number(2)
-                .replication_factor(2),
-        )
-        .await
-        .unwrap();
-    let result = async {
-        let shards = fetch(
-            &executor,
-            Resource::new("qdrant.shards", vec![name.clone()]),
-            None,
-        )
-        .await?;
-        assert_eq!(shards.rows.len(), 4);
-        assert!(
-            shards
-                .rows
-                .iter()
-                .any(|r| r.cells[2].as_ref().unwrap().text() == Some("local"))
-        );
-        assert!(
-            shards
-                .rows
-                .iter()
-                .any(|r| r.cells[2].as_ref().unwrap().text() == Some("remote"))
-        );
-        let details = fetch(
-            &executor,
-            Resource::new("qdrant.collection_cluster", vec![name.clone()]),
-            None,
-        )
-        .await?;
-        assert!(
-            details.rows[0].cells[0]
-                .as_ref()
-                .unwrap()
-                .text()
-                .unwrap()
-                .contains("shard_transfers")
-        );
-        fetch(
-            &executor,
-            Resource::new("qdrant.transfers", vec![name.clone()]),
-            None,
-        )
-        .await?;
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    client.delete_collection(&name).await.unwrap();
-    executor
-        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
-        .await
-        .unwrap();
-    result.unwrap();
+}
 
+async fn check_shards_and_transfers(
+    executor: &onetui_qdrant::QdrantExecutor,
+    name: &str,
+) -> anyhow::Result<()> {
+    let shards = fetch(
+        executor,
+        Resource::new("qdrant.shards", vec![name.to_owned()]),
+        None,
+    )
+    .await?;
+    assert_eq!(shards.rows.len(), 4);
+    assert!(
+        shards
+            .rows
+            .iter()
+            .any(|r| r.cells[2].as_ref().unwrap().text() == Some("local"))
+    );
+    assert!(
+        shards
+            .rows
+            .iter()
+            .any(|r| r.cells[2].as_ref().unwrap().text() == Some("remote"))
+    );
+    let details = fetch(
+        executor,
+        Resource::new("qdrant.collection_cluster", vec![name.to_owned()]),
+        None,
+    )
+    .await?;
+    assert!(
+        details.rows[0].cells[0]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("shard_transfers")
+    );
+    fetch(
+        executor,
+        Resource::new("qdrant.transfers", vec![name.to_owned()]),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn check_tls_rejection() {
     let mut tls = onetui_qdrant::QdrantProvider
         .configure(
             &toml::from_str(&format!(
@@ -133,6 +106,44 @@ async fn topology_reports_native_peers_local_remote_shards_and_tls_rejection() {
     tls.shutdown(ShutdownContext::new(Duration::from_secs(1)))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable two-node Qdrant fixture"]
+async fn topology_reports_native_peers_local_remote_shards_and_tls_rejection() {
+    let mut executor = onetui_qdrant::QdrantProvider
+        .configure(
+            &toml::from_str(&format!(
+                "url='{QDRANT}'\nrest_url='http://127.0.0.1:16333'\napi_key_env='KEY'"
+            ))
+            .unwrap(),
+            &|_| Some("fixture-reader-only".into()),
+        )
+        .unwrap();
+    wait_for_two_peers(&executor).await;
+    let client = Qdrant::from_url(QDRANT)
+        .api_key("fixture-admin-only")
+        .skip_compatibility_check()
+        .build()
+        .unwrap();
+    let name = format!("topology_fixture_{}", std::process::id());
+    client
+        .create_collection(
+            CreateCollectionBuilder::new(&name)
+                .vectors_config(VectorParamsBuilder::new(2, Distance::Cosine))
+                .shard_number(2)
+                .replication_factor(2),
+        )
+        .await
+        .unwrap();
+    let result = check_shards_and_transfers(&executor, &name).await;
+    client.delete_collection(&name).await.unwrap();
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(1)))
+        .await
+        .unwrap();
+    result.unwrap();
+    check_tls_rejection().await;
 }
 
 #[tokio::test]
@@ -315,6 +326,194 @@ async fn fetch(
     result
 }
 
+async fn discover_points(
+    executor: &onetui_qdrant::QdrantExecutor,
+    name: &str,
+) -> anyhow::Result<Resource> {
+    let list = fetch(executor, Resource::new("qdrant.collections", vec![]), None).await?;
+    let collection = list
+        .rows
+        .iter()
+        .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some(name))
+        .unwrap()
+        .target
+        .clone()
+        .unwrap();
+    let menu = fetch(executor, collection, None).await?;
+    let points = menu.rows[0].target.clone().unwrap();
+    assert!(fetch(executor, points.clone(), None).await?.rows.is_empty());
+    let metadata = fetch(executor, menu.rows[1].target.clone().unwrap(), None).await?;
+    assert!(
+        metadata
+            .rows
+            .iter()
+            .any(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text)
+                == Some("points_count (approximate)")
+                && r.cells[1].as_ref().and_then(onetui_core::Value::text) == Some("0"))
+    );
+    Ok(points)
+}
+
+const BROWSER_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+async fn seed_points(client: &Qdrant, name: &str) -> anyhow::Result<()> {
+    let mut records: Vec<_> = (1_u64..=105)
+        .map(|id| {
+            PointStruct::new(
+                id,
+                vec![1.0, 2.0, 3.0],
+                [("title", format!("point-{id}").into())],
+            )
+        })
+        .collect();
+    records.push(PointStruct::new(
+        BROWSER_UUID,
+        vec![1.0, 2.0, 3.0],
+        [(
+            "nested",
+            serde_json::json!({"null": null, "array": [1, "София\u{001b}[31m"]}).into(),
+        )],
+    ));
+    records.push(PointStruct::new(
+        u64::MAX,
+        vec![1.0, 2.0, 3.0],
+        qdrant_client::Payload::default(),
+    ));
+    client
+        .upsert_points(UpsertPointsBuilder::new(name, records).wait(true))
+        .await?;
+    Ok(())
+}
+
+async fn check_pages_and_details(
+    executor: &onetui_qdrant::QdrantExecutor,
+    name: &str,
+    points: &Resource,
+) -> anyhow::Result<(Page, Option<String>, Resource)> {
+    let first = fetch(executor, points.clone(), None).await?;
+    assert_eq!(first.rows.len(), 100);
+    assert_eq!(
+        first.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("1")
+    );
+    assert!(first.rows.iter().all(|r| r.cells.len() == 2));
+    let token = first.continuation.clone();
+    let tail_page = fetch(executor, points.clone(), token.clone()).await?;
+    assert_eq!(tail_page.rows.len(), 7);
+    assert_eq!(
+        tail_page.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("101")
+    );
+    assert!(!tail_page.next);
+    assert!(tail_page.continuation.is_none());
+    let uuid_row = tail_page
+        .rows
+        .iter()
+        .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some(BROWSER_UUID))
+        .unwrap();
+    let menu = fetch(executor, uuid_row.target.clone().unwrap(), None).await?;
+    let payload = fetch(executor, menu.rows[0].target.clone().unwrap(), None).await?;
+    assert!(matches!(
+        &payload.rows[0].cells[0],
+        Some(onetui_core::Value::Json(_))
+    ));
+    assert!(
+        payload.rows[0].cells[0]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains("София")
+    );
+    assert!(
+        !payload.rows[0].cells[0]
+            .as_ref()
+            .unwrap()
+            .text()
+            .unwrap()
+            .contains('\x1b')
+    );
+    let detail = menu.rows[0].target.clone().unwrap();
+    let vectors = fetch(executor, menu.rows[1].target.clone().unwrap(), None).await?;
+    assert_eq!(
+        vectors.rows[0].cells[1]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("dense")
+    );
+    assert_eq!(
+        vectors.rows[0].cells[3]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("[1.0,2.0,3.0]")
+    );
+    let empty_payload = fetch(
+        executor,
+        Resource::new(
+            "qdrant.payload",
+            vec![name.to_owned(), u64::MAX.to_string()],
+        ),
+        None,
+    )
+    .await?;
+    assert_eq!(
+        empty_payload.rows[0].cells[0]
+            .as_ref()
+            .and_then(onetui_core::Value::text),
+        Some("{}")
+    );
+    Ok((first, token, detail))
+}
+
+async fn check_bookmark_isolation(
+    executor: &onetui_qdrant::QdrantExecutor,
+    points: &Resource,
+    token: Option<String>,
+    first: &Page,
+) -> anyhow::Result<()> {
+    assert!(
+        fetch(&browser(), points.clone(), token.clone())
+            .await
+            .is_err()
+    );
+    assert!(
+        fetch(
+            executor,
+            Resource::new("qdrant.points", vec!["other".into()]),
+            token
+        )
+        .await
+        .is_err()
+    );
+    let refreshed = fetch(executor, points.clone(), None).await?;
+    assert_eq!(refreshed.rows[0].cells[0], first.rows[0].cells[0]);
+    Ok(())
+}
+
+async fn remove_point_and_reread(
+    client: &Qdrant,
+    executor: &onetui_qdrant::QdrantExecutor,
+    name: &str,
+    points: Resource,
+    detail: Resource,
+) -> anyhow::Result<()> {
+    client
+        .delete_points(
+            DeletePointsBuilder::new(name)
+                .points(vec![qdrant_client::qdrant::PointId::from(BROWSER_UUID)])
+                .wait(true),
+        )
+        .await?;
+    let error = fetch(executor, detail, None).await.unwrap_err();
+    assert!(error.to_string().contains("disappeared"));
+    assert!(fetch(executor, points, None).await.is_ok());
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "creates only its own collection in the disposable Qdrant fixture"]
 async fn production_browser_pages_metadata_payload_and_removed_points() {
@@ -333,158 +532,13 @@ async fn production_browser_pages_metadata_payload_and_removed_points() {
         .unwrap();
     let mut executor = browser();
     let result = async {
-        let list = fetch(&executor, Resource::new("qdrant.collections", vec![]), None).await?;
-        let collection = list
-            .rows
-            .iter()
-            .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some(&name))
-            .unwrap()
-            .target
-            .clone()
-            .unwrap();
-        let menu = fetch(&executor, collection, None).await?;
-        let points = menu.rows[0].target.clone().unwrap();
-        assert!(
-            fetch(&executor, points.clone(), None)
-                .await?
-                .rows
-                .is_empty()
-        );
-        let metadata = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
-        assert!(metadata.rows.iter().any(
-            |r| r.cells[0].as_ref().and_then(onetui_core::Value::text)
-                == Some("points_count (approximate)")
-                && r.cells[1].as_ref().and_then(onetui_core::Value::text) == Some("0")
-        ));
-        let mut records: Vec<_> = (1_u64..=105)
-            .map(|id| {
-                PointStruct::new(
-                    id,
-                    vec![1.0, 2.0, 3.0],
-                    [("title", format!("point-{id}").into())],
-                )
-            })
-            .collect();
-        let uuid = "550e8400-e29b-41d4-a716-446655440000";
-        records.push(PointStruct::new(
-            uuid,
-            vec![1.0, 2.0, 3.0],
-            [(
-                "nested",
-                serde_json::json!({"null": null, "array": [1, "София\u{001b}[31m"]}).into(),
-            )],
-        ));
-        records.push(PointStruct::new(
-            u64::MAX,
-            vec![1.0, 2.0, 3.0],
-            qdrant_client::Payload::default(),
-        ));
-        client
-            .upsert_points(UpsertPointsBuilder::new(&name, records).wait(true))
-            .await?;
-        let first = fetch(&executor, points.clone(), None).await?;
-        assert_eq!(first.rows.len(), 100);
-        assert_eq!(
-            first.rows[0].cells[0]
-                .as_ref()
-                .and_then(onetui_core::Value::text),
-            Some("1")
-        );
-        assert!(first.rows.iter().all(|r| r.cells.len() == 2));
-        let token = first.continuation.clone();
-        let tail_page = fetch(&executor, points.clone(), token.clone()).await?;
-        assert_eq!(tail_page.rows.len(), 7);
-        assert_eq!(
-            tail_page.rows[0].cells[0]
-                .as_ref()
-                .and_then(onetui_core::Value::text),
-            Some("101")
-        );
-        assert!(!tail_page.next);
-        assert!(tail_page.continuation.is_none());
-        let uuid_row = tail_page
-            .rows
-            .iter()
-            .find(|r| r.cells[0].as_ref().and_then(onetui_core::Value::text) == Some(uuid))
-            .unwrap();
-        let menu = fetch(&executor, uuid_row.target.clone().unwrap(), None).await?;
-        let payload = fetch(&executor, menu.rows[0].target.clone().unwrap(), None).await?;
-        assert!(matches!(
-            &payload.rows[0].cells[0],
-            Some(onetui_core::Value::Json(_))
-        ));
-        assert!(
-            payload.rows[0].cells[0]
-                .as_ref()
-                .unwrap()
-                .text()
-                .unwrap()
-                .contains("София")
-        );
-        assert!(
-            !payload.rows[0].cells[0]
-                .as_ref()
-                .unwrap()
-                .text()
-                .unwrap()
-                .contains('\x1b')
-        );
-        let vectors = fetch(&executor, menu.rows[1].target.clone().unwrap(), None).await?;
-        assert_eq!(
-            vectors.rows[0].cells[1]
-                .as_ref()
-                .and_then(onetui_core::Value::text),
-            Some("dense")
-        );
-        assert_eq!(
-            vectors.rows[0].cells[3]
-                .as_ref()
-                .and_then(onetui_core::Value::text),
-            Some("[1.0,2.0,3.0]")
-        );
-        let empty_payload = fetch(
-            &executor,
-            Resource::new("qdrant.payload", vec![name.clone(), u64::MAX.to_string()]),
-            None,
-        )
-        .await?;
-        assert_eq!(
-            empty_payload.rows[0].cells[0]
-                .as_ref()
-                .and_then(onetui_core::Value::text),
-            Some("{}")
-        );
-        assert!(
-            fetch(&browser(), points.clone(), token.clone())
-                .await
-                .is_err()
-        );
-        assert!(
-            fetch(
-                &executor,
-                Resource::new("qdrant.points", vec!["other".into()]),
-                token
-            )
-            .await
-            .is_err()
-        );
-        let refreshed = fetch(&executor, points.clone(), None).await?;
-        assert_eq!(refreshed.rows[0].cells[0], first.rows[0].cells[0]);
+        let points = discover_points(&executor, &name).await?;
+        seed_points(&client, &name).await?;
+        let (first, token, detail) = check_pages_and_details(&executor, &name, &points).await?;
+        check_bookmark_isolation(&executor, &points, token, &first).await?;
         #[cfg(unix)]
         terminal::journey(&name);
-        client
-            .delete_points(
-                DeletePointsBuilder::new(&name)
-                    .points(vec![qdrant_client::qdrant::PointId::from(uuid)])
-                    .wait(true),
-            )
-            .await?;
-        let error = fetch(&executor, menu.rows[0].target.clone().unwrap(), None)
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("disappeared"));
-        assert!(fetch(&executor, points, None).await.is_ok());
-        Ok::<_, anyhow::Error>(())
+        remove_point_and_reread(&client, &executor, &name, points, detail).await
     }
     .await;
     executor
@@ -745,13 +799,9 @@ fn qdrant_cli_check_and_auth_failure() {
     assert!(!output.status.success());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("fake-wrong-secret"));
 }
-#[test]
-#[ignore = "requires the disposable Docker Compose Qdrant TLS fixture"]
-fn qdrant_https_verifies_trust_hostname_and_authentication() {
-    let ca = fixture_ca("qdrant-tls", "/qdrant/tls/ca.crt");
-    let unrelated_dir = tempfile::tempdir().unwrap();
-    let unrelated_ca = unrelated_dir.path().join("ca.pem");
-    let key = unrelated_dir.path().join("key.pem");
+fn unrelated_ca(dir: &std::path::Path) -> std::path::PathBuf {
+    let unrelated_ca = dir.join("ca.pem");
+    let key = dir.join("key.pem");
     let output = Command::new("openssl")
         .args([
             "req",
@@ -771,6 +821,72 @@ fn qdrant_https_verifies_trust_hostname_and_authentication() {
         .output()
         .unwrap();
     assert!(output.status.success(), "test CA generation failed");
+    unrelated_ca
+}
+
+fn check_tls_case(
+    endpoint: &str,
+    trusted_ca: &std::path::Path,
+    key: &str,
+    expected: Option<&str>,
+    empty_cert_dir: &std::path::Path,
+) {
+    let mut config = tempfile::NamedTempFile::new().unwrap();
+    writeln!(
+        config,
+        "[connections.tls]\nkind='qdrant'\nurl='{endpoint}'\napi_key_env='ONETUI_QDRANT_API_KEY'"
+    )
+    .unwrap();
+    let output = binary()
+        .args(["--check", "--connection", "tls", "--config"])
+        .arg(config.path())
+        .args(["--timeout", "2"])
+        // rustls-native-certs reads these in the child only; the OS trust store is untouched.
+        .env("SSL_CERT_FILE", trusted_ca)
+        .env("SSL_CERT_DIR", empty_cert_dir)
+        .env("ONETUI_QDRANT_API_KEY", key)
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.success(), expected.is_none(), "{error}");
+    if let Some(expected) = expected {
+        assert!(error.contains(expected), "{error}");
+        assert!(output.stdout.is_empty());
+    } else {
+        assert!(String::from_utf8_lossy(&output.stdout).contains("OK tls (qdrant)"));
+    }
+    assert!(!error.contains("fake-wrong-secret"));
+    assert!(!error.contains("fixture-reader-only"));
+    assert!(!error.contains('\u{1b}'));
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "topology_tls_child", "--nocapture"])
+        .env(
+            "ONETUI_TEST_QDRANT_REST_URL",
+            endpoint.replace("16335", "16336").replace("16334", "16333"),
+        )
+        .env(
+            "ONETUI_TEST_QDRANT_REST_OK",
+            if expected.is_none() { "yes" } else { "no" },
+        )
+        .env("SSL_CERT_FILE", trusted_ca)
+        .env("SSL_CERT_DIR", empty_cert_dir)
+        .env("ONETUI_QDRANT_API_KEY", key)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "requires the disposable Docker Compose Qdrant TLS fixture"]
+fn qdrant_https_verifies_trust_hostname_and_authentication() {
+    let ca = fixture_ca("qdrant-tls", "/qdrant/tls/ca.crt");
+    let unrelated_dir = tempfile::tempdir().unwrap();
+    let unrelated_ca = unrelated_ca(unrelated_dir.path());
     let empty_cert_dir = tempfile::tempdir().unwrap();
     for (endpoint, trusted_ca, key, expected) in [
         (
@@ -816,50 +932,7 @@ fn qdrant_https_verifies_trust_hostname_and_authentication() {
             None,
         ),
     ] {
-        let mut config = tempfile::NamedTempFile::new().unwrap();
-        writeln!(config, "[connections.tls]\nkind='qdrant'\nurl='{endpoint}'\napi_key_env='ONETUI_QDRANT_API_KEY'").unwrap();
-        let output = binary()
-            .args(["--check", "--connection", "tls", "--config"])
-            .arg(config.path())
-            .args(["--timeout", "2"])
-            // rustls-native-certs reads these in the child only; the OS trust store is untouched.
-            .env("SSL_CERT_FILE", trusted_ca)
-            .env("SSL_CERT_DIR", empty_cert_dir.path())
-            .env("ONETUI_QDRANT_API_KEY", key)
-            .output()
-            .unwrap();
-        let error = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(output.status.success(), expected.is_none(), "{error}");
-        if let Some(expected) = expected {
-            assert!(error.contains(expected), "{error}");
-            assert!(output.stdout.is_empty());
-        } else {
-            assert!(String::from_utf8_lossy(&output.stdout).contains("OK tls (qdrant)"));
-        }
-        assert!(!error.contains("fake-wrong-secret"));
-        assert!(!error.contains("fixture-reader-only"));
-        assert!(!error.contains('\u{1b}'));
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "topology_tls_child", "--nocapture"])
-            .env(
-                "ONETUI_TEST_QDRANT_REST_URL",
-                endpoint.replace("16335", "16336").replace("16334", "16333"),
-            )
-            .env(
-                "ONETUI_TEST_QDRANT_REST_OK",
-                if expected.is_none() { "yes" } else { "no" },
-            )
-            .env("SSL_CERT_FILE", trusted_ca)
-            .env("SSL_CERT_DIR", empty_cert_dir.path())
-            .env("ONETUI_QDRANT_API_KEY", key)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        check_tls_case(endpoint, trusted_ca, key, expected, empty_cert_dir.path());
     }
 }
 

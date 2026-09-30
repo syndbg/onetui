@@ -333,6 +333,137 @@ fn actual_cli_kafka_live_follow_with_fixture_producer() {
     assert!(output.contains("sequence=0") && output.contains("sequence=1"));
 }
 
+fn browse_brokers_and_topic(pty: &mut Pty, alias: &str) {
+    pty.open_filtered(alias);
+    pty.wait(&[
+        "kafka.resources",
+        "kafka.topics",
+        "kafka.brokers",
+        "kafka.groups",
+    ]);
+    pty.send(b"j\r");
+    pty.wait(&["kafka.brokers", "1shown/1loaded", "host", "port"]);
+    pty.send(b"\r");
+    pty.wait(&["kafka.broker_config", "source", "100shown/100loaded"]);
+    pty.send(b"n");
+    pty.wait(&["kafka.broker_config", "Page2"]);
+    pty.send(b"p");
+    pty.wait(&["kafka.broker_config", "Page1"]);
+    pty.send(b"lllll");
+    pty.wait(&["kafka.broker_config", "is_sensitive"]);
+    pty.send(b"\x1b");
+    pty.wait(&["kafka.brokers", "host", "port"]);
+    pty.send(b"\x1b");
+    pty.wait(&["kafka.resources", "kafka.groups"]);
+    pty.send(b"k\r");
+    pty.wait(&["kafka.topics", "demo_events"]);
+    pty.open_filtered("demo_events");
+    pty.wait(&["kafka.topic", "kafka.topic_config"]);
+    pty.send(b"jj\r");
+    pty.wait(&[
+        "kafka.records",
+        "partition",
+        "Topic-wide",
+        "3partitions",
+        "100shown/100loaded",
+    ]);
+    for page in 2..=5 {
+        pty.send(b"n");
+        pty.wait(&["kafka.records", "Topic-wide", &format!("Page{page}")]);
+    }
+    for page in (1..5).rev() {
+        pty.send(b"p");
+        pty.wait(&["kafka.records", "Topic-wide", &format!("Page{page}")]);
+    }
+    pty.send(b"f");
+    pty.wait(&["LIVE", "0retained", "3partitions"]);
+    pty.send(b"\x03");
+    pty.wait(&["Followingstopped"]);
+}
+
+fn browse_partitions(pty: &mut Pty) {
+    pty.send(b"\x1b");
+    pty.wait(&["kafka.topic", "kafka.topic_config"]);
+    pty.send(b"k");
+    pty.send(b"\r");
+    pty.wait(&["kafka.topic_config", "cleanup.policy", "source"]);
+    pty.send(b"\x1b");
+    pty.wait(&["kafka.topic", "kafka.partitions"]);
+    pty.send(b"k\r");
+    pty.wait(&["kafka.partitions", "3shown/3loaded"]);
+    pty.send(b"\r");
+    pty.wait(&["kafka.records", "100shown/100loaded", "Page1"]);
+    for page in 2..=5 {
+        pty.send(b"n");
+        pty.wait(&["kafka.records", &format!("Page{page}")]);
+    }
+    for page in (1..5).rev() {
+        pty.send(b"p");
+        pty.wait(&["kafka.records", &format!("Page{page}")]);
+    }
+}
+
+fn run_consume_queries(pty: &mut Pty, alias: &str) {
+    pty.send(b"e");
+    pty.wait(&["KafkaCONSUME/PRODUCE", "retaineddata"]);
+    // The verb line names the target; the editor prefills it from the open partition.
+    // The range lives on the verb line, so a read needs no multiline body.
+    pty.send(b"\x15CONSUME demo_events/0 offsets 123..250\r");
+    pty.wait(&[
+        "Runquery?",
+        &format!("Connection:{alias}"),
+        "Target:kafka.query/demo_events",
+    ]);
+    pty.send(b"\r");
+    pty.wait(&["kafka.query", "executed", "100shown/100loaded", "[123,250)"]);
+    pty.send(b"n");
+    pty.wait(&["kafka.query", "Page2", "27shown/27loaded", "[223,250)"]);
+    pty.send(b"p");
+    pty.wait(&["kafka.query", "Page1", "[123,250)"]);
+    pty.send(b"e\x15CONSUME demo_events/0 offsets -1..\r");
+    pty.wait(&[
+        "Runquery?",
+        &format!("Connection:{alias}"),
+        "Target:kafka.query/demo_events",
+    ]);
+    pty.send(b"\r");
+    pty.wait(&["nonnegativesigned64-bitintegers", "retaineddata"]);
+    pty.send(b"\x1b");
+    pty.wait(&["kafka.query", "executed"]);
+    pty.send(b"\x1b");
+    pty.wait(&["kafka.records", "Page1"]);
+    pty.send(b"\r");
+    pty.wait(&["Rowdata", "timestamp_ms", "headers", "value"]);
+    pty.send(b":display format hex\r");
+    pty.wait(&["Rowdata", "00000000"]);
+
+    pty.send(b"c");
+    pty.wait(&["connections", "second"]);
+}
+
+fn publish_to_writable_topic(pty: &mut Pty, alias: &str) {
+    // Publishing reports a typed write outcome, like every other write provider.
+    // It runs last and against demo_writable: the other seeded topics are asserted
+    // to hold exact record counts, so publishing into one would break those tests.
+    // The confirmation shows the open view's resource, so the topic is opened from
+    // the connections list rather than only named on the verb line.
+    pty.open_filtered(alias);
+    pty.wait(&["kafka.resources", "kafka.topics"]);
+    pty.send(b"k\r");
+    pty.wait(&["kafka.topics", "demo_writable"]);
+    pty.open_filtered("demo_writable");
+    pty.wait(&["kafka.topic", "kafka.topic_config"]);
+    pty.send(b"e");
+    pty.wait(&["KafkaCONSUME/PRODUCE"]);
+    pty.send(b"\x15PRODUCE demo_writable/0\x1b[13;2u\x1b[13;2u\x1b[200~{\"key\":\"pty\",\"value\":\"published\"}\x1b[201~\r");
+    pty.wait(&["Runquery?", "Target:kafka.query/demo_writable"]);
+    pty.send(b"\r");
+    pty.wait(&["outcome", "applied", "Published1recordsto"]);
+    pty.send(b"\x1b\x1b");
+    pty.send(b"c");
+    pty.wait(&["connections", "second"]);
+}
+
 #[test]
 #[ignore = "requires seeded Kafka and the built CLI; read-only, child-owned PTY"]
 fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
@@ -355,126 +486,10 @@ fn actual_cli_kafka_browsing_bookmarks_aliases_and_restore() {
     );
     // Returning to the first alias must release the previous native owner.
     for alias in ["kafka", "second", "kafka"] {
-        pty.open_filtered(alias);
-        pty.wait(&[
-            "kafka.resources",
-            "kafka.topics",
-            "kafka.brokers",
-            "kafka.groups",
-        ]);
-        pty.send(b"j\r");
-        pty.wait(&["kafka.brokers", "1shown/1loaded", "host", "port"]);
-        pty.send(b"\r");
-        pty.wait(&["kafka.broker_config", "source", "100shown/100loaded"]);
-        pty.send(b"n");
-        pty.wait(&["kafka.broker_config", "Page2"]);
-        pty.send(b"p");
-        pty.wait(&["kafka.broker_config", "Page1"]);
-        pty.send(b"lllll");
-        pty.wait(&["kafka.broker_config", "is_sensitive"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.brokers", "host", "port"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.resources", "kafka.groups"]);
-        pty.send(b"k\r");
-        pty.wait(&["kafka.topics", "demo_events"]);
-        pty.open_filtered("demo_events");
-        pty.wait(&["kafka.topic", "kafka.topic_config"]);
-        pty.send(b"jj\r");
-        pty.wait(&[
-            "kafka.records",
-            "partition",
-            "Topic-wide",
-            "3partitions",
-            "100shown/100loaded",
-        ]);
-        for page in 2..=5 {
-            pty.send(b"n");
-            pty.wait(&["kafka.records", "Topic-wide", &format!("Page{page}")]);
-        }
-        for page in (1..5).rev() {
-            pty.send(b"p");
-            pty.wait(&["kafka.records", "Topic-wide", &format!("Page{page}")]);
-        }
-        pty.send(b"f");
-        pty.wait(&["LIVE", "0retained", "3partitions"]);
-        pty.send(b"\x03");
-        pty.wait(&["Followingstopped"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.topic", "kafka.topic_config"]);
-        pty.send(b"k");
-        pty.send(b"\r");
-        pty.wait(&["kafka.topic_config", "cleanup.policy", "source"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.topic", "kafka.partitions"]);
-        pty.send(b"k\r");
-        pty.wait(&["kafka.partitions", "3shown/3loaded"]);
-        pty.send(b"\r");
-        pty.wait(&["kafka.records", "100shown/100loaded", "Page1"]);
-        for page in 2..=5 {
-            pty.send(b"n");
-            pty.wait(&["kafka.records", &format!("Page{page}")]);
-        }
-        for page in (1..5).rev() {
-            pty.send(b"p");
-            pty.wait(&["kafka.records", &format!("Page{page}")]);
-        }
-        pty.send(b"e");
-        pty.wait(&["KafkaCONSUME/PRODUCE", "retaineddata"]);
-        // The verb line names the target; the editor prefills it from the open partition.
-        // The range lives on the verb line, so a read needs no multiline body.
-        pty.send(b"\x15CONSUME demo_events/0 offsets 123..250\r");
-        pty.wait(&[
-            "Runquery?",
-            &format!("Connection:{alias}"),
-            "Target:kafka.query/demo_events",
-        ]);
-        pty.send(b"\r");
-        pty.wait(&["kafka.query", "executed", "100shown/100loaded", "[123,250)"]);
-        pty.send(b"n");
-        pty.wait(&["kafka.query", "Page2", "27shown/27loaded", "[223,250)"]);
-        pty.send(b"p");
-        pty.wait(&["kafka.query", "Page1", "[123,250)"]);
-        pty.send(b"e\x15CONSUME demo_events/0 offsets -1..\r");
-        pty.wait(&[
-            "Runquery?",
-            &format!("Connection:{alias}"),
-            "Target:kafka.query/demo_events",
-        ]);
-        pty.send(b"\r");
-        pty.wait(&["nonnegativesigned64-bitintegers", "retaineddata"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.query", "executed"]);
-        pty.send(b"\x1b");
-        pty.wait(&["kafka.records", "Page1"]);
-        pty.send(b"\r");
-        pty.wait(&["Rowdata", "timestamp_ms", "headers", "value"]);
-        pty.send(b":display format hex\r");
-        pty.wait(&["Rowdata", "00000000"]);
-
-        pty.send(b"c");
-        pty.wait(&["connections", "second"]);
-
-        // Publishing reports a typed write outcome, like every other write provider.
-        // It runs last and against demo_writable: the other seeded topics are asserted
-        // to hold exact record counts, so publishing into one would break those tests.
-        // The confirmation shows the open view's resource, so the topic is opened from
-        // the connections list rather than only named on the verb line.
-        pty.open_filtered(alias);
-        pty.wait(&["kafka.resources", "kafka.topics"]);
-        pty.send(b"k\r");
-        pty.wait(&["kafka.topics", "demo_writable"]);
-        pty.open_filtered("demo_writable");
-        pty.wait(&["kafka.topic", "kafka.topic_config"]);
-        pty.send(b"e");
-        pty.wait(&["KafkaCONSUME/PRODUCE"]);
-        pty.send(b"\x15PRODUCE demo_writable/0\x1b[13;2u\x1b[13;2u\x1b[200~{\"key\":\"pty\",\"value\":\"published\"}\x1b[201~\r");
-        pty.wait(&["Runquery?", "Target:kafka.query/demo_writable"]);
-        pty.send(b"\r");
-        pty.wait(&["outcome", "applied", "Published1recordsto"]);
-        pty.send(b"\x1b\x1b");
-        pty.send(b"c");
-        pty.wait(&["connections", "second"]);
+        browse_brokers_and_topic(&mut pty, alias);
+        browse_partitions(&mut pty);
+        run_consume_queries(&mut pty, alias);
+        publish_to_writable_topic(&mut pty, alias);
     }
     pty.send(b"q");
     pty.wait(&["QuitOneTUI?"]);

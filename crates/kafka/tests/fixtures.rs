@@ -171,9 +171,7 @@ async fn kafka_broker_stall_cancellation_deadline_and_recovery() {
         .unwrap();
 }
 
-#[tokio::test]
-#[ignore = "requires the disposable Kafka TLS/SASL fixture; read-only"]
-async fn kafka_verified_tls_sasl_and_native_auth_errors() {
+fn tls_fixture_ca() -> tempfile::NamedTempFile {
     use std::io::Write;
     let cert = std::process::Command::new("docker")
         .args([
@@ -200,8 +198,21 @@ async fn kafka_verified_tls_sasl_and_native_auth_errors() {
     );
     let mut ca = tempfile::NamedTempFile::new().unwrap();
     ca.write_all(&cert.stdout).unwrap();
-    // Each case exercises the provider, including native teardown before the next alias.
-    for (host, protocol, mechanism, username, password, trust, expected) in [
+    ca
+}
+
+type TlsCase = (
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    &'static str,
+    &'static str,
+    bool,
+    Option<&'static str>,
+);
+
+fn tls_cases() -> Vec<TlsCase> {
+    vec![
         ("localhost:19093", "SSL", None, "", "", true, None),
         (
             "localhost:19094",
@@ -266,109 +277,120 @@ async fn kafka_verified_tls_sasl_and_native_auth_errors() {
             true,
             Some("RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED"),
         ),
+    ]
+}
+
+async fn assert_authorization_denials(executor: &KafkaExecutor, password: &str) {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let denied = executor
+        .fetch_page(
+            PageRequest {
+                resource: Resource::new("kafka.members", vec!["fixture-protected-group".into()]),
+                continuation: None,
+            },
+            context,
+        )
+        .await
+        .unwrap_err();
+    // ListGroups hides unauthorized names before DescribeGroups can return
+    // a per-group error. Absence must not become a successful empty view.
+    assert!(
+        denied
+            .to_string()
+            .contains("Kafka group missing from metadata"),
+        "omitted group must not look like an empty membership: {denied:#}"
+    );
+    assert!(!denied.to_string().contains(password));
+    for (id, name, expected_code) in [
+        (
+            "kafka.topic_config",
+            "demo_events",
+            "TOPIC_AUTHORIZATION_FAILED",
+        ),
+        ("kafka.broker_config", "1", "CLUSTER_AUTHORIZATION_FAILED"),
+        (
+            "kafka.offsets",
+            "fixture-protected-group",
+            "GROUP_AUTHORIZATION_FAILED",
+        ),
     ] {
-        let mut options: toml::Table = toml::from_str(&format!(
-            "bootstrap_servers=['{host}']\nsecurity_protocol='{protocol}'"
-        ))
-        .unwrap();
-        if trust {
-            options.insert("ca_file".into(), ca.path().to_str().unwrap().into());
-        }
-        if let Some(mechanism) = mechanism {
-            options.insert("sasl_mechanism".into(), mechanism.into());
-            options.insert("username_env".into(), "FIXTURE_USER".into());
-            options.insert("password_env".into(), "FIXTURE_PASSWORD".into());
-        }
-        let mut executor = KafkaProvider
-            .configure(&options, &|name| match name {
-                "FIXTURE_USER" => Some(username.into()),
-                "FIXTURE_PASSWORD" => Some(password.into()),
-                _ => None,
-            })
-            .unwrap();
         let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let result = executor
+        let denied = executor
             .fetch_page(
                 PageRequest {
-                    resource: Resource::new(
-                        "kafka.records",
-                        vec!["demo_events".into(), "0".into()],
-                    ),
+                    resource: Resource::new(id, vec![name.into()]),
                     continuation: None,
                 },
                 context,
             )
-            .await;
-        if expected.is_none() && mechanism.is_some() {
-            let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-            let denied = executor
-                .fetch_page(
-                    PageRequest {
-                        resource: Resource::new(
-                            "kafka.members",
-                            vec!["fixture-protected-group".into()],
-                        ),
-                        continuation: None,
-                    },
-                    context,
-                )
-                .await
-                .unwrap_err();
-            // ListGroups hides unauthorized names before DescribeGroups can return
-            // a per-group error. Absence must not become a successful empty view.
-            assert!(
-                denied
-                    .to_string()
-                    .contains("Kafka group missing from metadata"),
-                "omitted group must not look like an empty membership: {denied:#}"
-            );
-            assert!(!denied.to_string().contains(password));
-            for (id, name, expected_code) in [
-                (
-                    "kafka.topic_config",
-                    "demo_events",
-                    "TOPIC_AUTHORIZATION_FAILED",
-                ),
-                ("kafka.broker_config", "1", "CLUSTER_AUTHORIZATION_FAILED"),
-                (
-                    "kafka.offsets",
-                    "fixture-protected-group",
-                    "GROUP_AUTHORIZATION_FAILED",
-                ),
-            ] {
-                let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-                let denied = executor
-                    .fetch_page(
-                        PageRequest {
-                            resource: Resource::new(id, vec![name.into()]),
-                            continuation: None,
-                        },
-                        context,
-                    )
-                    .await
-                    .unwrap_err();
-                assert!(
-                    denied.to_string().contains(expected_code),
-                    "{id}: {denied:#}"
-                );
-                assert!(!denied.to_string().contains(password));
-            }
-        }
-        executor
-            .shutdown(ShutdownContext::new(Duration::from_secs(2)))
             .await
-            .unwrap();
-        match expected {
-            Some(expected) => {
-                let error = format!("{:#}", result.unwrap_err());
-                assert!(error.contains(expected), "{host} {mechanism:?}: {error}");
-                assert!(!error.contains("wrong-fixture-secret"));
-            }
-            None => match result {
-                Ok(page) => assert_eq!(page.rows.len(), 100, "{host} {mechanism:?}"),
-                Err(error) => panic!("{host} {mechanism:?}: {error:#}"),
+            .unwrap_err();
+        assert!(
+            denied.to_string().contains(expected_code),
+            "{id}: {denied:#}"
+        );
+        assert!(!denied.to_string().contains(password));
+    }
+}
+
+async fn check_tls_case(ca: &std::path::Path, case: TlsCase) {
+    let (host, protocol, mechanism, username, password, trust, expected) = case;
+    let mut options: toml::Table = toml::from_str(&format!(
+        "bootstrap_servers=['{host}']\nsecurity_protocol='{protocol}'"
+    ))
+    .unwrap();
+    if trust {
+        options.insert("ca_file".into(), ca.to_str().unwrap().into());
+    }
+    if let Some(mechanism) = mechanism {
+        options.insert("sasl_mechanism".into(), mechanism.into());
+        options.insert("username_env".into(), "FIXTURE_USER".into());
+        options.insert("password_env".into(), "FIXTURE_PASSWORD".into());
+    }
+    let mut executor = KafkaProvider
+        .configure(&options, &|name| match name {
+            "FIXTURE_USER" => Some(username.into()),
+            "FIXTURE_PASSWORD" => Some(password.into()),
+            _ => None,
+        })
+        .unwrap();
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let result = executor
+        .fetch_page(
+            PageRequest {
+                resource: Resource::new("kafka.records", vec!["demo_events".into(), "0".into()]),
+                continuation: None,
             },
+            context,
+        )
+        .await;
+    if expected.is_none() && mechanism.is_some() {
+        assert_authorization_denials(&executor, password).await;
+    }
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+        .await
+        .unwrap();
+    match expected {
+        Some(expected) => {
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(error.contains(expected), "{host} {mechanism:?}: {error}");
+            assert!(!error.contains("wrong-fixture-secret"));
         }
+        None => match result {
+            Ok(page) => assert_eq!(page.rows.len(), 100, "{host} {mechanism:?}"),
+            Err(error) => panic!("{host} {mechanism:?}: {error:#}"),
+        },
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable Kafka TLS/SASL fixture; read-only"]
+async fn kafka_verified_tls_sasl_and_native_auth_errors() {
+    let ca = tls_fixture_ca();
+    // Each case exercises the provider, including native teardown before the next alias.
+    for case in tls_cases() {
+        check_tls_case(ca.path(), case).await;
     }
 }
 
@@ -603,14 +625,497 @@ async fn kafka_preserves_null_empty_binary_headers_and_empty_partitions() {
         .unwrap();
 }
 
+struct Txn {
+    executor: KafkaExecutor,
+    config: rdkafka::ClientConfig,
+    topic: String,
+    resource: Resource,
+    tail: Page,
+    producer: rdkafka::producer::FutureProducer,
+    first_token: Option<String>,
+    offsets_target: Option<Resource>,
+    live_token: Option<String>,
+    committed_token: Option<String>,
+    token: Option<String>,
+}
+
+async fn start_transactions(topic: String, config: rdkafka::ClientConfig) -> Txn {
+    use rdkafka::producer::{FutureProducer, Producer};
+    let test_topic = topic.clone();
+    let executor = executor();
+    let resource = Resource::new("kafka.records", vec![test_topic.clone(), "0".into()]);
+    let tail = follow(&executor, resource.clone(), None).await;
+    assert!(tail.rows.is_empty());
+    let producer: FutureProducer = config
+        .clone()
+        .set("transactional.id", &test_topic)
+        .set("compression.type", "zstd")
+        .set("message.max.bytes", "2097152")
+        .create()
+        .unwrap();
+    producer.init_transactions(Duration::from_secs(10)).unwrap();
+    Txn {
+        executor,
+        config,
+        topic,
+        resource,
+        tail,
+        producer,
+        first_token: None,
+        offsets_target: None,
+        live_token: None,
+        committed_token: None,
+        token: None,
+    }
+}
+
+async fn seed_committed_aborted_and_near_limit(t: &Txn) {
+    use rdkafka::producer::{FutureRecord, Producer};
+
+    t.producer.begin_transaction().unwrap();
+    for n in 0..120u32 {
+        t.producer
+            .send(
+                FutureRecord::to(&t.topic)
+                    .partition(0)
+                    .key("key")
+                    .payload(&n.to_be_bytes()[..]),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+    }
+    t.producer
+        .commit_transaction(Duration::from_secs(10))
+        .unwrap();
+    t.producer.begin_transaction().unwrap();
+    t.producer
+        .send(
+            FutureRecord::to(&t.topic)
+                .partition(0)
+                .key("key")
+                .payload("aborted"),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    t.producer
+        .abort_transaction(Duration::from_secs(10))
+        .unwrap();
+    t.producer.begin_transaction().unwrap();
+    let near_limit = vec![b'x'; onetui_core::PAGE_BYTES - 4096];
+    t.producer
+        .send(
+            FutureRecord::to(&t.topic)
+                .partition(1)
+                .key("key")
+                .payload(&near_limit),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    t.producer
+        .commit_transaction(Duration::from_secs(10))
+        .unwrap();
+}
+
+async fn check_near_limit_and_byte_budget(t: &Txn) {
+    use rdkafka::producer::{FutureRecord, Producer};
+
+    let near_limit = vec![b'x'; onetui_core::PAGE_BYTES - 4096];
+    let near_limit_page = fetch(
+        &t.executor,
+        Resource::new("kafka.records", vec![t.topic.clone(), "1".into()]),
+        None,
+    )
+    .await;
+    assert_eq!(near_limit_page.rows.len(), 1);
+    assert_eq!(
+        near_limit_page.rows[0].cells[3].as_ref().unwrap().bytes(),
+        near_limit
+    );
+    let large_resource = Resource::new("kafka.records", vec![t.topic.clone(), "1".into()]);
+    let large_tail = follow(&t.executor, large_resource.clone(), None).await;
+    t.producer.begin_transaction().unwrap();
+    for _ in 0..2 {
+        t.producer
+            .send(
+                FutureRecord::to(&t.topic)
+                    .partition(1)
+                    .key("key")
+                    .payload(&near_limit),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+    }
+    t.producer
+        .commit_transaction(Duration::from_secs(10))
+        .unwrap();
+    let large_first = follow(&t.executor, large_resource.clone(), large_tail.continuation).await;
+    assert_eq!(
+        large_first.rows.len(),
+        1,
+        "byte budget must split a batch without skipping its next record"
+    );
+    let large_second = follow(&t.executor, large_resource, large_first.continuation).await;
+    assert_eq!(large_second.rows.len(), 1);
+    assert_eq!(
+        large_first.rows[0].cells[3].as_ref().unwrap().bytes(),
+        near_limit
+    );
+    assert_eq!(
+        large_second.rows[0].cells[3].as_ref().unwrap().bytes(),
+        near_limit
+    );
+    assert_ne!(large_first.rows[0].cells[0], large_second.rows[0].cells[0]);
+}
+
+async fn check_committed_pages(t: &mut Txn) {
+    let first = fetch(&t.executor, t.resource.clone(), None).await;
+    let second = fetch(&t.executor, t.resource.clone(), first.continuation.clone()).await;
+    assert_eq!(first.rows.len() + second.rows.len(), 120);
+    assert!(
+        !second.next,
+        "control/aborted offsets must not create an endless page"
+    );
+    assert!(
+        !second
+            .rows
+            .iter()
+            .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"aborted")
+    );
+    t.first_token = first.continuation;
+}
+
+async fn inspect_fixture_group(t: &Txn, observer: &rdkafka::consumer::BaseConsumer) -> Resource {
+    use rdkafka::consumer::Consumer;
+    let groups = fetch(&t.executor, Resource::new("kafka.groups", vec![]), None).await;
+    let group_name = format!("{}_application", t.topic);
+    let group = groups
+        .rows
+        .iter()
+        .find(|row| row.cells[0] == Some(group_name.clone().into()))
+        .expect("fixture application group");
+    assert_eq!(group.cells[5], Some("1".into()));
+    assert_eq!(group.cells[6], Some("127.0.0.1".into()));
+    assert_eq!(group.cells[7], Some("19092".into()));
+    let group_menu = fetch(&t.executor, group.target.clone().unwrap(), None).await;
+    let members = fetch(
+        &t.executor,
+        group_menu.rows[0].target.clone().unwrap(),
+        None,
+    )
+    .await;
+    assert_eq!(members.rows.len(), 1);
+    assert!(matches!(&members.rows[0].cells[3], Some(Value::Bytes(value)) if !value.is_empty()));
+    assert!(matches!(&members.rows[0].cells[4], Some(Value::Bytes(value)) if !value.is_empty()));
+    observer.unsubscribe();
+    let inspected = fetch(
+        &t.executor,
+        group_menu.rows[1].target.clone().unwrap(),
+        None,
+    )
+    .await;
+    assert_eq!(inspected.rows.len(), 1);
+    assert_eq!(inspected.rows[0].cells[0], Some(t.topic.clone().into()));
+    assert_eq!(inspected.rows[0].cells[2], Some("7".into()));
+    let (_, stable_end) = observer
+        .fetch_watermarks(&t.topic, 0, Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(
+        inspected.rows[0].cells[4],
+        Some(stable_end.to_string().into())
+    );
+    assert_eq!(
+        inspected.rows[0].cells[5],
+        Some((stable_end - 7).to_string().into())
+    );
+    let empty = fetch(
+        &t.executor,
+        Resource::new("kafka.offsets", vec![format!("{}_absent", t.topic)]),
+        None,
+    )
+    .await;
+    assert!(empty.rows.is_empty());
+    group_menu.rows[1].target.clone().unwrap()
+}
+
+async fn check_groups_offsets_and_live_reads(t: &mut Txn) {
+    use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer};
+
+    use rdkafka::{Offset, TopicPartitionList};
+    let observer: BaseConsumer = t
+        .config
+        .clone()
+        .set("group.id", format!("{}_application", t.topic))
+        .set("enable.auto.commit", "false")
+        .create()
+        .unwrap();
+    let mut offsets = TopicPartitionList::new();
+    offsets
+        .add_partition_offset(&t.topic, 0, Offset::Offset(7))
+        .unwrap();
+    observer.commit(&offsets, CommitMode::Sync).unwrap();
+    observer.subscribe(&[&t.topic]).unwrap();
+    let joined_by = std::time::Instant::now() + Duration::from_secs(10);
+    while observer.assignment().unwrap().count() == 0 {
+        let _ = observer.poll(Duration::from_millis(100));
+        assert!(
+            std::time::Instant::now() < joined_by,
+            "fixture consumer did not join its own test group"
+        );
+    }
+    let offsets_target = inspect_fixture_group(t, &observer).await;
+    let live_first = follow(&t.executor, t.resource.clone(), t.tail.continuation.clone()).await;
+    let live_second = follow(&t.executor, t.resource.clone(), live_first.continuation).await;
+    assert_eq!(live_first.rows.len() + live_second.rows.len(), 120);
+    assert!(
+        !live_second
+            .rows
+            .iter()
+            .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"aborted")
+    );
+    let replay = fetch(&t.executor, t.resource.clone(), t.first_token.clone()).await;
+    assert_eq!(replay.rows.len(), 20);
+    assert_eq!(
+        observer
+            .committed_offsets(offsets, Duration::from_secs(5))
+            .unwrap()
+            .find_partition(&t.topic, 0)
+            .unwrap()
+            .offset(),
+        Offset::Offset(7)
+    );
+    {
+        let groups = observer
+            .fetch_group_list(None, Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            !groups
+                .groups()
+                .iter()
+                .any(|g| g.name().starts_with("onetui-")),
+            "browser must not join its internal group"
+        );
+    }
+    t.offsets_target = Some(offsets_target);
+    t.live_token = live_second.continuation;
+    drop(observer);
+}
+
+async fn check_open_transactions(t: &mut Txn) {
+    use rdkafka::producer::{FutureRecord, Producer};
+
+    t.producer.begin_transaction().unwrap();
+    t.producer
+        .send(
+            FutureRecord::to(&t.topic)
+                .partition(0)
+                .key("key")
+                .payload("open transaction"),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    let first = fetch(&t.executor, t.resource.clone(), None).await;
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(2));
+    let stable = t
+        .executor
+        .fetch_page(
+            PageRequest {
+                resource: t.resource.clone(),
+                continuation: first.continuation,
+            },
+            context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        stable.rows.len(),
+        20,
+        "window ends before the open transaction"
+    );
+    assert!(!stable.next);
+    assert!(
+        !stable
+            .rows
+            .iter()
+            .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"open transaction")
+    );
+    t.producer
+        .abort_transaction(Duration::from_secs(10))
+        .unwrap();
+    let quiet = follow(&t.executor, t.resource.clone(), t.live_token.take()).await;
+    assert!(
+        quiet.rows.is_empty(),
+        "aborted transaction must not appear in follow"
+    );
+    t.producer.begin_transaction().unwrap();
+    t.producer
+        .send(
+            FutureRecord::to(&t.topic)
+                .partition(0)
+                .key("key")
+                .payload("live commit"),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    let open = follow(&t.executor, t.resource.clone(), quiet.continuation).await;
+    assert!(
+        open.rows.is_empty(),
+        "open transaction must not appear in follow"
+    );
+    t.producer
+        .commit_transaction(Duration::from_secs(10))
+        .unwrap();
+    let committed = follow(&t.executor, t.resource.clone(), open.continuation).await;
+    assert_eq!(committed.rows.len(), 1);
+    assert_eq!(
+        committed.rows[0].cells[3].as_ref().unwrap().bytes(),
+        b"live commit"
+    );
+    t.committed_token = committed.continuation;
+}
+
+async fn check_oversized_records(t: &mut Txn) {
+    use rdkafka::producer::{FutureRecord, Producer};
+
+    t.producer.begin_transaction().unwrap();
+    let oversized = vec![b'x'; onetui_core::PAGE_BYTES + 1];
+    t.producer
+        .send(
+            FutureRecord::to(&t.topic)
+                .partition(0)
+                .key("key")
+                .payload(&oversized),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    t.producer
+        .commit_transaction(Duration::from_secs(10))
+        .unwrap();
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let error = t
+        .executor
+        .follow_page(
+            PageRequest {
+                resource: t.resource.clone(),
+                continuation: t.committed_token.take(),
+            },
+            context,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("1 MiB"), "{error:#}");
+    let first = fetch(&t.executor, t.resource.clone(), None).await;
+    let token = first.continuation.unwrap();
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let error = t
+        .executor
+        .fetch_page(
+            PageRequest {
+                resource: t.resource.clone(),
+                continuation: Some(token.clone()),
+            },
+            context,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("1 MiB"), "{error:#}");
+    t.token = Some(token);
+}
+
+async fn check_retention_truncation(t: &Txn) {
+    use rdkafka::admin::{AdminClient, AdminOptions};
+
+    use rdkafka::{Offset, TopicPartitionList};
+    let retention: AdminClient<_> = t.config.create().unwrap();
+    let mut truncate = TopicPartitionList::new();
+    truncate
+        .add_partition_offset(&t.topic, 0, Offset::Offset(110))
+        .unwrap();
+    let deleted = retention
+        .delete_records(
+            &truncate,
+            &AdminOptions::new().operation_timeout(Some(Duration::from_secs(5))),
+        )
+        .await
+        .unwrap();
+    {
+        let partition = deleted.find_partition(&t.topic, 0).unwrap();
+        partition.error().unwrap();
+        assert_eq!(partition.offset(), Offset::Offset(110));
+    }
+    let retained = fetch(&t.executor, t.offsets_target.clone().unwrap(), None).await;
+    assert_eq!(retained.rows[0].cells[2], Some("7".into()));
+    assert_eq!(retained.rows[0].cells[3], Some("110".into()));
+    assert_eq!(retained.rows[0].cells[5], None);
+    assert_eq!(
+        retained.rows[0].cells[6],
+        Some("before retained start".into())
+    );
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let error = t
+        .executor
+        .follow_page(
+            PageRequest {
+                resource: t.resource.clone(),
+                continuation: t.tail.continuation.clone(),
+            },
+            context,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("offsets unavailable"),
+        "{error:#}"
+    );
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let error = t
+        .executor
+        .fetch_page(
+            PageRequest {
+                resource: t.resource.clone(),
+                continuation: t.token.clone(),
+            },
+            context,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("offsets unavailable"),
+        "{error:#}"
+    );
+}
+
+async fn finish_transactions(t: &mut Txn) {
+    t.executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+        .await
+        .unwrap();
+}
+
+async fn exercise_transactions(topic: String, config: rdkafka::ClientConfig) {
+    let mut t = start_transactions(topic, config).await;
+    seed_committed_aborted_and_near_limit(&t).await;
+    check_near_limit_and_byte_budget(&t).await;
+    check_committed_pages(&mut t).await;
+    check_groups_offsets_and_live_reads(&mut t).await;
+    check_open_transactions(&mut t).await;
+    check_oversized_records(&mut t).await;
+    check_retention_truncation(&t).await;
+    finish_transactions(&mut t).await;
+}
+
 #[tokio::test]
 #[ignore = "writes only a uniquely named topic/group on the disposable Kafka fixture"]
 async fn kafka_transactions_limits_and_application_offsets() {
     use rdkafka::ClientConfig;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
-    use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer};
-    use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
-    use rdkafka::{Offset, TopicPartitionList};
+
     let topic = format!(
         "onetui_test_{}_{}",
         std::process::id(),
@@ -633,385 +1138,8 @@ async fn kafka_transactions_limits_and_application_offsets() {
     {
         result.unwrap();
     }
-    let test_topic = topic.clone();
-    let result = tokio::spawn(async move {
-        let mut executor = executor();
-        let resource = Resource::new("kafka.records", vec![test_topic.clone(), "0".into()]);
-        let tail = follow(&executor, resource.clone(), None).await;
-        assert!(tail.rows.is_empty());
-        let producer: FutureProducer = config
-            .clone()
-            .set("transactional.id", &test_topic)
-            .set("compression.type", "zstd")
-            .set("message.max.bytes", "2097152")
-            .create()
-            .unwrap();
-        producer.init_transactions(Duration::from_secs(10)).unwrap();
-        producer.begin_transaction().unwrap();
-        for n in 0..120u32 {
-            producer
-                .send(
-                    FutureRecord::to(&test_topic)
-                        .partition(0)
-                        .key("key")
-                        .payload(&n.to_be_bytes()[..]),
-                    Duration::from_secs(5),
-                )
-                .await
-                .unwrap();
-        }
-        producer
-            .commit_transaction(Duration::from_secs(10))
-            .unwrap();
-        producer.begin_transaction().unwrap();
-        producer
-            .send(
-                FutureRecord::to(&test_topic)
-                    .partition(0)
-                    .key("key")
-                    .payload("aborted"),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        producer.abort_transaction(Duration::from_secs(10)).unwrap();
-        producer.begin_transaction().unwrap();
-        let near_limit = vec![b'x'; onetui_core::PAGE_BYTES - 4096];
-        producer
-            .send(
-                FutureRecord::to(&test_topic)
-                    .partition(1)
-                    .key("key")
-                    .payload(&near_limit),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        producer
-            .commit_transaction(Duration::from_secs(10))
-            .unwrap();
-        let near_limit_page = fetch(
-            &executor,
-            Resource::new("kafka.records", vec![test_topic.clone(), "1".into()]),
-            None,
-        )
-        .await;
-        assert_eq!(near_limit_page.rows.len(), 1);
-        assert_eq!(
-            near_limit_page.rows[0].cells[3].as_ref().unwrap().bytes(),
-            near_limit
-        );
-        let large_resource = Resource::new("kafka.records", vec![test_topic.clone(), "1".into()]);
-        let large_tail = follow(&executor, large_resource.clone(), None).await;
-        producer.begin_transaction().unwrap();
-        for _ in 0..2 {
-            producer
-                .send(
-                    FutureRecord::to(&test_topic)
-                        .partition(1)
-                        .key("key")
-                        .payload(&near_limit),
-                    Duration::from_secs(5),
-                )
-                .await
-                .unwrap();
-        }
-        producer
-            .commit_transaction(Duration::from_secs(10))
-            .unwrap();
-        let large_first = follow(&executor, large_resource.clone(), large_tail.continuation).await;
-        assert_eq!(
-            large_first.rows.len(),
-            1,
-            "byte budget must split a batch without skipping its next record"
-        );
-        let large_second = follow(&executor, large_resource, large_first.continuation).await;
-        assert_eq!(large_second.rows.len(), 1);
-        assert_eq!(
-            large_first.rows[0].cells[3].as_ref().unwrap().bytes(),
-            near_limit
-        );
-        assert_eq!(
-            large_second.rows[0].cells[3].as_ref().unwrap().bytes(),
-            near_limit
-        );
-        assert_ne!(large_first.rows[0].cells[0], large_second.rows[0].cells[0]);
-        let first = fetch(&executor, resource.clone(), None).await;
-        let second = fetch(&executor, resource.clone(), first.continuation.clone()).await;
-        assert_eq!(first.rows.len() + second.rows.len(), 120);
-        assert!(
-            !second.next,
-            "control/aborted offsets must not create an endless page"
-        );
-        assert!(
-            !second
-                .rows
-                .iter()
-                .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"aborted")
-        );
-        let observer: BaseConsumer = config
-            .clone()
-            .set("group.id", format!("{test_topic}_application"))
-            .set("enable.auto.commit", "false")
-            .create()
-            .unwrap();
-        let mut offsets = TopicPartitionList::new();
-        offsets
-            .add_partition_offset(&test_topic, 0, Offset::Offset(7))
-            .unwrap();
-        observer.commit(&offsets, CommitMode::Sync).unwrap();
-        observer.subscribe(&[&test_topic]).unwrap();
-        let joined_by = std::time::Instant::now() + Duration::from_secs(10);
-        while observer.assignment().unwrap().count() == 0 {
-            let _ = observer.poll(Duration::from_millis(100));
-            assert!(
-                std::time::Instant::now() < joined_by,
-                "fixture consumer did not join its own test group"
-            );
-        }
-        let groups = fetch(&executor, Resource::new("kafka.groups", vec![]), None).await;
-        let group_name = format!("{test_topic}_application");
-        let group = groups
-            .rows
-            .iter()
-            .find(|row| row.cells[0] == Some(group_name.clone().into()))
-            .expect("fixture application group");
-        assert_eq!(group.cells[5], Some("1".into()));
-        assert_eq!(group.cells[6], Some("127.0.0.1".into()));
-        assert_eq!(group.cells[7], Some("19092".into()));
-        let group_menu = fetch(&executor, group.target.clone().unwrap(), None).await;
-        let members = fetch(&executor, group_menu.rows[0].target.clone().unwrap(), None).await;
-        assert_eq!(members.rows.len(), 1);
-        assert!(
-            matches!(&members.rows[0].cells[3], Some(Value::Bytes(value)) if !value.is_empty())
-        );
-        assert!(
-            matches!(&members.rows[0].cells[4], Some(Value::Bytes(value)) if !value.is_empty())
-        );
-        observer.unsubscribe();
-        let inspected = fetch(&executor, group_menu.rows[1].target.clone().unwrap(), None).await;
-        assert_eq!(inspected.rows.len(), 1);
-        assert_eq!(inspected.rows[0].cells[0], Some(test_topic.clone().into()));
-        assert_eq!(inspected.rows[0].cells[2], Some("7".into()));
-        let (_, stable_end) = observer
-            .fetch_watermarks(&test_topic, 0, Duration::from_secs(5))
-            .unwrap();
-        assert_eq!(
-            inspected.rows[0].cells[4],
-            Some(stable_end.to_string().into())
-        );
-        assert_eq!(
-            inspected.rows[0].cells[5],
-            Some((stable_end - 7).to_string().into())
-        );
-        let empty = fetch(
-            &executor,
-            Resource::new("kafka.offsets", vec![format!("{test_topic}_absent")]),
-            None,
-        )
-        .await;
-        assert!(empty.rows.is_empty());
-        let live_first = follow(&executor, resource.clone(), tail.continuation.clone()).await;
-        let live_second = follow(&executor, resource.clone(), live_first.continuation).await;
-        assert_eq!(live_first.rows.len() + live_second.rows.len(), 120);
-        assert!(
-            !live_second
-                .rows
-                .iter()
-                .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"aborted")
-        );
-        let replay = fetch(&executor, resource.clone(), first.continuation).await;
-        assert_eq!(replay.rows.len(), 20);
-        assert_eq!(
-            observer
-                .committed_offsets(offsets, Duration::from_secs(5))
-                .unwrap()
-                .find_partition(&test_topic, 0)
-                .unwrap()
-                .offset(),
-            Offset::Offset(7)
-        );
-        {
-            let groups = observer
-                .fetch_group_list(None, Duration::from_secs(5))
-                .unwrap();
-            assert!(
-                !groups
-                    .groups()
-                    .iter()
-                    .any(|g| g.name().starts_with("onetui-")),
-                "browser must not join its internal group"
-            );
-        }
-        producer.begin_transaction().unwrap();
-        producer
-            .send(
-                FutureRecord::to(&test_topic)
-                    .partition(0)
-                    .key("key")
-                    .payload("open transaction"),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        let first = fetch(&executor, resource.clone(), None).await;
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(2));
-        let stable = executor
-            .fetch_page(
-                PageRequest {
-                    resource: resource.clone(),
-                    continuation: first.continuation,
-                },
-                context,
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            stable.rows.len(),
-            20,
-            "window ends before the open transaction"
-        );
-        assert!(!stable.next);
-        assert!(
-            !stable
-                .rows
-                .iter()
-                .any(|row| row.cells[3].as_ref().unwrap().bytes() == b"open transaction")
-        );
-        producer.abort_transaction(Duration::from_secs(10)).unwrap();
-        let quiet = follow(&executor, resource.clone(), live_second.continuation).await;
-        assert!(
-            quiet.rows.is_empty(),
-            "aborted transaction must not appear in follow"
-        );
-        producer.begin_transaction().unwrap();
-        producer
-            .send(
-                FutureRecord::to(&test_topic)
-                    .partition(0)
-                    .key("key")
-                    .payload("live commit"),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        let open = follow(&executor, resource.clone(), quiet.continuation).await;
-        assert!(
-            open.rows.is_empty(),
-            "open transaction must not appear in follow"
-        );
-        producer
-            .commit_transaction(Duration::from_secs(10))
-            .unwrap();
-        let committed = follow(&executor, resource.clone(), open.continuation).await;
-        assert_eq!(committed.rows.len(), 1);
-        assert_eq!(
-            committed.rows[0].cells[3].as_ref().unwrap().bytes(),
-            b"live commit"
-        );
-        producer.begin_transaction().unwrap();
-        let oversized = vec![b'x'; onetui_core::PAGE_BYTES + 1];
-        producer
-            .send(
-                FutureRecord::to(&test_topic)
-                    .partition(0)
-                    .key("key")
-                    .payload(&oversized),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        producer
-            .commit_transaction(Duration::from_secs(10))
-            .unwrap();
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let error = executor
-            .follow_page(
-                PageRequest {
-                    resource: resource.clone(),
-                    continuation: committed.continuation,
-                },
-                context,
-            )
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("1 MiB"), "{error:#}");
-        let first = fetch(&executor, resource.clone(), None).await;
-        let token = first.continuation.unwrap();
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let error = executor
-            .fetch_page(
-                PageRequest {
-                    resource: resource.clone(),
-                    continuation: Some(token.clone()),
-                },
-                context,
-            )
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("1 MiB"), "{error:#}");
-        let retention: AdminClient<_> = config.create().unwrap();
-        let mut truncate = TopicPartitionList::new();
-        truncate
-            .add_partition_offset(&test_topic, 0, Offset::Offset(110))
-            .unwrap();
-        let deleted = retention
-            .delete_records(
-                &truncate,
-                &AdminOptions::new().operation_timeout(Some(Duration::from_secs(5))),
-            )
-            .await
-            .unwrap();
-        {
-            let partition = deleted.find_partition(&test_topic, 0).unwrap();
-            partition.error().unwrap();
-            assert_eq!(partition.offset(), Offset::Offset(110));
-        }
-        let retained = fetch(&executor, group_menu.rows[1].target.clone().unwrap(), None).await;
-        assert_eq!(retained.rows[0].cells[2], Some("7".into()));
-        assert_eq!(retained.rows[0].cells[3], Some("110".into()));
-        assert_eq!(retained.rows[0].cells[5], None);
-        assert_eq!(
-            retained.rows[0].cells[6],
-            Some("before retained start".into())
-        );
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let error = executor
-            .follow_page(
-                PageRequest {
-                    resource: resource.clone(),
-                    continuation: tail.continuation,
-                },
-                context,
-            )
-            .await
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("offsets unavailable"),
-            "{error:#}"
-        );
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let error = executor
-            .fetch_page(
-                PageRequest {
-                    resource,
-                    continuation: Some(token),
-                },
-                context,
-            )
-            .await
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("offsets unavailable"),
-            "{error:#}"
-        );
-        executor
-            .shutdown(ShutdownContext::new(Duration::from_secs(2)))
-            .await
-            .unwrap();
-        drop(observer);
-    })
-    .await;
+    let scenario = tokio::spawn(exercise_transactions(topic.clone(), config));
+    let result = scenario.await;
     // Clean the exact test-owned topic/group even when the assertions panic.
     let groups = admin
         .delete_groups(&[&format!("{topic}_application")], &options)

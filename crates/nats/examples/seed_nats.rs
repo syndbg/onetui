@@ -79,7 +79,7 @@ fn payload(name: &str, i: usize, avro_id: u32, protobuf_id: u32) -> Result<Vec<u
     } else {
         serde_json::to_vec(&json!({
             "id": i, "category": (["search", "order", "login"][i % 3]),
-            "active": i % 2 == 0, "price": -1.25, "optional": null,
+            "active": i.is_multiple_of(2), "price": -1.25, "optional": null,
             "empty_text": "", "empty_list": [], "empty_object": {},
             "unicode": "София / 東京 / São Paulo 🌊", "controls": "\n\t\u{1b}[31m",
             "tags": ["demo", "synthetic"], "nested": {"customer": {"id": i, "rating": 0.5}}

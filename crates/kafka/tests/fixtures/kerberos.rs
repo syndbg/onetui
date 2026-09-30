@@ -107,6 +107,82 @@ fn ticket_cache_authentication_and_failures() {
     }
 }
 
+async fn check_interrupted_authentication(case: &str, executor: &mut KafkaExecutor) {
+    let started = tokio::time::Instant::now();
+    let (cancel, context) = RequestContext::new(if case == "deadline" {
+        Duration::from_millis(250)
+    } else {
+        Duration::from_secs(5)
+    });
+    let mut cancel = Some(cancel);
+    let mut cancelled_at = None;
+    let (result, ()) = tokio::join!(executor.check(context), async {
+        if case == "cancel" {
+            let contact = std::env::var("ONETUI_KERBEROS_TEST_CONTACT").unwrap();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while std::fs::metadata(&contact).unwrap().len() == 0 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("native authentication reached KDC");
+            cancelled_at = Some(tokio::time::Instant::now());
+            cancel.take().unwrap().send(()).unwrap();
+        }
+    });
+    let error = format!("{:#}", result.err().expect("interrupted authentication"));
+    assert!(
+        error.contains(if case == "cancel" {
+            "cancelled"
+        } else {
+            "timed out"
+        }),
+        "{case}: {error}"
+    );
+    assert!(cancelled_at.unwrap_or(started).elapsed() < Duration::from_millis(750));
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(6)))
+        .await
+        .unwrap();
+}
+
+async fn check_fetch_result(
+    case: &str,
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    result: anyhow::Result<Page>,
+) {
+    if case == "reader" {
+        let first = result.unwrap();
+        assert_eq!(first.rows.len(), 100);
+        let second = fetch(executor, resource.clone(), first.continuation.clone()).await;
+        assert_eq!(second.rows.len(), 100);
+        let again = fetch(executor, resource.clone(), first.continuation).await;
+        assert_eq!(second.rows.len(), again.rows.len());
+        for (expected, actual) in second.rows.iter().zip(&again.rows) {
+            assert_eq!(expected.cells, actual.cells);
+        }
+        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+        executor.check(context).await.unwrap();
+        let live = follow(executor, resource.clone(), None).await;
+        assert!(live.continuation.is_some());
+        assert!(
+            follow(executor, resource.clone(), live.continuation)
+                .await
+                .rows
+                .is_empty()
+        );
+    } else {
+        let error = format!("{:#}", result.unwrap_err());
+        let expected = if case == "denied" {
+            "TOPIC_AUTHORIZATION_FAILED"
+        } else {
+            "SASL"
+        };
+        assert!(error.contains(expected), "{case}: {error}");
+    }
+}
+
 async fn check_case(case: &str) {
     let principal = if case == "denied" {
         "fixture-denied"
@@ -127,42 +203,7 @@ async fn check_case(case: &str) {
         .unwrap();
     let resource = Resource::new("kafka.records", vec!["demo_events".into(), "0".into()]);
     if matches!(case, "cancel" | "deadline") {
-        let started = tokio::time::Instant::now();
-        let (cancel, context) = RequestContext::new(if case == "deadline" {
-            Duration::from_millis(250)
-        } else {
-            Duration::from_secs(5)
-        });
-        let mut cancel = Some(cancel);
-        let mut cancelled_at = None;
-        let (result, ()) = tokio::join!(executor.check(context), async {
-            if case == "cancel" {
-                let contact = std::env::var("ONETUI_KERBEROS_TEST_CONTACT").unwrap();
-                tokio::time::timeout(Duration::from_secs(3), async {
-                    while std::fs::metadata(&contact).unwrap().len() == 0 {
-                        tokio::time::sleep(Duration::from_millis(5)).await;
-                    }
-                })
-                .await
-                .expect("native authentication reached KDC");
-                cancelled_at = Some(tokio::time::Instant::now());
-                cancel.take().unwrap().send(()).unwrap();
-            }
-        });
-        let error = format!("{:#}", result.err().expect("interrupted authentication"));
-        assert!(
-            error.contains(if case == "cancel" {
-                "cancelled"
-            } else {
-                "timed out"
-            }),
-            "{case}: {error}"
-        );
-        assert!(cancelled_at.unwrap_or(started).elapsed() < Duration::from_millis(750));
-        executor
-            .shutdown(ShutdownContext::new(Duration::from_secs(6)))
-            .await
-            .unwrap();
+        check_interrupted_authentication(case, &mut executor).await;
         return;
     }
     let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
@@ -175,35 +216,7 @@ async fn check_case(case: &str) {
             context,
         )
         .await;
-    if case == "reader" {
-        let first = result.unwrap();
-        assert_eq!(first.rows.len(), 100);
-        let second = fetch(&executor, resource.clone(), first.continuation.clone()).await;
-        assert_eq!(second.rows.len(), 100);
-        let again = fetch(&executor, resource.clone(), first.continuation).await;
-        assert_eq!(second.rows.len(), again.rows.len());
-        for (expected, actual) in second.rows.iter().zip(&again.rows) {
-            assert_eq!(expected.cells, actual.cells);
-        }
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        executor.check(context).await.unwrap();
-        let live = follow(&executor, resource.clone(), None).await;
-        assert!(live.continuation.is_some());
-        assert!(
-            follow(&executor, resource.clone(), live.continuation)
-                .await
-                .rows
-                .is_empty()
-        );
-    } else {
-        let error = format!("{:#}", result.unwrap_err());
-        let expected = if case == "denied" {
-            "TOPIC_AUTHORIZATION_FAILED"
-        } else {
-            "SASL"
-        };
-        assert!(error.contains(expected), "{case}: {error}");
-    }
+    check_fetch_result(case, &executor, &resource, result).await;
     executor
         .shutdown(ShutdownContext::new(Duration::from_secs(2)))
         .await
