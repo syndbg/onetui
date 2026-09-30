@@ -558,6 +558,9 @@ mod terminal {
                 .stdout(Stdio::from(slave.try_clone().unwrap()))
                 .stderr(Stdio::from(slave.try_clone().unwrap()));
             // The child must own its controlling PTY, never the developer's terminal.
+            // TIOCSCTTY is u32 on macOS and u64 on Linux. `.into()` is useless on Linux and
+            // `as _` trips cast_lossless on macOS, so allow the lint that fires per OS.
+            #[allow(clippy::useless_conversion)]
             unsafe {
                 command.pre_exec(|| {
                     if nix::libc::setsid() == -1

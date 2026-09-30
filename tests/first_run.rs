@@ -43,6 +43,8 @@ fn first_run_opens_empty_picker_and_saves_without_connecting() {
         .stdout(Stdio::from(slave.try_clone().unwrap()))
         .stderr(Stdio::from(slave));
     // The test owns /dev/tty, so keyboard input cannot reach the developer's terminal.
+    // TIOCSCTTY is u32 on macOS and u64 on Linux, so `.into()` is useless on Linux only.
+    #[allow(clippy::useless_conversion)]
     unsafe {
         command.pre_exec(|| {
             if nix::libc::setsid() == -1

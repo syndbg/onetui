@@ -136,6 +136,8 @@ fn spawn_terminal(
         .stdin(Stdio::from(slave.try_clone().unwrap()))
         .stdout(Stdio::from(slave.try_clone().unwrap()))
         .stderr(Stdio::from(slave.try_clone().unwrap()));
+    // TIOCSCTTY is u32 on macOS and u64 on Linux, so `.into()` is useless on Linux only.
+    #[allow(clippy::useless_conversion)]
     unsafe {
         command.pre_exec(|| {
             if nix::libc::setsid() == -1
