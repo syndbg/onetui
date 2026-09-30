@@ -613,27 +613,34 @@ impl App {
         self.available_while_loading(action, self.loading && !self.following)
     }
 
-    fn available_while_loading(&self, action: Action, loading: bool) -> bool {
+    /// Availability while a popup or menu owns input. None when no such mode is open.
+    fn modal_available(&self, action: Action) -> Option<bool> {
         if self.confirm_quit {
-            return matches!(action, Action::Open | Action::Back | Action::Cancel);
+            return Some(matches!(
+                action,
+                Action::Open | Action::Back | Action::Cancel
+            ));
         }
         if self.confirm_query.is_some() || self.connect_error.is_some() {
-            return matches!(action, Action::Open | Action::Back | Action::Cancel);
+            return Some(matches!(
+                action,
+                Action::Open | Action::Back | Action::Cancel
+            ));
         }
         if self.connection_form.is_some() {
-            return matches!(action, Action::Back | Action::Cancel);
+            return Some(matches!(action, Action::Back | Action::Cancel));
         }
         if self.query_editor.is_some() {
-            return matches!(action, Action::Back | Action::Cancel);
+            return Some(matches!(action, Action::Back | Action::Cancel));
         }
         if self.history_menu.is_some() {
-            return matches!(
+            return Some(matches!(
                 action,
                 Action::Up | Action::Down | Action::Open | Action::Back | Action::Cancel
-            );
+            ));
         }
         if self.display_menu.is_some() {
-            return matches!(
+            return Some(matches!(
                 action,
                 Action::Up
                     | Action::Down
@@ -641,13 +648,20 @@ impl App {
                     | Action::Back
                     | Action::Cancel
                     | Action::Help
-            );
+            ));
         }
         if self.theme_menu.is_some() {
-            return matches!(
+            return Some(matches!(
                 action,
                 Action::Up | Action::Down | Action::Open | Action::Back | Action::Cancel
-            );
+            ));
+        }
+        None
+    }
+
+    fn available_while_loading(&self, action: Action, loading: bool) -> bool {
+        if let Some(allowed) = self.modal_available(action) {
+            return allowed;
         }
         match action {
             Action::Add => {
@@ -721,6 +735,47 @@ impl App {
             | Action::HalfPageDown => self.help || !self.view.visible.is_empty(),
             _ => true,
         }
+    }
+
+    fn open_filter(&mut self) {
+        self.help = false;
+        self.filter_restore = Some((self.view.filter.clone(), self.view.selected_index()));
+        self.filter_input = Some(self.view.filter.clone());
+    }
+
+    fn toggle_sort(&mut self) {
+        self.help = false;
+        let selected = self.view.selected_index();
+        self.view.sort = match self.view.sort {
+            Some((column, false)) if column == self.view.column => Some((column, true)),
+            Some((column, true)) if column == self.view.column => None,
+            _ => Some((self.view.column, false)),
+        };
+        self.view.reindex(selected);
+    }
+
+    fn move_column(&mut self, action: Action) {
+        let previous = self.view.column;
+        self.view.column = if action == Action::Left {
+            self.view.column.saturating_sub(1)
+        } else {
+            (self.view.column + 1).min(self.column_count().saturating_sub(1))
+        };
+        if self.detail {
+            self.prepare_detail();
+        } else if self.row_detail && previous != self.view.column {
+            self.prepare_row_value();
+        }
+    }
+    fn open_columns(&mut self, action: Action) {
+        self.help = false;
+        let target = self
+            .action_target(action)
+            .expect("available resource action");
+        let alias = self.view.alias.clone();
+        let parent = std::mem::replace(&mut self.view, View::new(alias, target));
+        self.parents.push(parent);
+        self.load(0, true);
     }
 
     /// # Panics
@@ -1038,68 +1093,14 @@ impl App {
     ///
     /// Panics if a confirmation is pending without its query, which the confirmation state prevents.
     pub fn act(&mut self, action: Action) {
-        if self.confirm_quit {
-            match action {
-                Action::Open => {
-                    self.invalidate();
-                    self.quit = true;
-                }
-                Action::Back | Action::Cancel => self.confirm_quit = false,
-                _ => {}
-            }
-            return;
-        }
-        if self.confirm_query.is_some() {
-            match action {
-                Action::Open => {
-                    let pending = self.confirm_query.take().expect("pending query");
-                    self.submit_query(pending);
-                }
-                Action::Back | Action::Cancel => self.confirm_query = None,
-                _ => {}
-            }
-            return;
-        }
-        if self.connect_error.is_some() {
-            if matches!(action, Action::Open | Action::Back | Action::Cancel) {
-                self.connect_error = None;
-            }
-            return;
-        }
-        if self.connection_form.is_some() {
-            if matches!(action, Action::Back | Action::Cancel) {
-                self.connection_form = None;
-                self.error = None;
-            }
-            return;
-        }
-        if self.query_editor.is_some() && matches!(action, Action::Back | Action::Cancel) {
-            self.close_query();
+        if self.act_modal(action) {
             return;
         }
         if !self.available(action) {
             return;
         }
         if let Some(index) = self.history_menu {
-            match action {
-                Action::Up => self.history_menu = Some(index.saturating_sub(1)),
-                Action::Down => {
-                    self.history_menu =
-                        Some((index + 1).min(self.history_entries().count().saturating_sub(1)));
-                }
-                Action::Open => {
-                    let text = self
-                        .history_entries()
-                        .nth(index)
-                        .expect("history entry")
-                        .to_owned();
-                    self.history_menu = None;
-                    self.act(Action::Query);
-                    self.query_editor = Some(crate::query::Editor::new(text));
-                }
-                Action::Back | Action::Cancel => self.history_menu = None,
-                _ => {}
-            }
+            self.act_history_menu(action, index);
             return;
         }
         if self.following && action != Action::Quit {
@@ -1109,77 +1110,11 @@ impl App {
             }
         }
         if let Some(index) = self.display_menu {
-            if self.help && matches!(action, Action::Up | Action::Down) {
-                self.detail_scroll = if action == Action::Up {
-                    self.detail_scroll.saturating_sub(1)
-                } else {
-                    self.detail_scroll.saturating_add(1)
-                };
-                return;
-            }
-            match action {
-                Action::Up => self.display_menu = Some(index.saturating_sub(1)),
-                Action::Down => self.display_menu = Some((index + 1).min(FORMATS.len() + 3)),
-                Action::Back | Action::Cancel => {
-                    self.display_menu = None;
-                    self.help = false;
-                }
-                Action::Help => {
-                    self.help = !self.help;
-                    self.detail_scroll = 0;
-                }
-                Action::Open => {
-                    let before = self.config.display;
-                    let format_before = self.detail_override;
-                    if index < FORMATS.len() {
-                        if !self.detail {
-                            self.error =
-                                Some("Open a field detail before selecting its format".into());
-                            return;
-                        }
-                        self.detail_override = Some(FORMATS[index].id);
-                    } else {
-                        match index - FORMATS.len() {
-                            0 => {
-                                self.config.display.pretty_print =
-                                    !self.config.display.pretty_print;
-                            }
-                            1 => self.config.display.highlight = !self.config.display.highlight,
-                            2 => self.config.display.word_wrap = !self.config.display.word_wrap,
-                            _ => {
-                                self.config.display.unicode =
-                                    if self.config.display.unicode == UnicodeDisplay::Literal {
-                                        UnicodeDisplay::Escaped
-                                    } else {
-                                        UnicodeDisplay::Literal
-                                    }
-                            }
-                        }
-                    }
-                    self.display_changed(before, format_before);
-                }
-                _ => {}
-            }
+            self.act_display_menu(action, index);
             return;
         }
         if let Some(original) = self.theme_menu {
-            match action {
-                Action::Up | Action::Down => {
-                    let index = self.theme_index();
-                    let next = if action == Action::Up {
-                        (index + Theme::ALL.len() - 1) % Theme::ALL.len()
-                    } else {
-                        (index + 1) % Theme::ALL.len()
-                    };
-                    self.config.theme = Theme::ALL[next];
-                }
-                Action::Open => self.theme_menu = None,
-                Action::Back | Action::Cancel => {
-                    self.config.theme = original;
-                    self.theme_menu = None;
-                }
-                _ => {}
-            }
+            self.act_theme_menu(action, original);
             return;
         }
         if self.help && matches!(action, Action::Up | Action::Down) {
@@ -1190,29 +1125,8 @@ impl App {
             };
             return;
         }
-        if self.detail {
-            match action {
-                Action::Up => self.detail_scroll = self.detail_scroll.saturating_sub(1),
-                Action::Down => {
-                    self.detail_scroll = self.detail_scroll.saturating_add(1).min(16384);
-                }
-                Action::Next => {
-                    self.detail_chunk += 1;
-                    self.detail_text();
-                }
-                Action::Previous => {
-                    self.detail_chunk -= 1;
-                    self.detail_text();
-                }
-                Action::Open => return,
-                _ => {}
-            }
-            if matches!(
-                action,
-                Action::Up | Action::Down | Action::Next | Action::Previous
-            ) {
-                return;
-            }
+        if self.act_detail(action) {
+            return;
         }
         if self.row_detail && !self.detail && matches!(action, Action::Up | Action::Down) {
             self.act(if action == Action::Up {
@@ -1224,25 +1138,7 @@ impl App {
         }
         match action {
             Action::Follow => self.start_follow(),
-            Action::Query => {
-                let text = self
-                    .view
-                    .query_draft
-                    .clone()
-                    .or_else(|| self.view.query.clone())
-                    .unwrap_or_default();
-                self.query_editor = Some(crate::query::Editor::new(text));
-                self.history_position = None;
-                self.history_current = None;
-                self.help = false;
-                self.detail = false;
-                if self.row_detail {
-                    self.view.prepare_previews(self.config.display, true);
-                }
-                self.row_detail = false;
-                self.row_value = None;
-                self.row_scroll = 0;
-            }
+            Action::Query => self.open_query_editor(),
             Action::History => {
                 if self.history_entries().next().is_some() {
                     self.history_menu = Some(0);
@@ -1250,38 +1146,7 @@ impl App {
                     self.error = Some("No queries in this session".into());
                 }
             }
-            Action::Display => {
-                self.help = false;
-                self.display_menu = Some(0);
-                for (i, format) in FORMATS.iter().enumerate() {
-                    self.display_reasons[i] = if self.detail {
-                        let cell = self.view.page.rows[self.view.selected_index().unwrap()].cells
-                            [self.view.column]
-                            .as_ref();
-                        if cell.is_none() {
-                            "Null has no text or byte content"
-                        } else if format.id == ValueFormat::Auto {
-                            format.description
-                        } else {
-                            let prepared = crate::value::prepare(
-                                cell,
-                                DisplayOptions {
-                                    format: format.id,
-                                    ..self.config.display
-                                },
-                                false,
-                            );
-                            if prepared.format == format.id {
-                                format.description
-                            } else {
-                                prepared.notice
-                            }
-                        }
-                    } else {
-                        "Open field detail to select a format"
-                    };
-                }
-            }
+            Action::Display => self.open_display_menu(),
             Action::ScrollLeft => self.horizontal_scroll = self.horizontal_scroll.saturating_sub(8),
             Action::ScrollRight => {
                 self.horizontal_scroll = self.horizontal_scroll.saturating_add(8);
@@ -1291,190 +1156,24 @@ impl App {
                 self.connection_form = Some(crate::connection::Form::new(self.providers.clone()));
             }
             Action::Themes => self.theme_menu = Some(self.config.theme),
-            Action::Filter => {
-                self.help = false;
-                self.filter_restore = Some((self.view.filter.clone(), self.view.selected_index()));
-                self.filter_input = Some(self.view.filter.clone());
-            }
-            Action::Sort => {
-                self.help = false;
-                let selected = self.view.selected_index();
-                self.view.sort = match self.view.sort {
-                    Some((column, false)) if column == self.view.column => Some((column, true)),
-                    Some((column, true)) if column == self.view.column => None,
-                    _ => Some((self.view.column, false)),
-                };
-                self.view.reindex(selected);
-            }
-            Action::Left | Action::Right => {
-                let previous = self.view.column;
-                self.view.column = if action == Action::Left {
-                    self.view.column.saturating_sub(1)
-                } else {
-                    (self.view.column + 1).min(self.column_count().saturating_sub(1))
-                };
-                if self.detail {
-                    self.prepare_detail();
-                } else if self.row_detail && previous != self.view.column {
-                    self.prepare_row_value();
-                }
-            }
-            Action::Columns => {
-                self.help = false;
-                let target = self
-                    .action_target(action)
-                    .expect("available resource action");
-                let alias = self.view.alias.clone();
-                let parent = std::mem::replace(&mut self.view, View::new(alias, target));
-                self.parents.push(parent);
-                self.load(0, true);
-            }
+            Action::Filter => self.open_filter(),
+            Action::Sort => self.toggle_sort(),
+            Action::Left | Action::Right => self.move_column(action),
+            Action::Columns => self.open_columns(action),
             Action::PageUp | Action::PageDown | Action::HalfPageUp | Action::HalfPageDown => {
-                let down = matches!(action, Action::PageDown | Action::HalfPageDown);
-                let half = matches!(action, Action::HalfPageUp | Action::HalfPageDown);
-                if self.row_detail && !self.detail && !self.help {
-                    let (height, lines) = crate::ui::row_value_extent(self);
-                    if lines > height {
-                        let step = if half { height / 2 } else { height }.max(1);
-                        self.row_scroll = if down {
-                            self.row_scroll.saturating_add(step).min(lines - height)
-                        } else {
-                            self.row_scroll.saturating_sub(step).min(lines - height)
-                        };
-                        return;
-                    }
-                }
-                for _ in 0..crate::ui::page_step(self, down, half) {
-                    self.act(if down { Action::Down } else { Action::Up });
-                }
+                self.scroll_pages(action);
             }
             Action::Up => self.view.selected = self.view.selected.saturating_sub(1),
             Action::Down => {
                 self.view.selected =
                     (self.view.selected + 1).min(self.view.visible.len().saturating_sub(1));
             }
-            Action::Open => {
-                if self.help || self.detail {
-                    return;
-                }
-                let opening = self.view.resource == Resource::new("connections", vec![]);
-                let (alias, target) = if opening {
-                    let (alias, _) = self.config.aliases()
-                        [self.view.selected_index().expect("selected connection")];
-                    let provider = self.config.descriptor(alias).expect("validated alias");
-                    let Some(entry) = provider.entry_resource else {
-                        self.error = Some(format!(
-                            "{} browsing is unavailable; use --check for now",
-                            provider.kind
-                        ));
-                        return;
-                    };
-                    self.session += 1;
-                    self.connection_status =
-                        Some(onetui_core::provider::ConnectionStatus::Configured);
-                    (Some(alias.to_owned()), Resource::new(entry, vec![]))
-                } else if let Some(target) = &self.view.page.rows
-                    [self.view.selected_index().expect("selected resource")]
-                .target
-                {
-                    (self.view.alias.clone(), target.clone())
-                } else {
-                    if self.row_detail || self.column_count() == 1 {
-                        self.detail = true;
-                        self.prepare_detail();
-                    } else {
-                        self.row_detail = true;
-                        self.view.prepare_previews(self.config.display, false);
-                        self.horizontal_scroll = 0;
-                        self.prepare_row_value();
-                    }
-                    return;
-                };
-                let parent = std::mem::replace(&mut self.view, View::new(alias, target));
-                self.parents.push(parent);
-                self.load(0, true);
-                // After load: its invalidate clears the flag for any earlier request.
-                self.opening = opening;
-            }
-            Action::Back => {
-                if self.help {
-                    self.help = false;
-                } else if self.detail {
-                    self.detail = false;
-                    self.detail_text.clear();
-                    self.clear_detail();
-                    if self.row_detail {
-                        self.prepare_row_value();
-                    }
-                    if !self.row_detail && self.single_value() {
-                        self.act(Action::Back);
-                    }
-                } else if self.row_detail {
-                    self.row_detail = false;
-                    self.view.prepare_previews(self.config.display, true);
-                    self.horizontal_scroll = 0;
-                    self.row_value = None;
-                    self.row_scroll = 0;
-                } else if let Some(parent) = self.parents.pop() {
-                    self.invalidate();
-                    self.view = parent;
-                    self.view.prepare_previews(self.config.display, true);
-                    if self.view.alias.is_none() {
-                        self.session += 1;
-                        self.connection_status = None;
-                    }
-                }
-            }
+            Action::Open => self.open_selected(),
+            Action::Back => self.go_back(),
             Action::Connections => self.connections(),
-            Action::Next => {
-                self.detail = false;
-                let bookmark_bytes = self
-                    .view
-                    .previous
-                    .iter()
-                    .map(|bookmark| bookmark.position.as_ref().map_or(0, String::len))
-                    .sum::<usize>()
-                    + self.view.position.as_ref().map_or(0, String::len);
-                if self.view.previous.len() >= BOOKMARK_LIMIT || bookmark_bytes > PAGE_BYTES {
-                    self.error = Some("Page bookmark limit reached (4096 bookmarks / 1 MiB tokens); go back or refresh to restart".into());
-                    return;
-                }
-                if let Some(offset) = self.view.offset.checked_add(PAGE_SIZE) {
-                    self.load(offset, false);
-                }
-            }
-            Action::Previous => {
-                self.detail = false;
-                if self
-                    .view
-                    .previous
-                    .back()
-                    .is_some_and(|bookmark| bookmark.page.is_some())
-                {
-                    let bookmark = self.view.previous.pop_back().expect("cached previous page");
-                    self.invalidate();
-                    self.view.offset = bookmark.offset;
-                    self.view.position = bookmark.position;
-                    self.view.page = bookmark.page.expect("cached previous page");
-                    self.view.rebuild(bookmark.selected, self.config.display);
-                } else if let Some(bookmark) = self.view.previous.back() {
-                    self.load(bookmark.offset, false);
-                }
-            }
-            Action::Refresh => {
-                self.detail = false;
-                self.clear_detail();
-                if self.view.resource == Resource::new("connections", vec![]) {
-                    let filter = std::mem::take(&mut self.view.filter);
-                    let sort = self.view.sort;
-                    self.connections();
-                    self.view.filter = filter;
-                    self.view.sort = sort;
-                    self.view.rebuild(None, self.config.display);
-                } else {
-                    self.load(0, true);
-                }
-            }
+            Action::Next => self.next_page(),
+            Action::Previous => self.previous_page(),
+            Action::Refresh => self.refresh(),
             Action::Help => {
                 self.help = !self.help;
                 self.detail_scroll = 0;
@@ -1494,6 +1193,368 @@ impl App {
         }
     }
 
+    fn refresh(&mut self) {
+        self.detail = false;
+        self.clear_detail();
+        if self.view.resource == Resource::new("connections", vec![]) {
+            let filter = std::mem::take(&mut self.view.filter);
+            let sort = self.view.sort;
+            self.connections();
+            self.view.filter = filter;
+            self.view.sort = sort;
+            self.view.rebuild(None, self.config.display);
+        } else {
+            self.load(0, true);
+        }
+    }
+
+    fn act_modal(&mut self, action: Action) -> bool {
+        if self.confirm_quit {
+            match action {
+                Action::Open => {
+                    self.invalidate();
+                    self.quit = true;
+                }
+                Action::Back | Action::Cancel => self.confirm_quit = false,
+                _ => {}
+            }
+            return true;
+        }
+        if self.confirm_query.is_some() {
+            match action {
+                Action::Open => {
+                    let pending = self.confirm_query.take().expect("pending query");
+                    self.submit_query(pending);
+                }
+                Action::Back | Action::Cancel => self.confirm_query = None,
+                _ => {}
+            }
+            return true;
+        }
+        if self.connect_error.is_some() {
+            if matches!(action, Action::Open | Action::Back | Action::Cancel) {
+                self.connect_error = None;
+            }
+            return true;
+        }
+        if self.connection_form.is_some() {
+            if matches!(action, Action::Back | Action::Cancel) {
+                self.connection_form = None;
+                self.error = None;
+            }
+            return true;
+        }
+        if self.query_editor.is_some() && matches!(action, Action::Back | Action::Cancel) {
+            self.close_query();
+            return true;
+        }
+        false
+    }
+
+    fn act_history_menu(&mut self, action: Action, index: usize) {
+        match action {
+            Action::Up => self.history_menu = Some(index.saturating_sub(1)),
+            Action::Down => {
+                self.history_menu =
+                    Some((index + 1).min(self.history_entries().count().saturating_sub(1)));
+            }
+            Action::Open => {
+                let text = self
+                    .history_entries()
+                    .nth(index)
+                    .expect("history entry")
+                    .to_owned();
+                self.history_menu = None;
+                self.act(Action::Query);
+                self.query_editor = Some(crate::query::Editor::new(text));
+            }
+            Action::Back | Action::Cancel => self.history_menu = None,
+            _ => {}
+        }
+    }
+
+    fn act_display_menu(&mut self, action: Action, index: usize) {
+        if self.help && matches!(action, Action::Up | Action::Down) {
+            self.detail_scroll = if action == Action::Up {
+                self.detail_scroll.saturating_sub(1)
+            } else {
+                self.detail_scroll.saturating_add(1)
+            };
+            return;
+        }
+        match action {
+            Action::Up => self.display_menu = Some(index.saturating_sub(1)),
+            Action::Down => self.display_menu = Some((index + 1).min(FORMATS.len() + 3)),
+            Action::Back | Action::Cancel => {
+                self.display_menu = None;
+                self.help = false;
+            }
+            Action::Help => {
+                self.help = !self.help;
+                self.detail_scroll = 0;
+            }
+            Action::Open => {
+                let before = self.config.display;
+                let format_before = self.detail_override;
+                if index < FORMATS.len() {
+                    if !self.detail {
+                        self.error = Some("Open a field detail before selecting its format".into());
+                        return;
+                    }
+                    self.detail_override = Some(FORMATS[index].id);
+                } else {
+                    match index - FORMATS.len() {
+                        0 => {
+                            self.config.display.pretty_print = !self.config.display.pretty_print;
+                        }
+                        1 => self.config.display.highlight = !self.config.display.highlight,
+                        2 => self.config.display.word_wrap = !self.config.display.word_wrap,
+                        _ => {
+                            self.config.display.unicode =
+                                if self.config.display.unicode == UnicodeDisplay::Literal {
+                                    UnicodeDisplay::Escaped
+                                } else {
+                                    UnicodeDisplay::Literal
+                                }
+                        }
+                    }
+                }
+                self.display_changed(before, format_before);
+            }
+            _ => {}
+        }
+    }
+
+    fn act_theme_menu(&mut self, action: Action, original: Theme) {
+        match action {
+            Action::Up | Action::Down => {
+                let index = self.theme_index();
+                let next = if action == Action::Up {
+                    (index + Theme::ALL.len() - 1) % Theme::ALL.len()
+                } else {
+                    (index + 1) % Theme::ALL.len()
+                };
+                self.config.theme = Theme::ALL[next];
+            }
+            Action::Open => self.theme_menu = None,
+            Action::Back | Action::Cancel => {
+                self.config.theme = original;
+                self.theme_menu = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn act_detail(&mut self, action: Action) -> bool {
+        if self.detail {
+            match action {
+                Action::Up => self.detail_scroll = self.detail_scroll.saturating_sub(1),
+                Action::Down => {
+                    self.detail_scroll = self.detail_scroll.saturating_add(1).min(16384);
+                }
+                Action::Next => {
+                    self.detail_chunk += 1;
+                    self.detail_text();
+                }
+                Action::Previous => {
+                    self.detail_chunk -= 1;
+                    self.detail_text();
+                }
+                Action::Open => return true,
+                _ => {}
+            }
+            if matches!(
+                action,
+                Action::Up | Action::Down | Action::Next | Action::Previous
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn open_query_editor(&mut self) {
+        let text = self
+            .view
+            .query_draft
+            .clone()
+            .or_else(|| self.view.query.clone())
+            .unwrap_or_default();
+        self.query_editor = Some(crate::query::Editor::new(text));
+        self.history_position = None;
+        self.history_current = None;
+        self.help = false;
+        self.detail = false;
+        if self.row_detail {
+            self.view.prepare_previews(self.config.display, true);
+        }
+        self.row_detail = false;
+        self.row_value = None;
+        self.row_scroll = 0;
+    }
+
+    fn open_display_menu(&mut self) {
+        self.help = false;
+        self.display_menu = Some(0);
+        for (i, format) in FORMATS.iter().enumerate() {
+            self.display_reasons[i] = if self.detail {
+                let cell = self.view.page.rows[self.view.selected_index().unwrap()].cells
+                    [self.view.column]
+                    .as_ref();
+                if cell.is_none() {
+                    "Null has no text or byte content"
+                } else if format.id == ValueFormat::Auto {
+                    format.description
+                } else {
+                    let prepared = crate::value::prepare(
+                        cell,
+                        DisplayOptions {
+                            format: format.id,
+                            ..self.config.display
+                        },
+                        false,
+                    );
+                    if prepared.format == format.id {
+                        format.description
+                    } else {
+                        prepared.notice
+                    }
+                }
+            } else {
+                "Open field detail to select a format"
+            };
+        }
+    }
+
+    fn scroll_pages(&mut self, action: Action) {
+        let down = matches!(action, Action::PageDown | Action::HalfPageDown);
+        let half = matches!(action, Action::HalfPageUp | Action::HalfPageDown);
+        if self.row_detail && !self.detail && !self.help {
+            let (height, lines) = crate::ui::row_value_extent(self);
+            if lines > height {
+                let step = if half { height / 2 } else { height }.max(1);
+                self.row_scroll = if down {
+                    self.row_scroll.saturating_add(step).min(lines - height)
+                } else {
+                    self.row_scroll.saturating_sub(step).min(lines - height)
+                };
+                return;
+            }
+        }
+        for _ in 0..crate::ui::page_step(self, down, half) {
+            self.act(if down { Action::Down } else { Action::Up });
+        }
+    }
+
+    fn open_selected(&mut self) {
+        if self.help || self.detail {
+            return;
+        }
+        let opening = self.view.resource == Resource::new("connections", vec![]);
+        let (alias, target) = if opening {
+            let (alias, _) =
+                self.config.aliases()[self.view.selected_index().expect("selected connection")];
+            let provider = self.config.descriptor(alias).expect("validated alias");
+            let Some(entry) = provider.entry_resource else {
+                self.error = Some(format!(
+                    "{} browsing is unavailable; use --check for now",
+                    provider.kind
+                ));
+                return;
+            };
+            self.session += 1;
+            self.connection_status = Some(onetui_core::provider::ConnectionStatus::Configured);
+            (Some(alias.to_owned()), Resource::new(entry, vec![]))
+        } else if let Some(target) =
+            &self.view.page.rows[self.view.selected_index().expect("selected resource")].target
+        {
+            (self.view.alias.clone(), target.clone())
+        } else {
+            if self.row_detail || self.column_count() == 1 {
+                self.detail = true;
+                self.prepare_detail();
+            } else {
+                self.row_detail = true;
+                self.view.prepare_previews(self.config.display, false);
+                self.horizontal_scroll = 0;
+                self.prepare_row_value();
+            }
+            return;
+        };
+        let parent = std::mem::replace(&mut self.view, View::new(alias, target));
+        self.parents.push(parent);
+        self.load(0, true);
+        // After load: its invalidate clears the flag for any earlier request.
+        self.opening = opening;
+    }
+
+    fn go_back(&mut self) {
+        if self.help {
+            self.help = false;
+        } else if self.detail {
+            self.detail = false;
+            self.detail_text.clear();
+            self.clear_detail();
+            if self.row_detail {
+                self.prepare_row_value();
+            }
+            if !self.row_detail && self.single_value() {
+                self.act(Action::Back);
+            }
+        } else if self.row_detail {
+            self.row_detail = false;
+            self.view.prepare_previews(self.config.display, true);
+            self.horizontal_scroll = 0;
+            self.row_value = None;
+            self.row_scroll = 0;
+        } else if let Some(parent) = self.parents.pop() {
+            self.invalidate();
+            self.view = parent;
+            self.view.prepare_previews(self.config.display, true);
+            if self.view.alias.is_none() {
+                self.session += 1;
+                self.connection_status = None;
+            }
+        }
+    }
+
+    fn next_page(&mut self) {
+        self.detail = false;
+        let bookmark_bytes = self
+            .view
+            .previous
+            .iter()
+            .map(|bookmark| bookmark.position.as_ref().map_or(0, String::len))
+            .sum::<usize>()
+            + self.view.position.as_ref().map_or(0, String::len);
+        if self.view.previous.len() >= BOOKMARK_LIMIT || bookmark_bytes > PAGE_BYTES {
+            self.error = Some("Page bookmark limit reached (4096 bookmarks / 1 MiB tokens); go back or refresh to restart".into());
+            return;
+        }
+        if let Some(offset) = self.view.offset.checked_add(PAGE_SIZE) {
+            self.load(offset, false);
+        }
+    }
+
+    fn previous_page(&mut self) {
+        self.detail = false;
+        if self
+            .view
+            .previous
+            .back()
+            .is_some_and(|bookmark| bookmark.page.is_some())
+        {
+            let bookmark = self.view.previous.pop_back().expect("cached previous page");
+            self.invalidate();
+            self.view.offset = bookmark.offset;
+            self.view.position = bookmark.position;
+            self.view.page = bookmark.page.expect("cached previous page");
+            self.view.rebuild(bookmark.selected, self.config.display);
+        } else if let Some(bookmark) = self.view.previous.back() {
+            self.load(bookmark.offset, false);
+        }
+    }
+
     /// # Panics
     ///
     /// Panics if the query editor is active without an editor, which the mode prevents.
@@ -1501,6 +1562,46 @@ impl App {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return;
         }
+        if self.key_modal(key) {
+            return;
+        }
+        if self.query_editor.is_some() {
+            self.key_query_editor(key);
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.command = None;
+            self.restore_filter();
+            self.act(Action::Cancel);
+            return;
+        }
+        if self.filter_input.is_some() {
+            self.key_filter(key);
+            return;
+        }
+        if self.command.is_some() {
+            self.key_command(key);
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::ALT) {
+            return;
+        }
+        if key.code == KeyCode::Char(':')
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && self.theme_menu.is_none()
+            && self.display_menu.is_none()
+            && self.history_menu.is_none()
+        {
+            if self.following {
+                self.invalidate();
+            }
+            self.command = Some(String::new());
+            return;
+        }
+        self.key_binding(key);
+    }
+
+    fn key_modal(&mut self, key: KeyEvent) -> bool {
         if self.confirm_quit {
             match key.code {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.act(Action::Open),
@@ -1510,7 +1611,7 @@ impl App {
                 }
                 _ => {}
             }
-            return;
+            return true;
         }
         if self.confirm_query.is_some() {
             match key.code {
@@ -1521,7 +1622,7 @@ impl App {
                 }
                 _ => {}
             }
-            return;
+            return true;
         }
         if self.connect_error.is_some() {
             match key.code {
@@ -1531,7 +1632,7 @@ impl App {
                 }
                 _ => {}
             }
-            return;
+            return true;
         }
         if let Some(form) = &mut self.connection_form {
             if key.code == KeyCode::Esc
@@ -1543,46 +1644,44 @@ impl App {
             } else {
                 self.error = None;
             }
-            return;
+            return true;
         }
-        if self.query_editor.is_some() {
-            match key.code {
-                KeyCode::Esc => self.close_query(),
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.close_query();
-                }
-                KeyCode::F(5) if !self.loading => self.execute_query(),
-                KeyCode::Enter if !self.loading && key.modifiers.is_empty() => self.execute_query(),
-                KeyCode::Char('r')
-                    if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    self.execute_query();
-                }
-                KeyCode::Char('p')
-                    if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    self.browse_query_history(true);
-                }
-                KeyCode::Char('n')
-                    if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    self.browse_query_history(false);
-                }
-                _ if self.loading => {}
-                _ => {
-                    if let Err(error) = self.query_editor.as_mut().unwrap().key(key) {
-                        self.error = Some(error.into());
-                    }
+        false
+    }
+
+    fn key_query_editor(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.close_query(),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close_query();
+            }
+            KeyCode::F(5) if !self.loading => self.execute_query(),
+            KeyCode::Enter if !self.loading && key.modifiers.is_empty() => self.execute_query(),
+            KeyCode::Char('r')
+                if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.execute_query();
+            }
+            KeyCode::Char('p')
+                if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.browse_query_history(true);
+            }
+            KeyCode::Char('n')
+                if !self.loading && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.browse_query_history(false);
+            }
+            _ if self.loading => {}
+            _ => {
+                if let Err(error) = self.query_editor.as_mut().unwrap().key(key) {
+                    self.error = Some(error.into());
                 }
             }
-            return;
         }
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.command = None;
-            self.restore_filter();
-            self.act(Action::Cancel);
-            return;
-        }
+    }
+
+    fn key_filter(&mut self, key: KeyEvent) {
         if let Some(input) = &mut self.filter_input {
             match key.code {
                 KeyCode::Esc => {
@@ -1614,8 +1713,10 @@ impl App {
                     .as_ref()
                     .and_then(|(_, selected)| *selected),
             );
-            return;
         }
+    }
+
+    fn key_command(&mut self, key: KeyEvent) {
         if let Some(command) = &mut self.command {
             match key.code {
                 KeyCode::Esc => self.command = None,
@@ -1649,23 +1750,10 @@ impl App {
                 }
                 _ => {}
             }
-            return;
         }
-        if key.modifiers.contains(KeyModifiers::ALT) {
-            return;
-        }
-        if key.code == KeyCode::Char(':')
-            && !key.modifiers.contains(KeyModifiers::CONTROL)
-            && self.theme_menu.is_none()
-            && self.display_menu.is_none()
-            && self.history_menu.is_none()
-        {
-            if self.following {
-                self.invalidate();
-            }
-            self.command = Some(String::new());
-            return;
-        }
+    }
+
+    fn key_binding(&mut self, key: KeyEvent) {
         let name = match key.code {
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 format!("Ctrl-{c}")

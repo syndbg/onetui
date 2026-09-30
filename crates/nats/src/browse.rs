@@ -407,6 +407,257 @@ impl std::fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
+async fn stream_list(api: &Api<'_>, resource: &Resource, cursor: &mut Cursor) -> Result<Page> {
+    let mut page = Page::default();
+    let info = api
+        .call("STREAM.LIST", json!({"offset": cursor.next}))
+        .await?;
+    let streams = info["streams"].as_array().map_or(&[][..], Vec::as_slice);
+    let total = number(&info, "total")?;
+    page.columns = columns(&[
+        ("name", "text"),
+        ("subjects", "json"),
+        ("messages", "integer"),
+        ("bytes", "integer"),
+        ("consumers", "integer"),
+    ]);
+    // The server chooses its own list batch size; retain only our page and advance by that count.
+    let consumed = streams.len().min(PAGE_ROWS);
+    for stream in streams.iter().take(consumed) {
+        let name = string(&stream["config"], "name")?;
+        let (name, target) = match resource.id {
+            "nats.kv_buckets" => match name.strip_prefix("KV_") {
+                Some(bucket) => (bucket, "nats.kv_keys"),
+                None => continue,
+            },
+            "nats.object_buckets" => match name.strip_prefix("OBJ_") {
+                Some(bucket) => (bucket, "nats.objects"),
+                None => continue,
+            },
+            "nats.consumer_streams" => (name, "nats.consumers"),
+            _ => (name, "nats.messages"),
+        };
+        let target = Resource::new(target, vec![name.into()]);
+        validate(
+            &PageRequest {
+                resource: target.clone(),
+                continuation: None,
+            },
+            false,
+        )?;
+        page.rows.push(Row {
+            cells: vec![
+                Some(name.into()),
+                Some(Value::Json(stream["config"]["subjects"].to_string())),
+                Some(number(&stream["state"], "messages")?.to_string().into()),
+                Some(number(&stream["state"], "bytes")?.to_string().into()),
+                Some(
+                    number(&stream["state"], "consumer_count")?
+                        .to_string()
+                        .into(),
+                ),
+            ],
+            target: Some(target),
+        });
+    }
+    cursor.next = cursor
+        .next
+        .checked_add(consumed as u64)
+        .ok_or_else(|| anyhow!("NATS list offset overflow"))?;
+    page.next = cursor.next < total;
+    ensure!(
+        !page.next || !streams.is_empty(),
+        "NATS list made no progress"
+    );
+    page.notice = "Server offset listing; concurrent changes may shift entries".into();
+    Ok(page)
+}
+
+fn place_cursor(
+    cursor: &mut Cursor,
+    fresh: bool,
+    live: bool,
+    replay: Option<&crate::replay::Replay>,
+    window: (u64, u64),
+    created: String,
+) -> Result<()> {
+    let (first, end) = window;
+    if fresh {
+        cursor.created = created;
+        cursor.end = end;
+        cursor.next = if live { end } else { first.min(end) };
+        if let Some(replay) = replay {
+            if let Some(start) = replay.start_sequence {
+                ensure!(
+                    start >= first && start <= end,
+                    "NATS start_sequence outside retained stream range"
+                );
+                cursor.next = start;
+            }
+            cursor.end = replay.end_sequence.unwrap_or(end).min(end).max(cursor.next);
+        }
+    } else {
+        ensure!(
+            cursor.created == created
+                && cursor.next >= first
+                && cursor.next <= end
+                && cursor.end <= end,
+            "NATS stream changed or retained sequence is unavailable; refresh or restart following"
+        );
+        if live {
+            cursor.end = end;
+        }
+    }
+    Ok(())
+}
+
+async fn scan_messages(
+    api: &Api<'_>,
+    scope: &crate::metadata::MessageScope,
+    cursor: &mut Cursor,
+    page: &mut Page,
+    replay: Option<&crate::replay::Replay>,
+) -> Result<i64> {
+    let stream = &scope.stream;
+    let start_time = replay
+        .and_then(|r| r.start_time.as_deref())
+        .map(async_nats::datetime::parse_rfc3339)
+        .transpose()
+        .map_err(anyhow::Error::from_boxed)?;
+    let mut scanned = 0;
+    while cursor.next < cursor.end && scanned < PAGE_SIZE {
+        let response = api
+            .message(
+                stream,
+                json!({"seq": cursor.next, "next_by_subj": scope.subject}),
+            )
+            .await?;
+        let Some(message) = response else {
+            cursor.next = cursor.end;
+            break;
+        };
+        let seq = number(&message, "seq")?;
+        ensure!(seq >= cursor.next, "NATS message sequence did not advance");
+        if seq >= cursor.end {
+            cursor.next = cursor.end;
+            break;
+        }
+        scanned += 1;
+        if let Some(start) = start_time
+            && async_nats::datetime::parse_rfc3339(string(&message, "time")?)
+                .map_err(anyhow::Error::from_boxed)?
+                < start
+        {
+            cursor.next = seq + 1;
+            continue;
+        }
+        let row = message_row(&message)?;
+        page.rows.push(row);
+        // Leave room for the cursor/notice and the TUI's hexadecimal byte projection.
+        if page.bytes() > (PAGE_BYTES - 8192) / 2 {
+            page.rows.pop();
+            ensure!(
+                !page.rows.is_empty(),
+                "NATS message exceeds the bounded page/projection budget"
+            );
+            break;
+        }
+        cursor.next = seq + 1;
+        cursor.read_rows = cursor
+            .read_rows
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("NATS row count overflow"))?;
+        cursor.read_bytes = cursor
+            .read_bytes
+            .checked_add(
+                page.rows.last().unwrap().cells[3]
+                    .as_ref()
+                    .unwrap()
+                    .bytes()
+                    .len() as u64,
+            )
+            .ok_or_else(|| anyhow!("NATS byte count overflow"))?;
+    }
+    Ok(scanned)
+}
+
+async fn message_page(
+    api: &Api<'_>,
+    request: &PageRequest,
+    cursor: &mut Cursor,
+    live: bool,
+    replay: Option<&crate::replay::Replay>,
+) -> Result<Page> {
+    let resource = &request.resource;
+    let mut page = Page::default();
+    let mut scope = crate::metadata::message_scope(api, resource).await?;
+    if let Some(replay) = replay {
+        scope.subject = replay.subject.clone();
+        scope.version = serde_json::to_string(replay)?;
+    }
+    let stream = &scope.stream;
+    let info = api
+        .call(&format!("STREAM.INFO.{stream}"), json!({}))
+        .await?;
+    if resource.id == "nats.stream_info" {
+        ensure!(
+            request.continuation.is_none(),
+            "NATS stream info has one page"
+        );
+        page.columns = columns(&[("info", "json")]);
+        page.rows.push(Row {
+            cells: vec![Some(Value::Json(info.to_string()))],
+            target: None,
+        });
+    } else {
+        let first = number(&info["state"], "first_seq")?.max(1);
+        let end = number(&info["state"], "last_seq")?
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("NATS sequence overflow"))?;
+        let created = format!("{}:{}", string(&info, "created")?, scope.version);
+        place_cursor(
+            cursor,
+            request.continuation.is_none(),
+            live,
+            replay,
+            (first, end),
+            created,
+        )?;
+        page.columns = columns(&[
+            ("sequence", "integer"),
+            ("subject", "text"),
+            ("time", "RFC3339"),
+            ("data", "bytes"),
+            ("headers", "bytes (NATS header block)"),
+        ]);
+        let scanned = scan_messages(api, &scope, cursor, &mut page, replay).await?;
+        page.next = cursor.next < cursor.end;
+        if !page.next
+            && let Some((chunks, bytes)) = scope.object_size
+        {
+            ensure!(
+                cursor.read_rows == chunks && cursor.read_bytes == bytes,
+                "NATS object chunks changed or are missing; refresh"
+            );
+        }
+        page.notice = format!(
+            "Stream sequences [{first}, {}); no snapshot, consumers or acknowledgements",
+            cursor.end
+        );
+        if resource.id == "nats.object_chunks" {
+            page.notice.push_str("; object version pinned; chunks are separate byte values, whole-object digest not verified");
+        }
+        if let Some(replay) = replay {
+            let _ = write!(
+                page.notice,
+                "; subject {}; scanned {scanned}; time filtering scans at most 100 matching messages per page",
+                replay.subject
+            );
+        }
+    }
+    Ok(page)
+}
+
 pub async fn page(
     api: &Api<'_>,
     session: u64,
@@ -445,219 +696,18 @@ pub async fn page(
         read_rows: 0,
         read_bytes: 0,
     });
-    let mut page = Page::default();
-    if let Some(metadata) =
+    let mut page = if let Some(metadata) =
         crate::metadata::page(api, resource, &mut cursor, request.continuation.is_some()).await?
     {
-        page = metadata;
+        metadata
     } else if matches!(
         resource.id,
         "nats.streams" | "nats.consumer_streams" | "nats.kv_buckets" | "nats.object_buckets"
     ) {
-        let info = api
-            .call("STREAM.LIST", json!({"offset": cursor.next}))
-            .await?;
-        let streams = info["streams"].as_array().map_or(&[][..], Vec::as_slice);
-        let total = number(&info, "total")?;
-        page.columns = columns(&[
-            ("name", "text"),
-            ("subjects", "json"),
-            ("messages", "integer"),
-            ("bytes", "integer"),
-            ("consumers", "integer"),
-        ]);
-        // The server chooses its own list batch size; retain only our page and advance by that count.
-        let consumed = streams.len().min(PAGE_ROWS);
-        for stream in streams.iter().take(consumed) {
-            let name = string(&stream["config"], "name")?;
-            let (name, target) = match resource.id {
-                "nats.kv_buckets" => match name.strip_prefix("KV_") {
-                    Some(bucket) => (bucket, "nats.kv_keys"),
-                    None => continue,
-                },
-                "nats.object_buckets" => match name.strip_prefix("OBJ_") {
-                    Some(bucket) => (bucket, "nats.objects"),
-                    None => continue,
-                },
-                "nats.consumer_streams" => (name, "nats.consumers"),
-                _ => (name, "nats.messages"),
-            };
-            let target = Resource::new(target, vec![name.into()]);
-            validate(
-                &PageRequest {
-                    resource: target.clone(),
-                    continuation: None,
-                },
-                false,
-            )?;
-            page.rows.push(Row {
-                cells: vec![
-                    Some(name.into()),
-                    Some(Value::Json(stream["config"]["subjects"].to_string())),
-                    Some(number(&stream["state"], "messages")?.to_string().into()),
-                    Some(number(&stream["state"], "bytes")?.to_string().into()),
-                    Some(
-                        number(&stream["state"], "consumer_count")?
-                            .to_string()
-                            .into(),
-                    ),
-                ],
-                target: Some(target),
-            });
-        }
-        cursor.next = cursor
-            .next
-            .checked_add(consumed as u64)
-            .ok_or_else(|| anyhow!("NATS list offset overflow"))?;
-        page.next = cursor.next < total;
-        ensure!(
-            !page.next || !streams.is_empty(),
-            "NATS list made no progress"
-        );
-        page.notice = "Server offset listing; concurrent changes may shift entries".into();
+        stream_list(api, resource, &mut cursor).await?
     } else {
-        let mut scope = crate::metadata::message_scope(api, resource).await?;
-        if let Some(replay) = replay {
-            scope.subject = replay.subject.clone();
-            scope.version = serde_json::to_string(replay)?;
-        }
-        let stream = &scope.stream;
-        let info = api
-            .call(&format!("STREAM.INFO.{stream}"), json!({}))
-            .await?;
-        if resource.id == "nats.stream_info" {
-            ensure!(
-                request.continuation.is_none(),
-                "NATS stream info has one page"
-            );
-            page.columns = columns(&[("info", "json")]);
-            page.rows.push(Row {
-                cells: vec![Some(Value::Json(info.to_string()))],
-                target: None,
-            });
-        } else {
-            let first = number(&info["state"], "first_seq")?.max(1);
-            let end = number(&info["state"], "last_seq")?
-                .checked_add(1)
-                .ok_or_else(|| anyhow!("NATS sequence overflow"))?;
-            let created = format!("{}:{}", string(&info, "created")?, scope.version);
-            if request.continuation.is_none() {
-                cursor.created = created;
-                cursor.end = end;
-                cursor.next = if live { end } else { first.min(end) };
-                if let Some(replay) = replay {
-                    if let Some(start) = replay.start_sequence {
-                        ensure!(
-                            start >= first && start <= end,
-                            "NATS start_sequence outside retained stream range"
-                        );
-                        cursor.next = start;
-                    }
-                    cursor.end = replay.end_sequence.unwrap_or(end).min(end).max(cursor.next);
-                }
-            } else {
-                ensure!(
-                    cursor.created == created
-                        && cursor.next >= first
-                        && cursor.next <= end
-                        && cursor.end <= end,
-                    "NATS stream changed or retained sequence is unavailable; refresh or restart following"
-                );
-                if live {
-                    cursor.end = end;
-                }
-            }
-            page.columns = columns(&[
-                ("sequence", "integer"),
-                ("subject", "text"),
-                ("time", "RFC3339"),
-                ("data", "bytes"),
-                ("headers", "bytes (NATS header block)"),
-            ]);
-            let start_time = replay
-                .and_then(|r| r.start_time.as_deref())
-                .map(async_nats::datetime::parse_rfc3339)
-                .transpose()
-                .map_err(anyhow::Error::from_boxed)?;
-            let mut scanned = 0;
-            while cursor.next < cursor.end && scanned < PAGE_SIZE {
-                let response = api
-                    .message(
-                        stream,
-                        json!({"seq": cursor.next, "next_by_subj": scope.subject}),
-                    )
-                    .await?;
-                let Some(message) = response else {
-                    cursor.next = cursor.end;
-                    break;
-                };
-                let seq = number(&message, "seq")?;
-                ensure!(seq >= cursor.next, "NATS message sequence did not advance");
-                if seq >= cursor.end {
-                    cursor.next = cursor.end;
-                    break;
-                }
-                scanned += 1;
-                if let Some(start) = start_time
-                    && async_nats::datetime::parse_rfc3339(string(&message, "time")?)
-                        .map_err(anyhow::Error::from_boxed)?
-                        < start
-                {
-                    cursor.next = seq + 1;
-                    continue;
-                }
-                let row = message_row(&message)?;
-                page.rows.push(row);
-                // Leave room for the cursor/notice and the TUI's hexadecimal byte projection.
-                if page.bytes() > (PAGE_BYTES - 8192) / 2 {
-                    page.rows.pop();
-                    ensure!(
-                        !page.rows.is_empty(),
-                        "NATS message exceeds the bounded page/projection budget"
-                    );
-                    break;
-                }
-                cursor.next = seq + 1;
-                cursor.read_rows = cursor
-                    .read_rows
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow!("NATS row count overflow"))?;
-                cursor.read_bytes = cursor
-                    .read_bytes
-                    .checked_add(
-                        page.rows.last().unwrap().cells[3]
-                            .as_ref()
-                            .unwrap()
-                            .bytes()
-                            .len() as u64,
-                    )
-                    .ok_or_else(|| anyhow!("NATS byte count overflow"))?;
-            }
-            page.next = cursor.next < cursor.end;
-            if !page.next
-                && let Some((chunks, bytes)) = scope.object_size
-            {
-                ensure!(
-                    cursor.read_rows == chunks && cursor.read_bytes == bytes,
-                    "NATS object chunks changed or are missing; refresh"
-                );
-            }
-            page.notice = format!(
-                "Stream sequences [{first}, {}); no snapshot, consumers or acknowledgements",
-                cursor.end
-            );
-            if resource.id == "nats.object_chunks" {
-                page.notice.push_str("; object version pinned; chunks are separate byte values, whole-object digest not verified");
-            }
-            if let Some(replay) = replay {
-                let _ = write!(
-                    page.notice,
-                    "; subject {}; scanned {scanned}; time filtering scans at most 100 matching messages per page",
-                    replay.subject
-                );
-            }
-        }
-    }
+        message_page(api, &request, &mut cursor, live, replay).await?
+    };
     if page.next || live {
         let token = serde_json::to_string(&cursor)?;
         ensure!(token.len() <= 4096, "NATS continuation exceeds 4096 bytes");

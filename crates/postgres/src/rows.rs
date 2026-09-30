@@ -29,31 +29,21 @@ fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-pub async fn fetch(
-    client: &Client,
-    resource: &Resource,
-    offset: i64,
-    continuation: Option<&str>,
-) -> Result<Page> {
-    let [schema, relation] = resource.path.as_slice() else {
-        anyhow::bail!("Invalid PostgreSQL row path");
-    };
-    ensure!(offset >= 0, "Invalid row offset");
-    ensure!(
-        (offset == 0) == continuation.is_none(),
-        "Missing or unexpected continuation; refresh"
-    );
-    let cursor: Option<Cursor> = continuation
+fn parse_cursor(continuation: Option<&str>) -> Result<Option<Cursor>> {
+    continuation
         .map(|token| {
             ensure!(token.len() <= PAGE_BYTES, "Invalid continuation; refresh");
             serde_json::from_str(token).map_err(|_| anyhow!("Invalid continuation; refresh"))
         })
-        .transpose()?;
-    let table = format!("{}.{}", quote(schema), quote(relation));
-    client
-        .batch_execute("BEGIN READ ONLY")
-        .await
-        .map_err(pg_error)?;
+        .transpose()
+}
+
+async fn read_shape(
+    client: &Client,
+    schema: &str,
+    relation: &str,
+    table: &str,
+) -> Result<(Shape, Vec<tokio_postgres::Row>)> {
     // Lock the relation before reading its catalog shape; finish the transaction before display.
     client
         .simple_query(&format!("SELECT 1 FROM {table} LIMIT 0"))
@@ -62,7 +52,7 @@ pub async fn fetch(
     let oid: u32 = client
         .query_one(
             "SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r','p','v','m','f')",
-            &[schema, relation],
+            &[&schema, &relation],
         ).await.map_err(pg_error)?.get(0);
     let attributes = client.query(
         "SELECT attname::text, atttypid, atttypmod, pg_catalog.format_type(atttypid, atttypmod), attnum, attcollation FROM pg_catalog.pg_attribute WHERE attrelid = $1 AND attnum > 0 AND NOT attisdropped ORDER BY attnum LIMIT 257",
@@ -117,21 +107,22 @@ pub async fn fetch(
         index: index_id,
         keys,
     };
-    if let Some(cursor) = &cursor {
-        ensure!(
-            cursor.shape == shape
-                && cursor.offset == offset
-                && cursor.values.len() == shape.keys.len(),
-            "Relation or paging key changed; refresh"
-        );
-    }
+    Ok((shape, attributes))
+}
+
+fn page_query(
+    shape: &Shape,
+    cursor: Option<&Cursor>,
+    table: &str,
+    offset: i64,
+) -> Result<(String, Vec<Box<dyn ToSql + Sync + Send>>)> {
     let key_names: Vec<_> = shape
         .keys
         .iter()
         .map(|&i| format!("src.{}", quote(&shape.columns[i].0)))
         .collect();
     let mut parameters: Vec<Box<dyn ToSql + Sync + Send>> = Vec::new();
-    let predicate = if let Some(cursor) = &cursor
+    let predicate = if let Some(cursor) = cursor
         && !shape.keys.is_empty()
     {
         for (&i, value) in shape.keys.iter().zip(&cursor.values) {
@@ -215,8 +206,18 @@ pub async fn fetch(
          SELECT {guarded}, oversized FROM sized {outer_order}",
         projections.join(", ")
     );
+    Ok((sql, parameters))
+}
+
+async fn read_rows(
+    client: &Client,
+    sql: &str,
+    parameters: &[Box<dyn ToSql + Sync + Send>],
+    attributes: &[tokio_postgres::Row],
+    shape: &Shape,
+) -> Result<(Page, Vec<String>)> {
     let stream = client
-        .query_raw(&sql, parameters.iter().map(|p| &**p as &(dyn ToSql + Sync)))
+        .query_raw(sql, parameters.iter().map(|p| &**p as &(dyn ToSql + Sync)))
         .await
         .map_err(pg_error)?;
     tokio::pin!(stream);
@@ -279,6 +280,40 @@ pub async fn fetch(
             "Row page exceeds the 1 MiB display limit; current page retained"
         );
     }
+    Ok((page, last_key))
+}
+
+pub async fn fetch(
+    client: &Client,
+    resource: &Resource,
+    offset: i64,
+    continuation: Option<&str>,
+) -> Result<Page> {
+    let [schema, relation] = resource.path.as_slice() else {
+        anyhow::bail!("Invalid PostgreSQL row path");
+    };
+    ensure!(offset >= 0, "Invalid row offset");
+    ensure!(
+        (offset == 0) == continuation.is_none(),
+        "Missing or unexpected continuation; refresh"
+    );
+    let cursor = parse_cursor(continuation)?;
+    let table = format!("{}.{}", quote(schema), quote(relation));
+    client
+        .batch_execute("BEGIN READ ONLY")
+        .await
+        .map_err(pg_error)?;
+    let (shape, attributes) = read_shape(client, schema, relation, &table).await?;
+    if let Some(cursor) = &cursor {
+        ensure!(
+            cursor.shape == shape
+                && cursor.offset == offset
+                && cursor.values.len() == shape.keys.len(),
+            "Relation or paging key changed; refresh"
+        );
+    }
+    let (sql, parameters) = page_query(&shape, cursor.as_ref(), &table, offset)?;
+    let (mut page, last_key) = read_rows(client, &sql, &parameters, &attributes, &shape).await?;
     if page.next {
         page.continuation = Some(serde_json::to_string(&Cursor {
             shape,

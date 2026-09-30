@@ -57,41 +57,7 @@ impl Config {
             (1..=32).contains(&config.servers.len()),
             "NATS servers requires 1..32 URLs"
         );
-        for server in &config.servers {
-            ensure!(
-                server.len() <= 1024 && !server.chars().any(char::is_whitespace),
-                "Invalid NATS server URL"
-            );
-            let url = url::Url::parse(server).map_err(|_| anyhow!("Invalid NATS server URL"))?;
-            ensure!(
-                matches!(url.scheme(), "nats" | "tls")
-                    && url.host().is_some()
-                    && url.port().is_some_and(|p| p != 0)
-                    && url.username().is_empty()
-                    && url.password().is_none()
-                    && matches!(url.path(), "" | "/")
-                    && url.query().is_none()
-                    && url.fragment().is_none(),
-                "NATS servers must be nats://host:port or tls://host:port without credentials or extra components"
-            );
-            if !config.tls {
-                let local = match url.host() {
-                    Some(url::Host::Domain(host)) => {
-                        host == "localhost"
-                            || host
-                                .parse::<std::net::IpAddr>()
-                                .is_ok_and(|ip| ip.is_loopback())
-                    }
-                    Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-                    Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-                    None => false,
-                };
-                ensure!(
-                    local && url.scheme() == "nats",
-                    "NATS tls=false requires loopback nats:// servers"
-                );
-            }
-        }
+        config.validate_servers()?;
         for path in [&config.ca_file, &config.cert_file, &config.key_file]
             .into_iter()
             .flatten()
@@ -118,12 +84,56 @@ impl Config {
                 "NATS domain requires JetStream and 1..255 ASCII letters, digits, underscores or hyphens"
             );
         }
+        config.validate_auth()?;
+        Ok(config)
+    }
+
+    fn validate_servers(&self) -> Result<()> {
+        for server in &self.servers {
+            ensure!(
+                server.len() <= 1024 && !server.chars().any(char::is_whitespace),
+                "Invalid NATS server URL"
+            );
+            let url = url::Url::parse(server).map_err(|_| anyhow!("Invalid NATS server URL"))?;
+            ensure!(
+                matches!(url.scheme(), "nats" | "tls")
+                    && url.host().is_some()
+                    && url.port().is_some_and(|p| p != 0)
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && matches!(url.path(), "" | "/")
+                    && url.query().is_none()
+                    && url.fragment().is_none(),
+                "NATS servers must be nats://host:port or tls://host:port without credentials or extra components"
+            );
+            if !self.tls {
+                let local = match url.host() {
+                    Some(url::Host::Domain(host)) => {
+                        host == "localhost"
+                            || host
+                                .parse::<std::net::IpAddr>()
+                                .is_ok_and(|ip| ip.is_loopback())
+                    }
+                    Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                    Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                    None => false,
+                };
+                ensure!(
+                    local && url.scheme() == "nats",
+                    "NATS tls=false requires loopback nats:// servers"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_auth(&self) -> Result<()> {
         for name in [
-            &config.token_env,
-            &config.username_env,
-            &config.password_env,
-            &config.nkey_env,
-            &config.credentials_env,
+            &self.token_env,
+            &self.username_env,
+            &self.password_env,
+            &self.nkey_env,
+            &self.credentials_env,
         ]
         .into_iter()
         .flatten()
@@ -134,42 +144,41 @@ impl Config {
             );
         }
         ensure!(
-            !(config.username.is_some() && config.username_env.is_some()
-                || config.password.is_some() && config.password_env.is_some()),
+            !(self.username.is_some() && self.username_env.is_some()
+                || self.password.is_some() && self.password_env.is_some()),
             "NATS username and password each need one source: a value or an _env reference"
         );
         ensure!(
-            config
-                .username
+            self.username
                 .as_deref()
                 .is_none_or(|value| !value.is_empty())
-                && config
+                && self
                     .password
                     .as_deref()
                     .is_none_or(|value| !value.is_empty()),
             "NATS username and password cannot be empty"
         );
-        let has_username = config.username.is_some() || config.username_env.is_some();
-        let has_password = config.password.is_some() || config.password_env.is_some();
+        let has_username = self.username.is_some() || self.username_env.is_some();
+        let has_password = self.password.is_some() || self.password_env.is_some();
         ensure!(
             has_username == has_password,
             "NATS username and password must be paired"
         );
         ensure!(
             [
-                &config.token_env,
-                &config.username_env,
-                &config.nkey_env,
-                &config.credentials_env
+                &self.token_env,
+                &self.username_env,
+                &self.nkey_env,
+                &self.credentials_env
             ]
             .iter()
             .filter(|v| v.is_some())
             .count()
-                + usize::from(config.username.is_some())
+                + usize::from(self.username.is_some())
                 <= 1,
             "NATS token, username/password, NKEY and JWT credentials are mutually exclusive"
         );
-        Ok(config)
+        Ok(())
     }
 
     pub fn options(

@@ -139,12 +139,7 @@ pub async fn metadata(
     }
 }
 
-pub async fn query(
-    client: &Client,
-    table: &str,
-    query: Read,
-    cursor: Option<&Value>,
-) -> Result<Value> {
+async fn partiql(client: &Client, query: Read, cursor: Option<&Value>) -> Result<Value> {
     match query {
         Read::ExecuteStatement {
             statement,
@@ -218,6 +213,17 @@ pub async fn query(
                 statement = true
             )
         }
+        _ => unreachable!("routed by query"),
+    }
+}
+
+async fn lookups(
+    client: &Client,
+    table: &str,
+    query: Read,
+    cursor: Option<&Value>,
+) -> Result<Value> {
+    match query {
         Read::SearchVectors {
             index,
             search_vector,
@@ -304,6 +310,17 @@ pub async fn query(
                     .return_consumed_capacity(ReturnConsumedCapacity::Total)
             )
         }
+        _ => unreachable!("routed by query"),
+    }
+}
+
+async fn tables(
+    client: &Client,
+    table: &str,
+    query: Read,
+    cursor: Option<&Value>,
+) -> Result<Value> {
+    match query {
         Read::GetRecords { .. } => bail!("GetRecords requires a Streams client"),
         Read::Scan {
             index,
@@ -380,6 +397,26 @@ pub async fn query(
                     .consistent_read(consistent_read)
                     .return_consumed_capacity(ReturnConsumedCapacity::Indexes)
             )
+        }
+        _ => unreachable!("routed by query"),
+    }
+}
+
+pub async fn query(
+    client: &Client,
+    table: &str,
+    query: Read,
+    cursor: Option<&Value>,
+) -> Result<Value> {
+    match query {
+        Read::ExecuteStatement { .. }
+        | Read::BatchExecuteStatement { .. }
+        | Read::ExecuteTransaction { .. } => partiql(client, query, cursor).await,
+        Read::SearchVectors { .. } | Read::BatchGetItem { .. } | Read::TransactGetItems { .. } => {
+            lookups(client, table, query, cursor).await
+        }
+        Read::GetRecords { .. } | Read::Scan { .. } | Read::Query { .. } | Read::GetItem { .. } => {
+            tables(client, table, query, cursor).await
         }
     }
 }
