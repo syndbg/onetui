@@ -110,12 +110,198 @@ async fn kafka_topic_pages_preserve_partition_offsets_and_bookmarks() {
         .unwrap();
 }
 
+async fn committed_records_arrive_and_open_transactions_stay_hidden(
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    mut config: rdkafka::ClientConfig,
+    owned: &str,
+) -> (rdkafka::producer::FutureProducer, Option<String>) {
+    use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
+    let tail = follow(executor, resource.clone(), None).await;
+    assert!(tail.rows.is_empty());
+    let producer: FutureProducer = config
+        .set("transactional.id", owned)
+        .set("compression.type", "zstd")
+        .create()
+        .unwrap();
+    producer.init_transactions(Duration::from_secs(10)).unwrap();
+    producer.begin_transaction().unwrap();
+    for n in 0..240 {
+        producer
+            .send(
+                FutureRecord::to(owned)
+                    .partition(n % 2)
+                    .key("multi")
+                    .payload(&n.to_string()),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+    }
+    let open = follow(executor, resource.clone(), tail.continuation).await;
+    assert!(open.rows.is_empty(), "open transactions must remain hidden");
+    producer
+        .commit_transaction(Duration::from_secs(10))
+        .unwrap();
+    let mut token = open.continuation;
+    let mut all = Vec::new();
+    // A commit acknowledgement can precede visibility at each partition.
+    // Empty live batches are valid; assert delivery, not a poll count.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while all.len() < 240 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "committed records did not arrive: {}",
+            all.len()
+        );
+        let page = follow(executor, resource.clone(), token).await;
+        assert!(page.rows.len() <= 100 && page.bytes() <= onetui_core::PAGE_BYTES);
+        if page.rows.is_empty() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        all.extend(keys(&page));
+        token = page.continuation;
+    }
+    assert_eq!(all.len(), 240);
+    assert_eq!(all.iter().copied().collect::<BTreeSet<_>>().len(), 240);
+    assert_eq!(all.iter().filter(|k| k.0 == 0).count(), 120);
+    assert_eq!(all.iter().filter(|k| k.0 == 1).count(), 120);
+    assert_eq!(all.iter().filter(|k| k.0 == 2).count(), 0);
+    (producer, token)
+}
+
+async fn aborted_and_oversized_records(
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    producer: &rdkafka::producer::FutureProducer,
+    owned: &str,
+    token: Option<String>,
+) -> Page {
+    use rdkafka::producer::{FutureRecord, Producer};
+    producer.begin_transaction().unwrap();
+    producer
+        .send(
+            FutureRecord::to(owned)
+                .partition(2)
+                .key("aborted")
+                .payload("hidden"),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    producer.abort_transaction(Duration::from_secs(10)).unwrap();
+    let quiet = follow(executor, resource.clone(), token).await;
+    assert!(quiet.rows.is_empty());
+    producer.begin_transaction().unwrap();
+    for partition in 0..2 {
+        producer
+            .send(
+                FutureRecord::to(owned)
+                    .partition(partition)
+                    .key("large")
+                    .payload(&vec![b'x'; 600_000]),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+    }
+    producer
+        .commit_transaction(Duration::from_secs(10))
+        .unwrap();
+    let one = follow(executor, resource.clone(), quiet.continuation).await;
+    let two = follow(executor, resource.clone(), one.continuation.clone()).await;
+    assert_eq!(one.rows.len(), 1);
+    assert_eq!(two.rows.len(), 1);
+    assert_ne!(keys(&one)[0].0, keys(&two)[0].0);
+    assert_eq!(
+        one.rows[0].cells[4].as_ref().unwrap().bytes().len(),
+        600_000
+    );
+    two
+}
+
+async fn cancellation_and_partition_expansion(
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    producer: &rdkafka::producer::FutureProducer,
+    owned: &str,
+    two: Page,
+) {
+    use rdkafka::ClientConfig;
+    use rdkafka::admin::{AdminClient, AdminOptions, NewPartitions};
+    use rdkafka::producer::Producer;
+    let (cancel, context) = RequestContext::new(Duration::from_secs(5));
+    cancel.send(()).unwrap();
+    assert!(
+        executor
+            .follow_page(
+                PageRequest {
+                    resource: resource.clone(),
+                    continuation: two.continuation.clone()
+                },
+                context
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("cancelled")
+    );
+    let unchanged = follow(executor, resource.clone(), two.continuation.clone()).await;
+    assert!(unchanged.rows.is_empty());
+    let admin: AdminClient<_> = ClientConfig::new()
+        .set("bootstrap.servers", "127.0.0.1:19092")
+        .create()
+        .unwrap();
+    for result in admin
+        .create_partitions(&[NewPartitions::new(owned, 4)], &AdminOptions::new())
+        .await
+        .unwrap()
+    {
+        result.unwrap();
+    }
+    // The controller can acknowledge expansion before the new partitions are readable.
+    wait_for_partitions(producer.client(), owned, 4).await;
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let error = executor
+        .follow_page(
+            PageRequest {
+                resource: resource.clone(),
+                continuation: unchanged.continuation,
+            },
+            context,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("partition set changed"),
+        "{error:#}"
+    );
+    let restarted = follow(executor, resource.clone(), None).await;
+    assert!(restarted.rows.is_empty());
+    assert!(restarted.notice.contains("4 partitions"));
+}
+
+async fn exercise_transactions(owned: String, config: rdkafka::ClientConfig) {
+    let mut executor = executor();
+    let resource = Resource::new("kafka.records", vec![owned.clone()]);
+    let (producer, token) = committed_records_arrive_and_open_transactions_stay_hidden(
+        &executor, &resource, config, &owned,
+    )
+    .await;
+    let two = aborted_and_oversized_records(&executor, &resource, &producer, &owned, token).await;
+    cancellation_and_partition_expansion(&executor, &resource, &producer, &owned, two).await;
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 #[ignore = "creates and removes one unique topic on the disposable Kafka fixture"]
 async fn kafka_topic_follow_transactions_limits_and_partition_changes() {
     use rdkafka::ClientConfig;
-    use rdkafka::admin::{AdminClient, AdminOptions, NewPartitions, NewTopic, TopicReplication};
-    use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
+    use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
+
     let topic = format!(
         "onetui_multi_{}_{}",
         std::process::id(),
@@ -140,153 +326,7 @@ async fn kafka_topic_follow_transactions_limits_and_partition_changes() {
     }
     wait_for_partitions(admin.inner(), &topic, 3).await;
     let owned = topic.clone();
-    let tested = tokio::spawn(async move {
-        let mut executor = executor();
-        let resource = Resource::new("kafka.records", vec![owned.clone()]);
-        let tail = follow(&executor, resource.clone(), None).await;
-        assert!(tail.rows.is_empty());
-        let producer: FutureProducer = config
-            .set("transactional.id", &owned)
-            .set("compression.type", "zstd")
-            .create()
-            .unwrap();
-        producer.init_transactions(Duration::from_secs(10)).unwrap();
-        producer.begin_transaction().unwrap();
-        for n in 0..240 {
-            producer
-                .send(
-                    FutureRecord::to(&owned)
-                        .partition(n % 2)
-                        .key("multi")
-                        .payload(&n.to_string()),
-                    Duration::from_secs(5),
-                )
-                .await
-                .unwrap();
-        }
-        let open = follow(&executor, resource.clone(), tail.continuation).await;
-        assert!(open.rows.is_empty(), "open transactions must remain hidden");
-        producer
-            .commit_transaction(Duration::from_secs(10))
-            .unwrap();
-        let mut token = open.continuation;
-        let mut all = Vec::new();
-        // A commit acknowledgement can precede visibility at each partition.
-        // Empty live batches are valid; assert delivery, not a poll count.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while all.len() < 240 {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "committed records did not arrive: {}",
-                all.len()
-            );
-            let page = follow(&executor, resource.clone(), token).await;
-            assert!(page.rows.len() <= 100 && page.bytes() <= onetui_core::PAGE_BYTES);
-            if page.rows.is_empty() {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            all.extend(keys(&page));
-            token = page.continuation;
-        }
-        assert_eq!(all.len(), 240);
-        assert_eq!(all.iter().copied().collect::<BTreeSet<_>>().len(), 240);
-        assert_eq!(all.iter().filter(|k| k.0 == 0).count(), 120);
-        assert_eq!(all.iter().filter(|k| k.0 == 1).count(), 120);
-        assert_eq!(all.iter().filter(|k| k.0 == 2).count(), 0);
-        producer.begin_transaction().unwrap();
-        producer
-            .send(
-                FutureRecord::to(&owned)
-                    .partition(2)
-                    .key("aborted")
-                    .payload("hidden"),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
-        producer.abort_transaction(Duration::from_secs(10)).unwrap();
-        let quiet = follow(&executor, resource.clone(), token).await;
-        assert!(quiet.rows.is_empty());
-        producer.begin_transaction().unwrap();
-        for partition in 0..2 {
-            producer
-                .send(
-                    FutureRecord::to(&owned)
-                        .partition(partition)
-                        .key("large")
-                        .payload(&vec![b'x'; 600_000]),
-                    Duration::from_secs(5),
-                )
-                .await
-                .unwrap();
-        }
-        producer
-            .commit_transaction(Duration::from_secs(10))
-            .unwrap();
-        let one = follow(&executor, resource.clone(), quiet.continuation).await;
-        let two = follow(&executor, resource.clone(), one.continuation.clone()).await;
-        assert_eq!(one.rows.len(), 1);
-        assert_eq!(two.rows.len(), 1);
-        assert_ne!(keys(&one)[0].0, keys(&two)[0].0);
-        assert_eq!(
-            one.rows[0].cells[4].as_ref().unwrap().bytes().len(),
-            600_000
-        );
-        let (cancel, context) = RequestContext::new(Duration::from_secs(5));
-        cancel.send(()).unwrap();
-        assert!(
-            executor
-                .follow_page(
-                    PageRequest {
-                        resource: resource.clone(),
-                        continuation: two.continuation.clone()
-                    },
-                    context
-                )
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("cancelled")
-        );
-        let unchanged = follow(&executor, resource.clone(), two.continuation.clone()).await;
-        assert!(unchanged.rows.is_empty());
-        let admin: AdminClient<_> = ClientConfig::new()
-            .set("bootstrap.servers", "127.0.0.1:19092")
-            .create()
-            .unwrap();
-        for result in admin
-            .create_partitions(&[NewPartitions::new(&owned, 4)], &AdminOptions::new())
-            .await
-            .unwrap()
-        {
-            result.unwrap();
-        }
-        // The controller can acknowledge expansion before the new partitions are readable.
-        wait_for_partitions(producer.client(), &owned, 4).await;
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let error = executor
-            .follow_page(
-                PageRequest {
-                    resource: resource.clone(),
-                    continuation: unchanged.continuation,
-                },
-                context,
-            )
-            .await
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("partition set changed"),
-            "{error:#}"
-        );
-        let restarted = follow(&executor, resource, None).await;
-        assert!(restarted.rows.is_empty());
-        assert!(restarted.notice.contains("4 partitions"));
-        executor
-            .shutdown(ShutdownContext::new(Duration::from_secs(2)))
-            .await
-            .unwrap();
-    })
-    .await;
+    let tested = tokio::spawn(exercise_transactions(owned, config)).await;
     for result in admin.delete_topics(&[&topic], &options).await.unwrap() {
         result.unwrap();
     }

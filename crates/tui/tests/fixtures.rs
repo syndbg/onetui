@@ -690,37 +690,7 @@ mod terminal {
         }
     }
 
-    #[tokio::test]
-    #[ignore = "requires PostgreSQL and the built CLI; child-owned PTY"]
-    async fn actual_cli_sql_editor_paste_execute_and_restore() {
-        let mut config = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            config,
-            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'"
-        )
-        .unwrap();
-        let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
-            || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
-            std::path::PathBuf::from,
-        );
-        let mut command = Command::new(binary);
-        command
-            .arg("--config")
-            .arg(config.path())
-            .args(["--connection", "pg"])
-            .env("ONETUI_LIVE_PTY_DSN", PG_READER);
-        let (mut pty, slave) = Pty::spawn(command);
-        pty.wait_token("\x1b[>9u", Duration::from_secs(3));
-        pty.wait(&["postgres.resources", "Schemas"]);
-        pty.open_filtered("Schemas");
-        pty.wait(&["postgres.schemas", "public"]);
-        assert!(
-            !tcgetattr(&slave)
-                .unwrap()
-                .local_flags
-                .contains(LocalFlags::ICANON)
-        );
-        drop(slave);
+    fn drive_query_editor(pty: &mut Pty) {
         pty.send(b":query\r");
         pty.wait(&[
             "SQLquery",
@@ -767,6 +737,40 @@ mod terminal {
         ]);
         pty.send(b"\x1b");
         pty.wait(&["postgres.schemas", "public"]);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL and the built CLI; child-owned PTY"]
+    async fn actual_cli_sql_editor_paste_execute_and_restore() {
+        let mut config = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            config,
+            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'"
+        )
+        .unwrap();
+        let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+            || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+            std::path::PathBuf::from,
+        );
+        let mut command = Command::new(binary);
+        command
+            .arg("--config")
+            .arg(config.path())
+            .args(["--connection", "pg"])
+            .env("ONETUI_LIVE_PTY_DSN", PG_READER);
+        let (mut pty, slave) = Pty::spawn(command);
+        pty.wait_token("\x1b[>9u", Duration::from_secs(3));
+        pty.wait(&["postgres.resources", "Schemas"]);
+        pty.open_filtered("Schemas");
+        pty.wait(&["postgres.schemas", "public"]);
+        assert!(
+            !tcgetattr(&slave)
+                .unwrap()
+                .local_flags
+                .contains(LocalFlags::ICANON)
+        );
+        drop(slave);
+        drive_query_editor(&mut pty);
         pty.send(b"q");
         pty.wait(&["QuitOneTUI?"]);
         pty.send(b"y");
@@ -797,70 +801,16 @@ mod terminal {
         );
     }
 
-    #[tokio::test]
-    #[ignore = "requires disposable PostgreSQL/Qdrant fixtures and built CLI for connection switching"]
-    async fn actual_cli_terminal_worker_and_datasource_switching() {
-        use futures_util::FutureExt;
-        use qdrant_client::qdrant::{
-            CreateCollectionBuilder, Distance, PointStruct, UpsertPointsBuilder,
-            VectorParamsBuilder,
-        };
-
-        // This client only seeds/cleans UI data; protocol assertions stay in the connector package.
-        let fixture = qdrant_client::Qdrant::from_url("http://127.0.0.1:16334")
-            .api_key("fixture-admin-only")
-            .skip_compatibility_check()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .unwrap();
-        let collection = format!("onetui_tui_{}", std::process::id());
-        fixture
-            .create_collection(
-                CreateCollectionBuilder::new(&collection)
-                    .vectors_config(VectorParamsBuilder::new(3, Distance::Dot)),
-            )
-            .await
-            .unwrap();
-        // Preserve a failed UI assertion while still removing this test's collection.
-        let journey = std::panic::AssertUnwindSafe(async {
-        let points: Vec<_> = (1_u64..=105).map(|id| {
-            PointStruct::new(id, vec![1.0, 2.0, 3.0], [("title", format!("onetui-tui-point-{id}").into())])
-        }).collect();
-        fixture.upsert_points(UpsertPointsBuilder::new(&collection, points).wait(true)).await.unwrap();
-        let mut config = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            config,
-            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.pg_other]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.qd]\nkind='qdrant'\nurl='http://127.0.0.1:16334'\napi_key_env='ONETUI_LIVE_PTY_KEY'"
-        )
-        .unwrap();
-        let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(|| {
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui")
-            }, std::path::PathBuf::from);
-        let mut command = Command::new(binary);
-        command
-            .arg("--config")
-            .arg(config.path())
-            .args(["--connection", "pg"])
-            .env("ONETUI_LIVE_PTY_DSN", PG_READER)
-            .env("ONETUI_LIVE_PTY_KEY", "fixture-reader-only");
-        let observer = Observer::connect().await;
-        observer.wait_count(0).await;
-        let (mut pty, slave) = Pty::spawn(command);
-        pty.wait(&["postgres.resources", "Schemas"]);
-        pty.open_filtered("Schemas");
-        pty.wait(&["postgres.schemas", "public"]);
-        assert!(
-            !tcgetattr(&slave)
-                .unwrap()
-                .local_flags
-                .contains(LocalFlags::ICANON)
-        );
-        drop(slave);
+    async fn browse_postgres_rows(pty: &mut Pty, observer: &Observer) {
         // A resize and input can become ready together; neither may strand the other.
         for _ in 0..10 {
             pty.resize();
             pty.send(b"?");
-            pty.wait(&["Help|:command|Escclose", "KEYCOMMANDDESCRIPTION", "Chooseatheme"]);
+            pty.wait(&[
+                "Help|:command|Escclose",
+                "KEYCOMMANDDESCRIPTION",
+                "Chooseatheme",
+            ]);
             pty.resize();
             pty.send(b":back\r");
             pty.wait(&["postgres.schemas", "public"]);
@@ -904,7 +854,11 @@ mod terminal {
         pty.send(b":back\r");
         pty.wait(&["postgres.relations", "browse_composite"]);
         pty.open_filtered("restricted_rows");
-        pty.wait(&["postgres.rows", "42501", "permissiondeniedfortablerestricted_rows"]);
+        pty.wait(&[
+            "postgres.rows",
+            "42501",
+            "permissiondeniedfortablerestricted_rows",
+        ]);
         pty.send(b":back\r");
         pty.wait(&["postgres.relations", "restricted_rows"]);
         pty.open_filtered("browse_uuid");
@@ -922,12 +876,18 @@ mod terminal {
         let started = Instant::now();
         pty.send(b"\x03");
         pty.wait(&["Requestcancelled"]);
-        eprintln!("PTY cancel-to-visible-status (10 ms polling): {:?}", started.elapsed());
+        eprintln!(
+            "PTY cancel-to-visible-status (10 ms polling): {:?}",
+            started.elapsed()
+        );
         observer.wait_gone(cancelled_pid).await;
         pty.send(b":back\r");
         pty.wait(&["postgres.relations", "browse_slow"]);
         pty.open_filtered("keyed_rows");
         pty.wait(&["postgres.rows", "Keyset", "9007199254740993"]);
+    }
+
+    async fn switch_between_postgres_aliases(pty: &mut Pty, observer: &Observer) {
         for alias in ["pg_other", "pg", "pg_other"] {
             pty.send(b":back\r");
             pty.wait(&["postgres.relations", "keyed_rows"]);
@@ -939,7 +899,11 @@ mod terminal {
             pty.open_filtered(alias);
             pty.wait(&["postgres.resources", "Schemas"]);
             pty.open_filtered("Schemas");
-            pty.wait(&[&format!("Connection{alias}equery"), "postgres.schemas", "public"]);
+            pty.wait(&[
+                &format!("Connection{alias}equery"),
+                "postgres.schemas",
+                "public",
+            ]);
             observer.wait_gone(old_pid).await;
             observer.wait_count(1).await;
             pty.open_filtered("public");
@@ -952,6 +916,9 @@ mod terminal {
                 "9007199254740993",
             ]);
         }
+    }
+
+    async fn browse_qdrant(pty: &mut Pty, observer: &Observer, collection: &str) {
         pty.send(b":back\r");
         pty.wait(&["postgres.relations", "keyed_rows"]);
         pty.open_filtered("browse_slow");
@@ -971,8 +938,13 @@ mod terminal {
         pty.wait(&["Connectionqdequery", "qdrant.collections", "Connected"]);
         assert!(!String::from_utf8_lossy(&pty.output).contains("9007199254740993"));
         assert!(!String::from_utf8_lossy(&pty.output).contains("Request cancelled"));
-        pty.open_filtered(&collection);
-        pty.wait(&["Connectionqdequery", "qdrant.collection", "metadata", "points"]);
+        pty.open_filtered(collection);
+        pty.wait(&[
+            "Connectionqdequery",
+            "qdrant.collection",
+            "metadata",
+            "points",
+        ]);
         pty.send(b"\r");
         pty.wait(&["qdrant.points", "100items", "numeric"]);
         pty.send(b"n");
@@ -988,7 +960,12 @@ mod terminal {
         pty.send(b"\r");
         pty.wait(&["Field1/1", "onetui-tui-point-1"]);
         pty.send(b"v");
-        pty.wait(&["Display|*effectiveformat", "json*", "pretty-printon", "word-wrapon"]);
+        pty.wait(&[
+            "Display|*effectiveformat",
+            "json*",
+            "pretty-printon",
+            "word-wrapon",
+        ]);
         pty.send(b"jjjj\r");
         pty.wait(&["binary*"]);
         pty.send(b"\x1b");
@@ -1014,7 +991,9 @@ mod terminal {
         pty.send(b"j\r");
         pty.wait(&["qdrant.metadata", "points_count(approximate)"]);
         observer.wait_count(0).await;
+    }
 
+    async fn return_to_postgres_and_quit(pty: &mut Pty, observer: &Observer) {
         pty.send(b"c");
         pty.wait(&["connections", "pg"]);
         pty.open_filtered("pg");
@@ -1049,7 +1028,84 @@ mod terminal {
         );
         assert!(output.contains("\x1b[?25h"), "cursor not restored");
         observer.wait_count(0).await;
-        }).catch_unwind().await;
+    }
+
+    async fn ui_journey(fixture: &qdrant_client::Qdrant, collection: &str) {
+        use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
+        let points: Vec<_> = (1_u64..=105)
+            .map(|id| {
+                PointStruct::new(
+                    id,
+                    vec![1.0, 2.0, 3.0],
+                    [("title", format!("onetui-tui-point-{id}").into())],
+                )
+            })
+            .collect();
+        fixture
+            .upsert_points(UpsertPointsBuilder::new(collection, points).wait(true))
+            .await
+            .unwrap();
+        let mut config = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            config,
+            "[connections.pg]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.pg_other]\nkind='postgres'\nurl_env='ONETUI_LIVE_PTY_DSN'\n[connections.qd]\nkind='qdrant'\nurl='http://127.0.0.1:16334'\napi_key_env='ONETUI_LIVE_PTY_KEY'"
+        )
+        .unwrap();
+        let binary = std::env::var_os("ONETUI_TEST_BIN").map_or_else(
+            || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/onetui"),
+            std::path::PathBuf::from,
+        );
+        let mut command = Command::new(binary);
+        command
+            .arg("--config")
+            .arg(config.path())
+            .args(["--connection", "pg"])
+            .env("ONETUI_LIVE_PTY_DSN", PG_READER)
+            .env("ONETUI_LIVE_PTY_KEY", "fixture-reader-only");
+        let observer = Observer::connect().await;
+        observer.wait_count(0).await;
+        let (mut pty, slave) = Pty::spawn(command);
+        pty.wait(&["postgres.resources", "Schemas"]);
+        pty.open_filtered("Schemas");
+        pty.wait(&["postgres.schemas", "public"]);
+        assert!(
+            !tcgetattr(&slave)
+                .unwrap()
+                .local_flags
+                .contains(LocalFlags::ICANON)
+        );
+        drop(slave);
+        browse_postgres_rows(&mut pty, &observer).await;
+        switch_between_postgres_aliases(&mut pty, &observer).await;
+        browse_qdrant(&mut pty, &observer, collection).await;
+        return_to_postgres_and_quit(&mut pty, &observer).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL/Qdrant fixtures and built CLI for connection switching"]
+    async fn actual_cli_terminal_worker_and_datasource_switching() {
+        use futures_util::FutureExt;
+        use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParamsBuilder};
+
+        // This client only seeds/cleans UI data; protocol assertions stay in the connector package.
+        let fixture = qdrant_client::Qdrant::from_url("http://127.0.0.1:16334")
+            .api_key("fixture-admin-only")
+            .skip_compatibility_check()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let collection = format!("onetui_tui_{}", std::process::id());
+        fixture
+            .create_collection(
+                CreateCollectionBuilder::new(&collection)
+                    .vectors_config(VectorParamsBuilder::new(3, Distance::Dot)),
+            )
+            .await
+            .unwrap();
+        // Preserve a failed UI assertion while still removing this test's collection.
+        let journey = std::panic::AssertUnwindSafe(ui_journey(&fixture, &collection))
+            .catch_unwind()
+            .await;
         let cleanup = fixture.delete_collection(&collection).await;
         if let Err(panic) = journey {
             assert!(

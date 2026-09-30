@@ -38,15 +38,12 @@ enum Source {
     BufLabel,
 }
 
-async fn exercise_binding(source: Source) {
+fn event_descriptor() -> Vec<u8> {
     use prost::Message;
     use prost_types::{
         DescriptorProto, FieldDescriptorProto, FileDescriptorProto, FileDescriptorSet,
     };
-    let topic = format!("onetui_protobuf_{}_{source:?}", std::process::id());
-    let dir = tempfile::tempdir().unwrap();
-    let schema = dir.path().join("event.pb");
-    let descriptor = FileDescriptorSet {
+    FileDescriptorSet {
         file: vec![FileDescriptorProto {
             name: Some("event.proto".into()),
             package: Some("demo".into()),
@@ -65,39 +62,46 @@ async fn exercise_binding(source: Source) {
             ..Default::default()
         }],
     }
-    .encode_to_vec();
-    std::fs::write(&schema, &descriptor).unwrap();
-    let server = matches!(source, Source::Buf | Source::BufLabel).then(|| {
-        server::Server::start_bytes(true, move |request| {
-            assert!(
-                request
-                    .to_ascii_lowercase()
-                    .contains("authorization: bearer fixture-buf-token")
+    .encode_to_vec()
+}
+
+fn buf_server(descriptor: Vec<u8>) -> server::Server {
+    server::Server::start_bytes(true, move |request| {
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fixture-buf-token")
+        );
+        if request.starts_with("POST ") {
+            assert!(request.starts_with("POST /buf.registry.module.v1.CommitService/GetCommits "));
+            let body: serde_json::Value =
+                serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(body["resourceRefs"][0]["name"]["labelName"], "main");
+            return (
+                200,
+                br#"{"commits":[{"id":"0123456789abcdef0123456789abcdef"}]}"#.to_vec(),
             );
-            if request.starts_with("POST ") {
-                assert!(
-                    request.starts_with("POST /buf.registry.module.v1.CommitService/GetCommits ")
-                );
-                let body: serde_json::Value =
-                    serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
-                assert_eq!(body["resourceRefs"][0]["name"]["labelName"], "main");
-                return (
-                    200,
-                    br#"{"commits":[{"id":"0123456789abcdef0123456789abcdef"}]}"#.to_vec(),
-                );
-            }
-            assert_eq!(
-                request.split_whitespace().nth(1).unwrap(),
-                "/demo/events/descriptor/0123456789abcdef0123456789abcdef"
-            );
-            assert!(
-                request
-                    .to_ascii_lowercase()
-                    .contains("authorization: bearer fixture-buf-token")
-            );
-            (200, descriptor.clone())
-        })
-    });
+        }
+        assert_eq!(
+            request.split_whitespace().nth(1).unwrap(),
+            "/demo/events/descriptor/0123456789abcdef0123456789abcdef"
+        );
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fixture-buf-token")
+        );
+        (200, descriptor.clone())
+    })
+}
+
+fn protobuf_options(
+    source: &Source,
+    topic: &str,
+    dir: &std::path::Path,
+    schema: &std::path::Path,
+    server: Option<&server::Server>,
+) -> toml::Table {
     let mut options = toml::Table::new();
     options.insert(
         "bootstrap_servers".into(),
@@ -105,23 +109,23 @@ async fn exercise_binding(source: Source) {
     );
     options.insert("security_protocol".into(), "PLAINTEXT".into());
     let mut binding = toml::Table::new();
-    binding.insert("topic".into(), topic.clone().into());
+    binding.insert("topic".into(), topic.into());
     binding.insert("field".into(), "key".into());
     binding.insert("format".into(), "protobuf".into());
     binding.insert("framing".into(), "raw".into());
-    if let Some(server) = &server {
-        let reference = if source == Source::BufLabel {
+    if let Some(server) = server {
+        let reference = if *source == Source::BufLabel {
             "label='main'"
         } else {
             "revision='0123456789abcdef0123456789abcdef'"
         };
         let buf = toml::from_str::<toml::Table>(&format!("url={:?}\nmodule='demo/events'\n{reference}\nca_file={:?}\ntoken_env='BUF_FIXTURE_TOKEN'", server.url, server.ca_file.as_ref().unwrap())).unwrap();
         binding.insert("buf".into(), buf.into());
-    } else if source == Source::Catalog {
-        let mut source = toml::Table::new();
-        source.insert("directory".into(), dir.path().to_str().unwrap().into());
-        source.insert("schema".into(), "event".into());
-        binding.insert("catalog".into(), source.into());
+    } else if *source == Source::Catalog {
+        let mut catalog = toml::Table::new();
+        catalog.insert("directory".into(), dir.to_str().unwrap().into());
+        catalog.insert("schema".into(), "event".into());
+        binding.insert("catalog".into(), catalog.into());
     } else {
         binding.insert("schema_file".into(), schema.to_str().unwrap().into());
     }
@@ -130,6 +134,197 @@ async fn exercise_binding(source: Source) {
         "decoders".into(),
         toml::Value::Array(vec![toml::Value::Table(binding)]),
     );
+    options
+}
+
+async fn seed_protobuf_records(producer: &FutureProducer, topic: &str) {
+    for n in 0..125 {
+        let raw: Option<&[u8]> = match n {
+            1 => Some(&[255]),
+            2 => Some(&[]),
+            3 => None,
+            _ => Some(&[8, 7]),
+        };
+        let mut record = FutureRecord::<[u8], [u8]>::to(topic)
+            .partition(0)
+            .payload(b"unchanged");
+        if let Some(raw) = raw {
+            record = record.key(raw);
+        }
+        producer.send(record, Duration::from_secs(5)).await.unwrap();
+    }
+}
+
+async fn check_first_protobuf_page(
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    source: &Source,
+    schema: &std::path::Path,
+) -> Page {
+    let first = fetch(executor, resource.clone(), None).await;
+    assert_eq!(first.rows.len(), 100);
+    if *source == Source::Catalog {
+        assert!(
+            first.rows[0].cells[6]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("#schema=event:")
+        );
+        // Refresh and follow must keep the binding snapshot after a file edit.
+        std::fs::write(schema, b"invalid replacement").unwrap();
+    }
+    if matches!(*source, Source::Buf | Source::BufLabel) {
+        assert!(
+            first.rows[0].cells[6]
+                .as_ref()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("#commit=0123456789abcdef0123456789abcdef:")
+        );
+    }
+    assert_eq!(
+        first.rows[0].cells[5],
+        Some(Value::Json(r#"{"id":"7"}"#.into()))
+    );
+    assert!(first.rows[1].cells[5].is_none() && first.rows[1].cells[7].is_some());
+    assert_eq!(first.rows[2].cells[5], Some(Value::Json("{}".into())));
+    assert!(first.rows[3].cells[5].is_none() && first.rows[3].cells[7].is_none());
+    assert_eq!(first.rows[0].cells[2], Some(Value::Bytes(vec![8, 7])));
+    assert_eq!(
+        first.rows[0].cells[3],
+        Some(Value::Bytes(b"unchanged".to_vec()))
+    );
+    first
+}
+
+async fn check_second_protobuf_page(executor: &KafkaExecutor, resource: &Resource, first: &Page) {
+    let second = fetch(executor, resource.clone(), first.continuation.clone()).await;
+    assert_eq!(second.rows.len(), 25);
+    assert_eq!(
+        second.rows.iter().map(|r| &r.cells).collect::<Vec<_>>(),
+        fetch(executor, resource.clone(), first.continuation.clone())
+            .await
+            .rows
+            .iter()
+            .map(|r| &r.cells)
+            .collect::<Vec<_>>()
+    );
+}
+
+async fn check_protobuf_following(
+    executor: &KafkaExecutor,
+    resource: &Resource,
+    start: Page,
+    first: &Page,
+    columns: &[String],
+) {
+    let live = follow(executor, resource.clone(), start.continuation).await;
+    assert_eq!(live.rows.len(), 100);
+    assert_eq!(
+        live.columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>(),
+        columns
+    );
+    assert!(live.rows[1].cells[7].is_some());
+    let next = follow(executor, resource.clone(), live.continuation).await;
+    assert_eq!(next.rows.len(), 25);
+    assert!(next.rows[0].cells[5].is_some());
+    assert_eq!(next.rows[0].cells[6], first.rows[0].cells[6]);
+    let quiet = follow(executor, resource.clone(), next.continuation).await;
+    assert!(quiet.rows.is_empty());
+    assert_eq!(
+        quiet
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>(),
+        columns
+    );
+}
+
+async fn check_protobuf_replay(executor: &KafkaExecutor, resource: &Resource, topic: &str) {
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    let replay = executor
+        .query_page(
+            QueryRequest {
+                page: PageRequest {
+                    resource: Resource::new("kafka.query", resource.path.clone()),
+                    continuation: None,
+                },
+                text: format!(
+                    "CONSUME {}/{} offsets 1..5",
+                    resource.path[0], resource.path[1]
+                ),
+            },
+            context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.rows.len(), 4);
+    assert!(replay.rows[0].cells[7].is_some());
+    let whole = fetch(
+        executor,
+        Resource::new("kafka.records", vec![topic.to_owned()]),
+        None,
+    )
+    .await;
+    assert_eq!(whole.columns[0].name, "partition");
+    assert_eq!(
+        whole.rows[0].cells[6],
+        Some(Value::Json(r#"{"id":"7"}"#.into()))
+    );
+}
+
+async fn exercise_protobuf(
+    topic: String,
+    options: toml::Table,
+    native: ClientConfig,
+    schema: std::path::PathBuf,
+    source: Source,
+) {
+    let mut executor = KafkaProvider
+        .configure(&options, &|name| {
+            assert_eq!(name, "BUF_FIXTURE_TOKEN");
+            Some("fixture-buf-token".into())
+        })
+        .unwrap();
+    let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
+    executor.check(context).await.unwrap();
+    let resource = Resource::new("kafka.records", vec![topic.clone(), "0".into()]);
+    let start = follow(&executor, resource.clone(), None).await;
+    assert!(start.rows.is_empty());
+    let columns = start
+        .columns
+        .iter()
+        .map(|c| c.name.clone())
+        .collect::<Vec<_>>();
+    assert!(columns.contains(&"key_decoded".into()));
+    let producer: FutureProducer = native.create().unwrap();
+    seed_protobuf_records(&producer, &topic).await;
+    let first = check_first_protobuf_page(&executor, &resource, &source, &schema).await;
+    check_second_protobuf_page(&executor, &resource, &first).await;
+    check_protobuf_following(&executor, &resource, start, &first, &columns).await;
+    check_protobuf_replay(&executor, &resource, &topic).await;
+    executor
+        .shutdown(ShutdownContext::new(Duration::from_secs(2)))
+        .await
+        .unwrap();
+}
+
+async fn exercise_binding(source: Source) {
+    let topic = format!("onetui_protobuf_{}_{source:?}", std::process::id());
+    let dir = tempfile::tempdir().unwrap();
+    let schema = dir.path().join("event.pb");
+    let descriptor = event_descriptor();
+    std::fs::write(&schema, &descriptor).unwrap();
+    let server =
+        matches!(source, Source::Buf | Source::BufLabel).then(|| buf_server(descriptor.clone()));
+    let options = protobuf_options(&source, &topic, dir.path(), &schema, server.as_ref());
     let mut native = ClientConfig::new();
     native
         .set("bootstrap.servers", "127.0.0.1:19092")
@@ -148,142 +343,9 @@ async fn exercise_binding(source: Source) {
     }
     let task_topic = topic.clone();
     let expected_requests = if source == Source::BufLabel { 2 } else { 1 };
-    let tested = tokio::spawn(async move {
-        let topic = task_topic;
-        let mut executor = KafkaProvider
-            .configure(&options, &|name| {
-                assert_eq!(name, "BUF_FIXTURE_TOKEN");
-                Some("fixture-buf-token".into())
-            })
-            .unwrap();
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        executor.check(context).await.unwrap();
-        let resource = Resource::new("kafka.records", vec![topic.clone(), "0".into()]);
-        let start = follow(&executor, resource.clone(), None).await;
-        assert!(start.rows.is_empty());
-        let columns = start
-            .columns
-            .iter()
-            .map(|c| c.name.clone())
-            .collect::<Vec<_>>();
-        assert!(columns.contains(&"key_decoded".into()));
-        let producer: FutureProducer = native.create().unwrap();
-        for n in 0..125 {
-            let raw: Option<&[u8]> = match n {
-                1 => Some(&[255]),
-                2 => Some(&[]),
-                3 => None,
-                _ => Some(&[8, 7]),
-            };
-            let mut record = FutureRecord::<[u8], [u8]>::to(&topic)
-                .partition(0)
-                .payload(b"unchanged");
-            if let Some(raw) = raw {
-                record = record.key(raw);
-            }
-            producer.send(record, Duration::from_secs(5)).await.unwrap();
-        }
-        let first = fetch(&executor, resource.clone(), None).await;
-        assert_eq!(first.rows.len(), 100);
-        if source == Source::Catalog {
-            assert!(
-                first.rows[0].cells[6]
-                    .as_ref()
-                    .unwrap()
-                    .text()
-                    .unwrap()
-                    .contains("#schema=event:")
-            );
-            // Refresh and follow must keep the binding snapshot after a file edit.
-            std::fs::write(&schema, b"invalid replacement").unwrap();
-        }
-        if matches!(source, Source::Buf | Source::BufLabel) {
-            assert!(
-                first.rows[0].cells[6]
-                    .as_ref()
-                    .unwrap()
-                    .text()
-                    .unwrap()
-                    .contains("#commit=0123456789abcdef0123456789abcdef:")
-            );
-        }
-        assert_eq!(
-            first.rows[0].cells[5],
-            Some(Value::Json(r#"{"id":"7"}"#.into()))
-        );
-        assert!(first.rows[1].cells[5].is_none() && first.rows[1].cells[7].is_some());
-        assert_eq!(first.rows[2].cells[5], Some(Value::Json("{}".into())));
-        assert!(first.rows[3].cells[5].is_none() && first.rows[3].cells[7].is_none());
-        assert_eq!(first.rows[0].cells[2], Some(Value::Bytes(vec![8, 7])));
-        assert_eq!(
-            first.rows[0].cells[3],
-            Some(Value::Bytes(b"unchanged".to_vec()))
-        );
-        let second = fetch(&executor, resource.clone(), first.continuation.clone()).await;
-        assert_eq!(second.rows.len(), 25);
-        assert_eq!(
-            second.rows.iter().map(|r| &r.cells).collect::<Vec<_>>(),
-            fetch(&executor, resource.clone(), first.continuation)
-                .await
-                .rows
-                .iter()
-                .map(|r| &r.cells)
-                .collect::<Vec<_>>()
-        );
-        let live = follow(&executor, resource.clone(), start.continuation).await;
-        assert_eq!(live.rows.len(), 100);
-        assert_eq!(
-            live.columns
-                .iter()
-                .map(|c| c.name.clone())
-                .collect::<Vec<_>>(),
-            columns
-        );
-        assert!(live.rows[1].cells[7].is_some());
-        let next = follow(&executor, resource.clone(), live.continuation).await;
-        assert_eq!(next.rows.len(), 25);
-        assert!(next.rows[0].cells[5].is_some());
-        assert_eq!(next.rows[0].cells[6], first.rows[0].cells[6]);
-        let quiet = follow(&executor, resource.clone(), next.continuation).await;
-        assert!(quiet.rows.is_empty());
-        assert_eq!(
-            quiet
-                .columns
-                .iter()
-                .map(|c| c.name.clone())
-                .collect::<Vec<_>>(),
-            columns
-        );
-        let (_cancel, context) = RequestContext::new(Duration::from_secs(5));
-        let replay = executor
-            .query_page(
-                QueryRequest {
-                    page: PageRequest {
-                        resource: Resource::new("kafka.query", resource.path.clone()),
-                        continuation: None,
-                    },
-                    text: format!(
-                        "CONSUME {}/{} offsets 1..5",
-                        resource.path[0], resource.path[1]
-                    ),
-                },
-                context,
-            )
-            .await
-            .unwrap();
-        assert_eq!(replay.rows.len(), 4);
-        assert!(replay.rows[0].cells[7].is_some());
-        let whole = fetch(&executor, Resource::new("kafka.records", vec![topic]), None).await;
-        assert_eq!(whole.columns[0].name, "partition");
-        assert_eq!(
-            whole.rows[0].cells[6],
-            Some(Value::Json(r#"{"id":"7"}"#.into()))
-        );
-        executor
-            .shutdown(ShutdownContext::new(Duration::from_secs(2)))
-            .await
-            .unwrap();
-    })
+    let tested = tokio::spawn(exercise_protobuf(
+        task_topic, options, native, schema, source,
+    ))
     .await;
     for result in admin
         .delete_topics(&[&topic], &admin_options)

@@ -111,7 +111,7 @@ async fn kv_keys_values_history_watch_and_bookmarks() {
         .unwrap();
     let name = bucket.clone();
     let tested = tokio::spawn(async move {
-        exercise_kv(kv, &name).await;
+        Box::pin(exercise_kv(kv, &name)).await;
     })
     .await;
     let info = api(&admin, &format!("STREAM.INFO.KV_{bucket}"), json!({})).await;
@@ -247,7 +247,7 @@ async fn object_metadata_lazy_chunks_empty_deleted_and_replaced_versions() {
         .unwrap();
     let name = bucket.clone();
     let tested = tokio::spawn(async move {
-        exercise_objects(objects, &name).await;
+        Box::pin(exercise_objects(objects, &name)).await;
     })
     .await;
     let info = api(&admin, &format!("STREAM.INFO.OBJ_{bucket}"), json!({})).await;

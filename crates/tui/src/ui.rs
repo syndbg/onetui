@@ -2963,12 +2963,12 @@ mod tests {
     }
 
     fn check_ready_screen(
-        app: &mut App,
+        app: &App,
         terminal: &mut Terminal<TestBackend>,
         p: &onetui_theme::Palette,
     ) {
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = screen(&terminal);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let text = screen(terminal);
         assert!(text.lines().next().unwrap().contains("Context"));
         assert!(!text.contains("read-only"));
         assert!(!text.contains("OneTUI"));
@@ -3020,8 +3020,8 @@ mod tests {
     ) {
         app.act(Action::Sort);
         app.loading = true;
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = screen(&terminal);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let text = screen(terminal);
         assert!(text.contains("id ↑"));
         assert!(text.contains("Loading"));
         assert!(text.contains("m      columns"));
@@ -3051,8 +3051,8 @@ mod tests {
         app.loading = false;
         app.error = Some("Request cancelled".into());
         app.act(Action::Filter);
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let text = screen(&terminal);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let text = screen(terminal);
         assert!(text.contains("Request cancelled"));
         assert!(text.contains("Filter displayed page"));
         assert!(!text.contains("s      sort"));
@@ -3067,15 +3067,15 @@ mod tests {
 
         app.filter_input = None;
         app.command = Some("connections".into());
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(screen(&terminal).contains(":connections"));
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        assert!(screen(terminal).contains(":connections"));
         assert_eq!(terminal.backend().buffer()[(1, 9)].fg, color(p.key_hint));
         assert_eq!(terminal.backend().buffer()[(1, 9)].bg, color(p.surface));
 
         app.command = None;
         app.help = true;
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(screen(&terminal).contains("DESCRIPTION"));
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        assert!(screen(terminal).contains("DESCRIPTION"));
         assert_eq!(
             terminal.backend().buffer()[(1, 9)].fg,
             color(p.table_heading)
@@ -3085,8 +3085,8 @@ mod tests {
         app.help = false;
         app.detail = true;
         app.detail_text = "Themed detail".into();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert!(screen(&terminal).contains("Themed detail"));
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        assert!(screen(terminal).contains("Themed detail"));
         assert_eq!(terminal.backend().buffer()[(1, 9)].fg, color(p.text));
         assert_eq!(terminal.backend().buffer()[(1, 9)].bg, color(p.background));
     }
@@ -3095,7 +3095,7 @@ mod tests {
         let p = theme.palette();
         let mut app = layout_app(theme);
         let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
-        check_ready_screen(&mut app, &mut terminal, p);
+        check_ready_screen(&app, &mut terminal, p);
         check_loading_screen(&mut app, &mut terminal, p);
         check_mode_screens(&mut app, &mut terminal, p);
     }
@@ -3476,7 +3476,7 @@ mod tests {
             };
             if mode != "panic" && ready && !sent_quit {
                 assert!(
-                    !tcgetattr(&slave)
+                    !tcgetattr(slave)
                         .unwrap()
                         .local_flags
                         .contains(LocalFlags::ICANON)
@@ -3494,7 +3494,7 @@ mod tests {
                 sent_confirmation = true;
             }
             if text.contains("ONETUI_TERMINAL_RESTORED") && restored_modes.is_none() {
-                restored_modes = Some(tcgetattr(&slave).unwrap());
+                restored_modes = Some(tcgetattr(slave).unwrap());
                 master.write_all(b"\n").unwrap();
             }
             if let Some(status) = child.0.try_wait().unwrap() {
