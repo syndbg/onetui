@@ -11,7 +11,7 @@ The release workflow builds the Linux archive and `.deb` on Ubuntu 22.04 and the
 
 Debian and RPM distros use different `libsasl2` sonames (`.so.2` and `.so.3`). The `.tar.gz` therefore targets Debian and Ubuntu only. The release workflow also builds a native Arch Linux `.pkg.tar.zst` with `packaging/arch/PKGBUILD`, which links Arch's own libraries. The PKGBUILD remains available for local source builds.
 
-`make test-install` installs each prebuilt asset on every supported distro in Docker, including the Arch package. The release workflow runs it before attaching assets.
+PR and main CI build the Linux packages from their checked-out commit and use `make test-install` to install each asset on every supported distro in Docker, including Arch. A shared package workflow keeps their build steps the same as releases. Releases build and publish assets without repeating the install matrix.
 
 ## Context
 
