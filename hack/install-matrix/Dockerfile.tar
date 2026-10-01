@@ -1,7 +1,7 @@
 ARG BASE
 FROM ${BASE}
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -qq && apt-get install -y -qq libsasl2-2 libgssapi-krb5-2 && (apt-get install -y -qq libcurl4t64 || apt-get install -y -qq libcurl4)
+RUN apt update -qq && apt install -y -qq libsasl2-2 libgssapi-krb5-2 && (apt install -y -qq libcurl4t64 || apt install -y -qq libcurl4)
 COPY *.tar.gz /tmp/
 RUN tar xzf /tmp/onetui-*.tar.gz -C /usr/local/bin onetui
 RUN onetui --version
