@@ -380,6 +380,8 @@ async fn following_sparse_sequences_retention_and_byte_limits_without_consumer_c
 #[ignore = "disposable NATS TLS/auth fixture; checks native errors and trust failures"]
 async fn verified_tls_authentication_permissions_and_native_errors() {
     use std::io::Write;
+    // Workspace builds enable multiple providers. Select Ring as the CLI does.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cert = docker(&["exec", "-T", "nats-tls", "cat", "/tls/ca.crt"]);
     let mut ca = tempfile::NamedTempFile::new().unwrap();
     ca.write_all(&cert.stdout).unwrap();

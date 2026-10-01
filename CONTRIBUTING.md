@@ -32,11 +32,11 @@ Put `[skip-ci]` in the head commit message to skip PR and main CI jobs. Manual r
 
 ## Releases
 
-Target: v0.2.0. Follow Semantic Versioning; update Cargo.toml and Cargo.lock together. Tags must exactly match Cargo's version with a `v` prefix.
+Follow Semantic Versioning. Update Cargo.toml and Cargo.lock together. Tags must exactly match Cargo's version with a `v` prefix.
 
 ### Publish through GitHub's UI
 
-1. Use a reviewed main commit with passing checks. Run `make release-check TAG=v0.2.0` (substitute the intended version).
+1. Use a reviewed main commit with passing checks. Run `make release-check TAG=vX.Y.Z` (replace `vX.Y.Z` with the intended version).
 2. In **Releases → Draft a new release**, select/create that tag at the reviewed commit. Describe shipped changes; mark prereleases.
 3. Publish. Wait for the [release workflow](.github/workflows/release.yaml) and verify its archives, packages and SHA-256 files before announcing.
 
@@ -45,18 +45,18 @@ Never move a published tag. Uploads refuse overwrites; inspect partial assets be
 ### Local packaging and verification
 
 ```sh
-make package TAG=v0.2.0
+make package TAG=vX.Y.Z
 cd dist
-shasum -a 256 -c onetui-v0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+shasum -a 256 -c onetui-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 Use the filename matching your platform. Packaging refuses existing artifacts. Review native dependency licenses when updating them.
 
-After `make package`, use `make package-deb TAG=v0.2.0` on Debian/Ubuntu or `make package-rpm TAG=v0.2.0` on Fedora. These use pinned nFPM through Go. Never repackage the Ubuntu binary as a Fedora RPM.
+After `make package`, use `make package-deb TAG=vX.Y.Z` on Debian/Ubuntu or `make package-rpm TAG=vX.Y.Z` on Fedora. These use pinned nFPM through Go. Never repackage the Ubuntu binary as a Fedora RPM.
 
 Linux binaries dynamically link system libraries. The release workflow builds the archive and deb on Ubuntu 22.04 and the rpm on AlmaLinux 9, so they run on older glibc. Package glibc requirements come from the binary's highest `GLIBC_` symbol. Debian/Ubuntu archive installs need `libc6` (2.35+), `libgcc-s1`, `libstdc++6`, `libcurl4t64` or `libcurl4`, `libsasl2-2` and `libgssapi-krb5-2`. GSSAPI also needs `libsasl2-modules-gssapi-mit`. The Debian/RPM packages declare their runtime dependencies. Kerberos libraries are not bundled.
 
-Bump `pkgver` in [packaging/arch/PKGBUILD](packaging/arch/PKGBUILD) with the Cargo version. `make release-check` fails when they differ. `make test-install TAG=v0.2.0` installs the packages and builds the PKGBUILD on supported distros in Docker. It uses `dist/` assets or the GitHub release. The release workflow runs it before attaching assets.
+Bump `pkgver` in [packaging/arch/PKGBUILD](packaging/arch/PKGBUILD) with the Cargo version. `make release-check` fails when they differ. `make test-install TAG=vX.Y.Z` installs the packages and builds the PKGBUILD on supported distros in Docker. It uses `dist/` assets or the GitHub release. The release workflow runs it before attaching assets.
 
 ### Homebrew
 

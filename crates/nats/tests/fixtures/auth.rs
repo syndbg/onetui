@@ -114,6 +114,8 @@ async fn rejects_bad_setups(tls: &str, wrong_key: &std::path::Path) {
 #[tokio::test]
 #[ignore = "requires disposable NATS mTLS/NKEY/domain listener"]
 async fn nkey_mtls_domain_reads_trust_errors_and_reopen() {
+    // Workspace builds enable multiple providers. Select Ring as the CLI does.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let ca = tls_file("ca.crt");
     let cert = tls_file("reader.crt");
     let key = tls_file("reader.key");
