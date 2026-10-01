@@ -19,6 +19,7 @@ if [[ "$tag" != "v$version" ]]; then
     printf 'Release tag must match Cargo.toml exactly: v%s\n' "$version" >&2
     exit 1
 fi
+grep -qx "pkgver=$version" packaging/arch/PKGBUILD || { printf 'packaging/arch/PKGBUILD pkgver must be %s.\n' "$version" >&2; exit 1; }
 if [[ "$1" == check ]]; then
     printf 'Release version verified: %s\n' "$tag"
     exit 0
@@ -31,14 +32,15 @@ if [[ "$1" == deb || "$1" == rpm ]]; then
     # Debian and Fedora use different SASL library ABIs. Never rewrap one binary for both.
     source /etc/os-release
     case "$format:$ID" in
-        deb:ubuntu|deb:debian|rpm:fedora) ;;
-        *) printf 'Build deb on Debian/Ubuntu and rpm on Fedora.\n' >&2; exit 1 ;;
+        deb:ubuntu|deb:debian|rpm:almalinux|rpm:rocky|rpm:rhel|rpm:fedora) ;;
+        *) printf 'Build deb on Debian/Ubuntu and rpm on AlmaLinux/Rocky/RHEL/Fedora.\n' >&2; exit 1 ;;
     esac
     [[ "$(target/x86_64-unknown-linux-gnu/release/onetui --version)" == "$expected_version" ]] || { printf 'Run make package from the matching version and commit first.\n' >&2; exit 1; }
     export ONETUI_PACKAGE_VERSION="$version"
     export ONETUI_PACKAGE_BINARY=target/x86_64-unknown-linux-gnu/release/onetui
-    ONETUI_GLIBC_VERSION=$(getconf GNU_LIBC_VERSION)
-    export ONETUI_GLIBC_VERSION=${ONETUI_GLIBC_VERSION#glibc }
+    # Require what the binary links, not the build host's glibc, so older distros stay installable.
+    ONETUI_GLIBC_VERSION=$(objdump -T "$ONETUI_PACKAGE_BINARY" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)
+    export ONETUI_GLIBC_VERSION=${ONETUI_GLIBC_VERSION#GLIBC_}
     mkdir -p dist
     asset="onetui-${tag}-x86_64.$format"
     [[ ! -e "dist/$asset" && ! -e "dist/$asset.sha256" ]] || { printf 'Refusing to overwrite dist/%s.\n' "$asset" >&2; exit 1; }

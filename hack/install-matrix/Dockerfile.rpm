@@ -1,0 +1,5 @@
+ARG BASE
+FROM ${BASE}
+COPY *.rpm /tmp/
+RUN dnf install -y /tmp/onetui-*.rpm
+RUN onetui --version

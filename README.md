@@ -32,7 +32,16 @@ OneTUI is a keyboard-driven terminal browser for databases and message streams, 
 
 Download an archive or Linux package from [Releases](https://github.com/syndbg/onetui/releases).
 
-Install a package with `sudo apt install ./onetui-*.deb` or `sudo dnf install ./onetui-*.rpm`.
+Install a package with `sudo apt install ./onetui-*.deb` or `sudo dnf install ./onetui-*.rpm`. The `.deb` supports Debian 12+ and Ubuntu 22.04+. The `.rpm` supports Fedora and EL 9+. The `.tar.gz` links Debian/Ubuntu libraries, so use a package on other distros.
+
+### Arch Linux
+
+Build from source with the [PKGBUILD](packaging/arch/PKGBUILD):
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/syndbg/onetui/main/packaging/arch/PKGBUILD
+makepkg -si
+```
 
 ### Homebrew
 
