@@ -1049,6 +1049,8 @@ struct TlsFixture {
     observer: FixturePg,
     resource: onetui_core::Resource,
     first: onetui_core::Page,
+    // Reconnects re-read ca_file, so the file must outlive the fixture.
+    _ca: tempfile::NamedTempFile,
 }
 
 async fn open_tls_fixture() -> TlsFixture {
@@ -1090,6 +1092,7 @@ async fn open_tls_fixture() -> TlsFixture {
         observer,
         resource,
         first,
+        _ca: ca,
     }
 }
 
