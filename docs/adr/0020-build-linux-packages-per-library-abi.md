@@ -9,9 +9,9 @@ date: 2026-10-01
 
 The release workflow builds the Linux archive and `.deb` on Ubuntu 22.04 and the `.rpm` on AlmaLinux 9. Both hosts have older glibc than the supported targets, so the binaries run on Debian 12+, Ubuntu 22.04+, Fedora and EL 9+. Package glibc requirements come from the binary's highest `GLIBC_` symbol, not from the build host.
 
-Debian and RPM distros use different `libsasl2` sonames (`.so.2` and `.so.3`). The `.tar.gz` therefore targets Debian and Ubuntu only. Arch Linux builds from source with `packaging/arch/PKGBUILD`, which links Arch's own libraries.
+Debian and RPM distros use different `libsasl2` sonames (`.so.2` and `.so.3`). The `.tar.gz` therefore targets Debian and Ubuntu only. The release workflow also builds a native Arch Linux `.pkg.tar.zst` with `packaging/arch/PKGBUILD`, which links Arch's own libraries. The PKGBUILD remains available for local source builds.
 
-`make test-install` installs each asset on every supported distro in Docker and builds the PKGBUILD on Arch. The release workflow runs it before attaching assets.
+`make test-install` installs each prebuilt asset on every supported distro in Docker, including the Arch package. The release workflow runs it before attaching assets.
 
 ## Context
 

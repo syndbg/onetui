@@ -4,8 +4,8 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$repo_root"
 case "${1:-}" in
-    check|package|deb|rpm) ;;
-    *) printf 'Usage: bash scripts/release.sh {check|package|deb|rpm} v<version>\n' >&2; exit 2 ;;
+    check|package|deb|rpm|arch) ;;
+    *) printf 'Usage: bash scripts/release.sh {check|package|deb|rpm|arch} v<version>\n' >&2; exit 2 ;;
 esac
 
 # Cargo validates SemVer; compare its parsed package version, not a second version source.
@@ -26,6 +26,26 @@ if [[ "$1" == check ]]; then
 fi
 
 target=$(rustc -vV | awk '$1 == "host:" {print $2}')
+if [[ "$1" == arch ]]; then
+    [[ "$target" == x86_64-unknown-linux-gnu && -r /etc/os-release ]] || { printf 'Build Arch packages on Arch Linux x86_64.\n' >&2; exit 1; }
+    source /etc/os-release
+    [[ "$ID" == arch ]] || { printf 'Build Arch packages on Arch Linux x86_64.\n' >&2; exit 1; }
+    stage=$(mktemp -d)
+    trap 'rm -rf "$stage"' EXIT
+    cp packaging/arch/PKGBUILD "$stage/"
+    package_list=$(cd "$stage" && makepkg --packagelist)
+    # makepkg may also list a separate debug package. Distribute the main package.
+    asset=${package_list%%$'\n'*}
+    asset=${asset##*/}
+    mkdir -p dist
+    [[ ! -e "dist/$asset" && ! -e "dist/$asset.sha256" ]] || { printf 'Refusing to overwrite dist/%s.\n' "$asset" >&2; exit 1; }
+    (cd "$stage" && makepkg --noconfirm)
+    [[ "$("$stage/src/onetui/target/release/onetui" --version)" == "$expected_version" ]] || { printf 'Arch package version does not match Cargo and Git.\n' >&2; exit 1; }
+    cp "$stage/$asset" dist/
+    (cd dist && sha256sum "$asset" > "$asset.sha256")
+    printf 'Created dist/%s and its SHA-256 file.\n' "$asset"
+    exit 0
+fi
 if [[ "$1" == deb || "$1" == rpm ]]; then
     [[ "$target" == x86_64-unknown-linux-gnu ]] || { printf 'Linux packages require a native Linux x86_64 build.\n' >&2; exit 1; }
     format=$1

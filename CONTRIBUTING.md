@@ -56,7 +56,9 @@ After `make package`, use `make package-deb TAG=vX.Y.Z` on Debian/Ubuntu or `mak
 
 Linux binaries dynamically link system libraries. The release workflow builds the archive and deb on Ubuntu 22.04 and the rpm on AlmaLinux 9, so they run on older glibc. Package glibc requirements come from the binary's highest `GLIBC_` symbol. Debian/Ubuntu archive installs need `libc6` (2.35+), `libgcc-s1`, `libstdc++6`, `libcurl4t64` or `libcurl4`, `libsasl2-2` and `libgssapi-krb5-2`. GSSAPI also needs `libsasl2-modules-gssapi-mit`. The Debian/RPM packages declare their runtime dependencies. Kerberos libraries are not bundled.
 
-Bump `pkgver` in [packaging/arch/PKGBUILD](packaging/arch/PKGBUILD) with the Cargo version. `make release-check` fails when they differ. `make test-install TAG=vX.Y.Z` installs the packages and builds the PKGBUILD on supported distros in Docker. It uses `dist/` assets or the GitHub release. The release workflow runs it before attaching assets.
+Bump `pkgver` in [packaging/arch/PKGBUILD](packaging/arch/PKGBUILD) with the Cargo version. `make release-check` fails when they differ. On Arch Linux x86_64, use `make package-arch TAG=vX.Y.Z` as a regular user with the PKGBUILD's build dependencies installed. It builds from the published Git tag and creates a `.pkg.tar.zst` and checksum in `dist/`.
+
+`make test-install TAG=vX.Y.Z` installs the prebuilt packages on supported distros in Docker. It uses `dist/` assets or the GitHub release. The release workflow runs it before attaching assets.
 
 ### Homebrew
 

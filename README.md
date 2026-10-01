@@ -36,7 +36,13 @@ Install a package with `sudo apt install ./onetui-*.deb` or `sudo dnf install ./
 
 ### Arch Linux
 
-Build from source with the [PKGBUILD](packaging/arch/PKGBUILD):
+Install the prebuilt `.pkg.tar.zst` from [Releases](https://github.com/syndbg/onetui/releases):
+
+```sh
+sudo pacman -U ./onetui-*.pkg.tar.zst
+```
+
+Or build from source with the [PKGBUILD](packaging/arch/PKGBUILD):
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/syndbg/onetui/main/packaging/arch/PKGBUILD
