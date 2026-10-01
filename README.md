@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/syndbg/onetui/actions/workflows/main.yaml"><img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF" alt="CI: GitHub Actions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/source-0.2.0-green" alt="Source version: 0.2.0"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/source-0.2.1-green" alt="Source version: 0.2.1"></a>
   <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/Rust-1.98.1-orange" alt="Rust 1.98.1"></a>
 </p>
 
