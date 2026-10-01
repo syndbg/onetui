@@ -94,6 +94,13 @@ jobs:
           persist-credentials: false
       - run: make workflow-lint
 
+  packages:
+    name: Package checks
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci]')
+    uses: ./.github/workflows/packages.yaml
+    with:
+      test-install: true
+
   integration:
     name: Integration (${{ matrix.datasource }})
     needs: [build, format, clippy, unit, shell, workflow]

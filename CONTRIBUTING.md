@@ -38,7 +38,7 @@ Follow Semantic Versioning. Update Cargo.toml and Cargo.lock together. Tags must
 
 1. Use a reviewed main commit with passing checks. Run `make release-check TAG=vX.Y.Z` (replace `vX.Y.Z` with the intended version).
 2. In **Releases → Draft a new release**, select/create that tag at the reviewed commit. Describe shipped changes; mark prereleases.
-3. Publish. Wait for the [release workflow](.github/workflows/release.yaml) and verify its archives, packages and SHA-256 files before announcing.
+3. Publish. The [release workflow](.github/workflows/release.yaml) builds and attaches the archives, packages and SHA-256 files. Wait for it before announcing.
 
 Never move a published tag. Uploads refuse overwrites; inspect partial assets before retrying. Keep the license and third-party notices with redistributed binaries.
 
@@ -58,7 +58,7 @@ Linux binaries dynamically link system libraries. The release workflow builds th
 
 Bump `pkgver` in [packaging/arch/PKGBUILD](packaging/arch/PKGBUILD) with the Cargo version. `make release-check` fails when they differ. On Arch Linux x86_64, use `make package-arch TAG=vX.Y.Z` as a regular user with the PKGBUILD's build dependencies installed. It builds from the published Git tag and creates a `.pkg.tar.zst` and checksum in `dist/`.
 
-`make test-install TAG=vX.Y.Z` installs the prebuilt packages on supported distros in Docker. It uses `dist/` assets or the GitHub release. The release workflow runs it before attaching assets.
+PR and main CI build Linux packages from the checkout and install them on all supported distros. They share the [package workflow](.github/workflows/packages.yaml) with releases. To check locally, use `make test-install TAG=vX.Y.Z` with `dist/` assets or the GitHub release.
 
 ### Homebrew
 
