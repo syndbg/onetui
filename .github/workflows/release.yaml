@@ -86,6 +86,31 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  arch:
+    name: Package (Arch Linux)
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Native build tools
+        run: pacman -Syu --noconfirm base-devel git cargo cmake perl curl cyrus-sasl krb5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build Arch package and checksum
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c 'make package-arch TAG="$RELEASE_TAG"'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-arch
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
   macos:
     name: Package (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -118,7 +143,7 @@ jobs:
           retention-days: 7
 
   verify-install:
-    needs: [build, rpm]
+    needs: [build, rpm, arch]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -136,7 +161,7 @@ jobs:
         run: make test-install TAG="$RELEASE_TAG"
 
   publish-assets:
-    needs: [build, rpm, macos, verify-install]
+    needs: [build, rpm, arch, macos, verify-install]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

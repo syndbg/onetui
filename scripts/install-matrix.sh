@@ -9,7 +9,7 @@ dir=$repo_root/hack/install-matrix
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 
-# kind:base-image, one Dockerfile.<kind> per kind. arch builds the PKGBUILD from the tag's git source.
+# kind:base-image, one Dockerfile.<kind> per kind.
 matrix=(
     deb:debian:12 deb:debian:13 deb:ubuntu:22.04 deb:ubuntu:24.04
     rpm:fedora:latest rpm:almalinux:9 rpm:rockylinux:9
@@ -17,10 +17,11 @@ matrix=(
 )
 patterns=(
     "onetui-$tag-x86_64.deb" "onetui-$tag-x86_64.rpm" "onetui-$tag-x86_64-unknown-linux-gnu.tar.gz"
+    "onetui-${tag#v}-*-x86_64.pkg.tar.zst"
 )
 
 for asset in "${patterns[@]}"; do
-    if [[ -f "$repo_root/dist/$asset" ]]; then cp "$repo_root/dist/$asset" "$stage/"
+    if compgen -G "$repo_root/dist/$asset" >/dev/null; then cp "$repo_root"/dist/$asset "$stage/"
     else gh release download "$tag" --pattern "$asset" --dir "$stage"; fi
 done
 
@@ -35,7 +36,7 @@ for entry in "${matrix[@]}"; do
         deb) cp "$stage"/*.deb "$ctx/" ;;
         rpm) cp "$stage"/*.rpm "$ctx/" ;;
         tar) cp "$stage"/*.tar.gz "$ctx/" ;;
-        arch) cp "$repo_root/packaging/arch/PKGBUILD" "$ctx/" ;;
+        arch) cp "$stage"/*.pkg.tar.zst "$ctx/" ;;
     esac
     (docker build --platform linux/amd64 --progress=plain -f "$dir/Dockerfile.$kind" \
         --build-arg "BASE=$base" "$ctx" >"$stage/$name.log" 2>&1) &

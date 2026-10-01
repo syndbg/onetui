@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DELETE_ON_ERROR:
 export TAG
 
-.PHONY: help build build-release run fmt format-check clippy shell-check lint test verify workflow-lint dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check test-install package package-deb package-rpm sweep sweep-install
+.PHONY: help build build-release run fmt format-check clippy shell-check lint test verify workflow-lint dev-up dev-run dev-reset dev-seed dev-traffic dev-traffic-kafka dev-traffic-nats dev-down dev-logs check-local test-integration test-buf-live release-check test-install package package-deb package-rpm package-arch sweep sweep-install
 
 help:
 	@printf '%s\n' \
@@ -30,7 +30,8 @@ help:
 	  'test-install TAG=v...   Install the release packages on supported distros in Docker (dist/ or GitHub release)' \
 	  'package TAG=v...        Build a native archive and SHA-256 file under dist/' \
 	  'package-deb TAG=v...    Package on Debian/Ubuntu (requires Go; run package first)' \
-	  'package-rpm TAG=v...    Package on Fedora (requires Go; run package first)'
+	  'package-rpm TAG=v...    Package on Fedora (requires Go; run package first)' \
+	  'package-arch TAG=v...   Create an Arch Linux x86_64 package and checksum'
 
 build:
 	cargo build --workspace --locked
@@ -125,3 +126,6 @@ package-deb:
 
 package-rpm:
 	bash scripts/release.sh rpm "$$TAG"
+
+package-arch:
+	bash scripts/release.sh arch "$$TAG"

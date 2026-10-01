@@ -1,10 +1,6 @@
 FROM archlinux:latest
 # --disable-sandbox: pacman's seccomp sandbox fails under qemu amd64 emulation.
-RUN pacman --disable-sandbox -Syu --noconfirm base-devel git cargo cmake perl curl cyrus-sasl krb5
-RUN useradd -m builder
-COPY --chown=builder PKGBUILD /home/builder/
-USER builder
-RUN cd ~ && makepkg -f --noconfirm
-USER root
-RUN pacman --disable-sandbox -U --noconfirm /home/builder/onetui-*.pkg.tar.zst
+RUN pacman --disable-sandbox -Syu --noconfirm
+COPY *.pkg.tar.zst /tmp/
+RUN pacman --disable-sandbox -U --noconfirm /tmp/onetui-*.pkg.tar.zst
 RUN onetui --version
