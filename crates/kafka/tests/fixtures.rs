@@ -723,18 +723,24 @@ async fn check_near_limit_and_byte_budget(t: &Txn) {
     use rdkafka::producer::{FutureRecord, Producer};
 
     let near_limit = vec![b'x'; onetui_core::PAGE_BYTES - 4096];
-    let near_limit_page = fetch(
-        &t.executor,
-        Resource::new("kafka.records", vec![t.topic.clone(), "1".into()]),
-        None,
-    )
-    .await;
+    let large_resource = Resource::new("kafka.records", vec![t.topic.clone(), "1".into()]);
+    // Commit acknowledgement can arrive before the record is visible to read-committed consumers.
+    let near_limit_page = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let page = fetch(&t.executor, large_resource.clone(), None).await;
+            if !page.rows.is_empty() {
+                break page;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("committed near-limit record did not become visible");
     assert_eq!(near_limit_page.rows.len(), 1);
     assert_eq!(
         near_limit_page.rows[0].cells[3].as_ref().unwrap().bytes(),
         near_limit
     );
-    let large_resource = Resource::new("kafka.records", vec![t.topic.clone(), "1".into()]);
     let large_tail = follow(&t.executor, large_resource.clone(), None).await;
     t.producer.begin_transaction().unwrap();
     for _ in 0..2 {
@@ -752,7 +758,22 @@ async fn check_near_limit_and_byte_budget(t: &Txn) {
     t.producer
         .commit_transaction(Duration::from_secs(10))
         .unwrap();
-    let large_first = follow(&t.executor, large_resource.clone(), large_tail.continuation).await;
+    let large_first = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let page = follow(
+                &t.executor,
+                large_resource.clone(),
+                large_tail.continuation.clone(),
+            )
+            .await;
+            if !page.rows.is_empty() {
+                break page;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("committed byte-budget batch did not become visible");
     assert_eq!(
         large_first.rows.len(),
         1,
