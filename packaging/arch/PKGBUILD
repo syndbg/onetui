@@ -1,7 +1,7 @@
 # Source build from the release tag: links Arch's own cyrus-sasl, krb5 and curl.
 # Keep pkgver equal to the Cargo version. `make release-check` enforces it.
 pkgname=onetui
-pkgver=0.2.1
+pkgver=0.2.2
 pkgrel=1
 pkgdesc='A terminal browser for databases and streams'
 arch=(x86_64)
