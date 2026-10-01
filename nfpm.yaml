@@ -24,7 +24,7 @@ overrides:
       - libc6 (>= ${ONETUI_GLIBC_VERSION})
       - libgcc-s1
       - libstdc++6
-      - libcurl4t64
+      - libcurl4t64 | libcurl4
       - libsasl2-2
       - libgssapi-krb5-2
     recommends:

@@ -54,7 +54,9 @@ Use the filename matching your platform. Packaging refuses existing artifacts. R
 
 After `make package`, use `make package-deb TAG=v0.2.0` on Debian/Ubuntu or `make package-rpm TAG=v0.2.0` on Fedora. These use pinned nFPM through Go. Never repackage the Ubuntu binary as a Fedora RPM.
 
-Linux binaries dynamically link system libraries. Ubuntu archive installs need `libc6` (2.39+), `libgcc-s1`, `libstdc++6`, `libcurl4t64`, `libsasl2-2` and `libgssapi-krb5-2`. GSSAPI also needs `libsasl2-modules-gssapi-mit`. The Debian/RPM packages declare their runtime dependencies. Kerberos libraries are not bundled.
+Linux binaries dynamically link system libraries. The release workflow builds the archive and deb on Ubuntu 22.04 and the rpm on AlmaLinux 9, so they run on older glibc. Package glibc requirements come from the binary's highest `GLIBC_` symbol. Debian/Ubuntu archive installs need `libc6` (2.35+), `libgcc-s1`, `libstdc++6`, `libcurl4t64` or `libcurl4`, `libsasl2-2` and `libgssapi-krb5-2`. GSSAPI also needs `libsasl2-modules-gssapi-mit`. The Debian/RPM packages declare their runtime dependencies. Kerberos libraries are not bundled.
+
+Bump `pkgver` in [packaging/arch/PKGBUILD](packaging/arch/PKGBUILD) with the Cargo version. `make release-check` fails when they differ. `make test-install TAG=v0.2.0` installs the packages and builds the PKGBUILD on supported distros in Docker. It uses `dist/` assets or the GitHub release. The release workflow runs it before attaching assets.
 
 ### Homebrew
 
