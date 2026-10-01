@@ -2,5 +2,5 @@ ARG BASE
 FROM ${BASE}
 ENV DEBIAN_FRONTEND=noninteractive
 COPY *.deb /tmp/
-RUN apt-get update -qq && apt-get install -y -qq /tmp/onetui-*.deb
+RUN apt update -qq && apt install -y -qq /tmp/onetui-*.deb
 RUN onetui --version

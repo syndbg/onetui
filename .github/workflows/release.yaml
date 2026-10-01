@@ -24,8 +24,8 @@ jobs:
     steps:
       - name: Native build tools
         run: |
-          apt-get update
-          apt-get install -y git curl ca-certificates make build-essential cmake perl pkg-config binutils libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit libkrb5-dev
+          apt update
+          apt install -y git curl ca-certificates make build-essential cmake perl pkg-config binutils libcurl4-openssl-dev libsasl2-dev libsasl2-modules-gssapi-mit libkrb5-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
